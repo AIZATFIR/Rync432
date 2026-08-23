@@ -1,0 +1,27 @@
+{
+  "name": "rync432-music-mesh",
+  "version": "1.0.0",
+  "description": "Ultra-low latency web-native multi-device synchronized audio mesh",
+  "main": "server/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server/server.js",
+    "dev": "node --watch server/server.js",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "audio-sync",
+    "web-audio-api",
+    "webrtc",
+    "websocket",
+    "multi-device-playback"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.7"
+  }
+}

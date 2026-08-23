@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Rync432 • Spotify-Style Multi-Device Audio Synchronizer</title>
+  <meta name="description" content="Ultra-low latency web-native multi-device synchronized audio mesh player with sample-accurate Web Audio API clock synchronization, per-device latency tuning, and Spotify aesthetic.">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🟢</text></svg>">
+  
+  <!-- Google AdSense Tag placeholder (Ready for Publisher ID) -->
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-XXXXXXXXXXXXXXXX" crossorigin="anonymous"></script>
+</head>
+<body>
+  <div class="app-container">
+    
+    <!-- Top Navigation Header -->
+    <header class="app-header" id="mainHeader">
+      <div class="brand-group" id="brandHeader">
+        <div class="brand-logo" id="brandLogo" title="Rync432 Audio Mesh">
+          <svg viewBox="0 0 24 24">
+            <path d="M12 2C6.477 2 2 6.477 2 12c0 5.523 4.477 10 10 10s10-4.477 10-10c0-5.523-4.477-10-10-10zm4.586 14.424a.623.623 0 0 1-.858.207c-2.348-1.435-5.304-1.76-8.785-.964a.625.625 0 0 1-.28-1.218c3.807-.87 7.075-.496 9.716 1.117.29.177.384.558.207.858zm1.226-2.724a.78.78 0 0 1-1.073.257c-2.688-1.652-6.786-2.13-9.965-1.165a.781.781 0 0 1-.469-1.492c3.633-1.103 8.147-.57 11.25 1.339.346.213.456.67.257 1.061zm.105-2.835C14.697 8.94 9.387 8.765 6.302 9.702a.936.936 0 0 1-.555-1.79c3.551-1.077 9.42-.87 13.14 1.341a.937.937 0 0 1-.97 1.612z"/>
+          </svg>
+        </div>
+        <div class="brand-title-wrap">
+          <h1 class="brand-title">RYNC432</h1>
+          <span class="brand-tagline">Sample-Accurate Music Mesh</span>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <!-- Room Connection Pill -->
+        <div class="status-pill">
+          <div class="status-dot" id="connectionDot"></div>
+          <span id="connectionStatus">Connecting...</span>
+        </div>
+
+        <!-- Google User Profile Button -->
+        <button class="user-profile-btn" id="userAuthBtn">
+          <div class="user-avatar-img" id="userAvatarContainer">
+            <svg class="google-g-icon" viewBox="0 0 24 24">
+              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+            </svg>
+          </div>
+          <span id="userNameLabel">Sign in</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Top Google Ads Placement Slot -->
+    <div class="ads-placement-container">
+      <div class="ads-label">Sponsored Advertisement</div>
+      <div class="ads-banner-slot" id="topAdBanner">
+        <!-- Google AdSense Markup -->
+        <ins class="adsbygoogle"
+             style="display:block; width:100%; height:90px;"
+             data-ad-client="ca-pub-XXXXXXXXXXXXXXXX"
+             data-ad-slot="1234567890"
+             data-ad-format="horizontal"
+             data-full-width-responsive="true"></ins>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 9 6 6m0-6-6 6"/>
+        </svg>
+        <span>Google Ads Space (Responsive 728x90 / 320x100)</span>
+      </div>
+    </div>
+
+    <!-- Room Entry Hero (When not in a room) -->
+    <section class="spotify-card room-hero-section" id="roomHeroSection">
+      <div class="hero-title-group">
+        <h2>Play Musik Serempak Di Banyak Device</h2>
+        <p>
+          Satukan speaker smartphone, laptop, dan tablet di ruangan dalam satu harmoni mesh audio.
+          Semua device memutar audio secara bersamaan tanpa delay menggunakan clock Web Audio API.
+        </p>
+      </div>
+
+      <div class="room-actions-grid">
+        <!-- Host Tile -->
+        <div class="action-tile">
+          <h3>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--spotify-green)" stroke-width="2.2">
+              <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+            </svg>
+            Buat Room Baru (Master)
+          </h3>
+          <p>Mulai sebagai Host untuk mengontrol lagu, membagikan audio buffer, dan mengatur ritme.</p>
+          <button class="btn-spotify btn-spotify-primary" id="createRoomBtn">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            Create Host Room
+          </button>
+        </div>
+
+        <!-- Join Tile -->
+        <div class="action-tile">
+          <h3>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--text-announcement)" stroke-width="2.2">
+              <rect width="16" height="20" x="4" y="2" rx="2"/>
+              <circle cx="12" cy="14" r="4"/>
+              <line x1="12" x2="12.01" y1="6" y2="6"/>
+            </svg>
+            Gabung Room (Satellite)
+          </h3>
+          <p>Masukkan 4 digit kode room dari Host untuk menyambungkan speaker ini.</p>
+          <div class="spotify-input-wrap">
+            <input type="text" id="roomCodeInput" class="spotify-input room-code-input" placeholder="CODE" maxlength="4">
+            <button class="btn-spotify btn-spotify-primary" id="joinRoomBtn">Join</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Active Room Dashboard (When room is created / joined) -->
+    <div id="activeRoomSection" style="display: none; display: flex; flex-direction: column; gap: 20px;">
+      
+      <!-- Room Info Top Bar -->
+      <div class="active-room-bar">
+        <div class="room-meta-group">
+          <div>
+            <div style="font-size: 0.72rem; color: var(--text-subdued); text-transform: uppercase; font-weight: 700; letter-spacing: 1px;">ROOM CODE</div>
+            <div class="room-code-tag" id="roomCodeDisplay">----</div>
+          </div>
+          <div id="userRoleBadge" class="role-pill host">HOST</div>
+        </div>
+
+        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+          <button class="btn-spotify btn-spotify-dark" id="copyRoomLinkBtn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+            Share Link
+          </button>
+          <button class="btn-spotify btn-spotify-danger" id="leaveRoomBtn">Leave Room</button>
+        </div>
+      </div>
+
+      <!-- Main Two-Column Grid -->
+      <div class="main-grid">
+        
+        <!-- Left Column: Spotify Player & Media Stage -->
+        <div class="player-stage">
+          
+          <div class="spotify-card">
+            <!-- Track Info & Artwork Row -->
+            <div class="track-artwork-row">
+              <div class="album-art-box" id="albumArtBox">
+                <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M9 18V5l12-2v13"></path>
+                  <circle cx="6" cy="18" r="3"></circle>
+                  <circle cx="18" cy="16" r="3"></circle>
+                </svg>
+              </div>
+              <div class="track-info-texts">
+                <div class="track-title" id="trackTitle">No track loaded</div>
+                <div class="track-sub" id="trackSub">Upload file audio atau klik Neon Groove demo</div>
+              </div>
+            </div>
+
+            <!-- Canvas Audio Visualizer -->
+            <div class="visualizer-container">
+              <div class="visualizer-overlay-info">60FPS Hardware Audio Spectrum</div>
+              <canvas id="visualizerCanvas"></canvas>
+            </div>
+
+            <!-- Timeline Scrub Bar -->
+            <div class="audio-timeline-wrap">
+              <div class="progress-bar-bg" id="progressBar">
+                <div class="progress-fill" id="progressFill"></div>
+              </div>
+              <div class="timeline-timestamps">
+                <span id="currentTimeText">0:00</span>
+                <span id="totalTimeText">0:00</span>
+              </div>
+            </div>
+
+            <!-- Player Controls (Host Only) -->
+            <div id="hostControlsSection" class="player-controls-row">
+              <button class="btn-spotify-circle play-btn" id="playBtn" title="Play / Pause Synchronized Audio">
+                <svg id="playIcon" width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+                  <polygon points="6 3 20 12 6 21 6 3"></polygon>
+                </svg>
+                <svg id="pauseIcon" width="28" height="28" viewBox="0 0 24 24" fill="currentColor" style="display: none;">
+                  <rect x="6" y="4" width="4" height="16"></rect>
+                  <rect x="14" y="4" width="4" height="16"></rect>
+                </svg>
+              </button>
+            </div>
+
+            <!-- Satellite Notice (Member Only) -->
+            <div id="clientNotice" style="display: none; margin-top: 14px; text-align: center;">
+              <div style="font-size: 0.85rem; color: var(--text-announcement); font-weight: 600;">
+                🛰️ Satellite Speaker Ready • Playback otomatis sinkron dengan Host
+              </div>
+            </div>
+
+            <!-- Volume Control -->
+            <div style="margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border-subtle);">
+              <div class="volume-control-wrap">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                </svg>
+                <input type="range" class="range-slider" id="volumeSlider" min="0" max="1" step="0.01" value="1">
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Audio Source Selector / Dropzone -->
+          <div class="spotify-card">
+            <h3 style="font-size: 1.05rem; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--spotify-green)" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+              </svg>
+              Sumber Audio (Sample-Accurate Buffer)
+            </h3>
+
+            <input type="file" id="audioFileInput" accept="audio/*" style="display: none;">
+            
+            <div class="dropzone-box" id="audioDropzone">
+              <div class="dropzone-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M9 18V5l12-2v13"></path>
+                  <circle cx="6" cy="18" r="3"></circle>
+                  <circle cx="18" cy="16" r="3"></circle>
+                </svg>
+              </div>
+              <div style="font-weight: 700; font-size: 0.95rem; color: #fff;">Upload File Audio (MP3, WAV, FLAC, AAC)</div>
+              <div style="font-size: 0.8rem; color: var(--text-silver);">Drag & drop file musik ke sini untuk di-broadcast ke semua speaker</div>
+            </div>
+
+            <div style="margin-top: 14px; display: flex; flex-direction: column; gap: 8px;">
+              <div style="font-size: 0.8rem; color: var(--text-subdued);">Atau uji instan dengan Built-in Synthwave Track:</div>
+              <div class="preset-track-grid">
+                <button class="btn-spotify btn-spotify-dark" id="demoSynthBtn">
+                  ⚡ Neon Groove (Demo)
+                </button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Right Column: Latency Tuner (+/- ms), Metronome & Mesh Devices -->
+        <div style="display: flex; flex-direction: column; gap: 20px;">
+          
+          <!-- Feature 1: Dual-Tone Keep-Alive Metronome -->
+          <div class="spotify-card metronome-card">
+            <div class="toggle-row">
+              <div>
+                <div class="toggle-title">🔊 Keep-Alive Metronome (2 Nada)</div>
+                <div class="toggle-desc">Cegah audio DAC sleep & kalibrasi ketukan ruangan</div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="metronomeToggle">
+                <span class="slider-round"></span>
+              </label>
+            </div>
+
+            <div class="info-note">
+              <strong>Fungsi Kritis:</strong> Menjaga pipeline audio HP tetap aktif dengan ketukan 2-nada (880Hz / 440Hz) sehingga tidak ada delay bangun saat musik dimulai.
+            </div>
+          </div>
+
+          <!-- Feature 2: Latency Tuner with Precision + and - Step Buttons -->
+          <div class="spotify-card latency-tuner-card">
+            <div class="tuner-header">
+              <div>
+                <div style="font-weight: 700; font-size: 1rem; color: #fff;">⚡ Latency Tuner (Per-Device)</div>
+                <div style="font-size: 0.8rem; color: var(--text-silver);">Kompensasi delay milidetik speaker ini</div>
+              </div>
+              <div class="latency-display-wrap">
+                <div class="current-offset-display" id="latencyDisplay">0 ms</div>
+              </div>
+            </div>
+
+            <!-- Precision Step Controls (+ and -) -->
+            <div class="precision-step-group">
+              <button class="step-btn" id="stepMinus1" title="Kurangi 1 ms (-1ms)">−</button>
+              <span style="font-size: 0.82rem; font-weight: 600; color: var(--text-silver);">Fine Tune (±1 ms)</span>
+              <button class="step-btn" id="stepPlus1" title="Tambah 1 ms (+1ms)">+</button>
+            </div>
+
+            <!-- Slider Range -->
+            <div class="slider-container">
+              <input type="range" class="range-slider" id="latencySlider" min="-100" max="300" step="1" value="0">
+              <div class="slider-labels">
+                <span>-100 ms (Dipercepat)</span>
+                <span>0 ms</span>
+                <span>+300 ms (Dilambatkan)</span>
+              </div>
+            </div>
+
+            <!-- Jump Nudge Buttons -->
+            <div class="nudge-buttons">
+              <button class="nudge-btn" id="nudgeMinus10">-10ms</button>
+              <button class="nudge-btn" id="nudgeMinus2">-2ms</button>
+              <button class="nudge-btn" id="nudgePlus2">+2ms</button>
+              <button class="nudge-btn" id="nudgePlus10">+10ms</button>
+            </div>
+
+            <!-- Presets Hardware -->
+            <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px;">
+              <div style="font-size: 0.75rem; color: var(--text-subdued); font-weight: 600;">Presets Speaker Hardware:</div>
+              <div class="preset-chips">
+                <button class="chip-btn active" id="presetWired">Wired (0ms)</button>
+                <button class="chip-btn" id="presetInternal">Internal Phone (+15ms)</button>
+                <button class="chip-btn" id="presetBt">Bluetooth (+120ms)</button>
+                <button class="chip-btn" id="presetAirplay">AirPlay (+250ms)</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Connected Speaker Mesh -->
+          <div class="spotify-card devices-mesh-card">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <div style="font-weight: 700; font-size: 1rem; color: #fff;">🌐 Mesh Speakers Connected</div>
+                <div style="font-size: 0.8rem; color: var(--text-silver);">Perangkat dalam harmoni suara</div>
+              </div>
+              <span class="ping-badge" id="deviceCountBadge">1 Active</span>
+            </div>
+
+            <div class="devices-list" id="devicesList">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+    </div>
+
+    <!-- Bottom Google Ads Banner Slot -->
+    <div class="ads-placement-container" style="margin-top: 24px;">
+      <div class="ads-label">Sponsored Footer Banner</div>
+      <div class="ads-banner-slot" id="bottomAdBanner">
+        <ins class="adsbygoogle"
+             style="display:block; width:100%; height:90px;"
+             data-ad-client="ca-pub-XXXXXXXXXXXXXXXX"
+             data-ad-slot="0987654321"
+             data-ad-format="horizontal"
+             data-full-width-responsive="true"></ins>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 9 6 6m0-6-6 6"/>
+        </svg>
+        <span>Google Ads Placement (Responsive AdSense Slot)</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Google Auth Profile Modal -->
+  <div class="modal-overlay" id="authModal">
+    <div class="modal-content">
+      <button class="modal-close-btn" id="modalCloseBtn">&times;</button>
+      
+      <div style="text-align: center; display: flex; flex-direction: column; gap: 8px;">
+        <div style="width: 48px; height: 48px; background: var(--spotify-green); border-radius: 50%; margin: 0 auto; display: flex; align-items: center; justify-content: center;">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="#000">
+            <path d="M12 2C6.477 2 2 6.477 2 12c0 5.523 4.477 10 10 10s10-4.477 10-10c0-5.523-4.477-10-10-10zm4.586 14.424a.623.623 0 0 1-.858.207c-2.348-1.435-5.304-1.76-8.785-.964a.625.625 0 0 1-.28-1.218c3.807-.87 7.075-.496 9.716 1.117.29.177.384.558.207.858zm1.226-2.724a.78.78 0 0 1-1.073.257c-2.688-1.652-6.786-2.13-9.965-1.165a.781.781 0 0 1-.469-1.492c3.633-1.103 8.147-.57 11.25 1.339.346.213.456.67.257 1.061zm.105-2.835C14.697 8.94 9.387 8.765 6.302 9.702a.936.936 0 0 1-.555-1.79c3.551-1.077 9.42-.87 13.14 1.341a.937.937 0 0 1-.97 1.612z"/>
+          </svg>
+        </div>
+        <h3 style="font-size: 1.3rem; font-weight: 700; color: #fff;">Akun Rync432</h3>
+        <p style="font-size: 0.85rem; color: var(--text-silver);">Masuk dengan Google untuk menyimpan profil delay speaker dan preferensi room Anda.</p>
+      </div>
+
+      <div id="authLoggedOutView" style="display: flex; flex-direction: column; gap: 14px;">
+        <button class="btn-google-login" id="googleSignInActionBtn">
+          <svg class="google-g-icon" viewBox="0 0 24 24">
+            <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+            <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+            <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+            <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+          </svg>
+          Lanjutkan dengan Google
+        </button>
+
+        <button class="btn-spotify btn-spotify-dark" id="guestModeBtn">
+          Gunakan Mode Guest (Anonim)
+        </button>
+      </div>
+
+      <div id="authLoggedInView" style="display: none; flex-direction: column; gap: 14px; text-align: center;">
+        <div style="display: flex; flex-direction: column; align-items: center; gap: 6px;">
+          <img id="userModalAvatar" src="" alt="Avatar" style="width: 56px; height: 56px; border-radius: 50%; border: 2px solid var(--spotify-green);">
+          <div id="userModalName" style="font-weight: 700; font-size: 1.1rem; color: #fff;">User Name</div>
+          <div id="userModalEmail" style="font-size: 0.8rem; color: var(--text-silver);">user@gmail.com</div>
+        </div>
+
+        <button class="btn-spotify btn-spotify-danger" id="signOutBtn">
+          Sign Out
+        </button>
+      </div>
+
+      <div style="font-size: 0.72rem; color: var(--text-subdued); text-align: center;">
+        OAuth 2.0 Google Security Verified • Rync432 Engine
+      </div>
+    </div>
+  </div>
+
+  <!-- App Bootstrap Scripts -->
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>
