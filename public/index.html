@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Rync432 • Web-Native Multi-Device Audio Synchronizer</title>
-  <meta name="description" content="Ultra-low latency web-native multi-device synchronized audio mesh player with sample-accurate Web Audio API clock synchronization, per-device latency tuning, and Firebase Google Auth.">
+  <meta name="description" content="Ultra-low latency web-native multi-device synchronized audio mesh player with sample-accurate Web Audio API clock synchronization and Firebase Google Auth.">
   <link rel="stylesheet" href="/css/style.css">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔊</text></svg>">
   
@@ -72,6 +72,9 @@
       </div>
     </div>
 
+    <!-- Hidden Global File Input for Audio Uploads -->
+    <input type="file" id="audioFileInput" accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac" style="display: none;">
+
     <!-- Room Entry Hero (When not in a room) -->
     <section class="spotify-card room-hero-section" id="roomHeroSection">
       <div class="hero-title-group">
@@ -91,7 +94,7 @@
             </svg>
             Buat Room Baru (Master)
           </h3>
-          <p>Mulai sebagai Host untuk mengontrol lagu, membagikan audio buffer, dan mengatur ritme.</p>
+          <p>Mulai sebagai Host untuk mengontrol lagu, upload file audio, dan mengatur ritme.</p>
           <button class="btn-spotify btn-spotify-primary" id="createRoomBtn">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <line x1="12" y1="5" x2="12" y2="19"></line>
@@ -107,7 +110,7 @@
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--text-announcement)" stroke-width="2.2">
               <rect width="16" height="20" x="4" y="2" rx="2"/>
               <circle cx="12" cy="14" r="4"/>
-              <line x1="12" x2="12.01" y1="6" y2="6"/>
+              <line x1="12" y1="6" x2="12.01" y1="6" y2="6"/>
             </svg>
             Gabung Room (Satellite)
           </h3>
@@ -117,6 +120,19 @@
             <button class="btn-spotify btn-spotify-primary" id="joinRoomBtn">Join</button>
           </div>
         </div>
+      </div>
+
+      <!-- Quick Upload Dropzone on Hero Page -->
+      <div class="dropzone-box" id="heroDropzone" style="margin-top: 6px;">
+        <div class="dropzone-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9 18V5l12-2v13"></path>
+            <circle cx="6" cy="18" r="3"></circle>
+            <circle cx="18" cy="16" r="3"></circle>
+          </svg>
+        </div>
+        <div style="font-weight: 700; font-size: 0.95rem; color: #fff;">Upload & Play File Audio (MP3, WAV, FLAC, AAC)</div>
+        <div style="font-size: 0.8rem; color: var(--text-silver);">Klik atau drag & drop file musik ke sini untuk langsung membuat room & mulai memutar</div>
       </div>
     </section>
 
@@ -155,7 +171,6 @@
             <!-- Track Info & Artwork Row -->
             <div class="track-artwork-row">
               <div class="album-art-box" id="albumArtBox">
-                <!-- Audio Mesh Artwork Icon -->
                 <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M9 18V5l12-2v13"></path>
                   <circle cx="6" cy="18" r="3"></circle>
@@ -164,7 +179,7 @@
               </div>
               <div class="track-info-texts">
                 <div class="track-title" id="trackTitle">No track loaded</div>
-                <div class="track-sub" id="trackSub">Upload file audio atau klik Neon Groove demo</div>
+                <div class="track-sub" id="trackSub">Upload file audio atau klik lagu instan di bawah</div>
               </div>
             </div>
 
@@ -229,8 +244,6 @@
               Sumber Audio (Sample-Accurate Buffer)
             </h3>
 
-            <input type="file" id="audioFileInput" accept="audio/*" style="display: none;">
-            
             <div class="dropzone-box" id="audioDropzone">
               <div class="dropzone-icon">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -244,10 +257,13 @@
             </div>
 
             <div style="margin-top: 14px; display: flex; flex-direction: column; gap: 8px;">
-              <div style="font-size: 0.8rem; color: var(--text-subdued);">Atau uji instan dengan Built-in Synthwave Track:</div>
+              <div style="font-size: 0.8rem; color: var(--text-subdued);">Atau uji instan dengan Trek Siap Pakai:</div>
               <div class="preset-track-grid">
+                <button class="btn-spotify btn-spotify-dark" id="sampleWavBtn">
+                  🎵 Acoustic Sample (WAV)
+                </button>
                 <button class="btn-spotify btn-spotify-dark" id="demoSynthBtn">
-                  ⚡ Neon Groove (Demo)
+                  ⚡ Neon Groove (Synthwave)
                 </button>
               </div>
             </div>
@@ -381,7 +397,7 @@
           </svg>
         </div>
         <h3 style="font-size: 1.3rem; font-weight: 700; color: #fff;">Firebase Google Auth</h3>
-        <p style="font-size: 0.85rem; color: var(--text-silver);">Masuk dengan akun Google asli via Firebase Authentication untuk menyimpan room & preferensi delay.</p>
+        <p style="font-size: 0.85rem; color: var(--text-silver);">Masuk dengan akun Google via Firebase Authentication untuk menyimpan room & preferensi delay Anda.</p>
       </div>
 
       <!-- Logged Out View -->
@@ -395,21 +411,6 @@
           </svg>
           Sign in with Google
         </button>
-
-        <button class="btn-spotify btn-spotify-dark" id="toggleFirebaseConfigBtn" style="font-size: 0.78rem;">
-          ⚙️ Atur Firebase Project Key
-        </button>
-
-        <!-- Firebase Config Setup Section (Collapsible) -->
-        <div id="firebaseConfigForm" style="display: none; flex-direction: column; gap: 8px; background: var(--spotify-black); padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-gray);">
-          <div style="font-size: 0.75rem; color: var(--text-silver); font-weight: 600;">Masukkan Firebase Web App Config Anda:</div>
-          <input type="text" id="fbApiKeyInput" class="spotify-input" placeholder="apiKey (AIzaSy...)" style="font-size: 0.78rem; min-height: 36px; padding: 6px 12px;">
-          <input type="text" id="fbAuthDomainInput" class="spotify-input" placeholder="authDomain (project.firebaseapp.com)" style="font-size: 0.78rem; min-height: 36px; padding: 6px 12px;">
-          <input type="text" id="fbProjectIdInput" class="spotify-input" placeholder="projectId" style="font-size: 0.78rem; min-height: 36px; padding: 6px 12px;">
-          <button class="btn-spotify btn-spotify-primary" id="saveFirebaseConfigBtn" style="padding: 6px 14px; font-size: 0.78rem; min-height: 34px;">
-            Simpan Konfigurasi
-          </button>
-        </div>
 
         <button class="btn-spotify btn-spotify-outline" id="guestModeBtn">
           Gunakan Mode Guest (Anonim)
@@ -430,7 +431,7 @@
       </div>
 
       <div style="font-size: 0.72rem; color: var(--text-subdued); text-align: center;">
-        Official Firebase Authentication SDK v10 • Google OAuth 2.0
+        Official Firebase Authentication SDK • Google OAuth 2.0
       </div>
     </div>
   </div>

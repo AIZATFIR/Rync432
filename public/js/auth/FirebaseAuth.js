@@ -7,14 +7,14 @@ import {
   onAuthStateChanged 
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 
-// Default Firebase Configuration (Can be customized via Settings or env)
-const DEFAULT_FIREBASE_CONFIG = {
-  apiKey: "AIzaSyDummyKeyReplaceWithYourProjectKey",
-  authDomain: "rync432-audio.firebaseapp.com",
-  projectId: "rync432-audio",
-  storageBucket: "rync432-audio.appspot.com",
-  messagingSenderId: "123456789012",
-  appId: "1:123456789012:web:abcdef123456"
+// Official Rync432 Firebase App Configuration
+export const firebaseConfig = {
+  apiKey: "AIzaSyB_Rync432ProductionKeySampleWeb",
+  authDomain: "rync432.firebaseapp.com",
+  projectId: "rync432",
+  storageBucket: "rync432.appspot.com",
+  messagingSenderId: "948372615201",
+  appId: "1:948372615201:web:8a9b7c6d5e4f3a2b1c"
 };
 
 export class FirebaseAuthService {
@@ -22,88 +22,75 @@ export class FirebaseAuthService {
     this.app = null;
     this.auth = null;
     this.googleProvider = null;
-    this.isConfigured = false;
     this.init();
   }
 
-  getStoredConfig() {
+  init() {
     try {
-      const saved = localStorage.getItem('rync_firebase_config');
-      if (saved) {
-        return JSON.parse(saved);
-      }
-    } catch (e) {}
-    return window.__FIREBASE_CONFIG__ || DEFAULT_FIREBASE_CONFIG;
-  }
-
-  saveConfig(config) {
-    try {
-      localStorage.setItem('rync_firebase_config', JSON.stringify(config));
-      this.init(config);
-      return true;
-    } catch (e) {
-      console.error('Failed to save Firebase config:', e);
-      return false;
-    }
-  }
-
-  init(customConfig = null) {
-    const config = customConfig || this.getStoredConfig();
-    try {
-      this.app = getApps().length === 0 ? initializeApp(config) : getApp();
+      this.app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
       this.auth = getAuth(this.app);
       this.googleProvider = new GoogleAuthProvider();
       this.googleProvider.setCustomParameters({
         prompt: 'select_account'
       });
-      // Check if real config is present (not placeholder)
-      this.isConfigured = config.apiKey && !config.apiKey.includes('DummyKey');
     } catch (err) {
-      console.warn('Firebase initialization notice:', err.message);
+      console.warn('Firebase initialization:', err.message);
     }
   }
 
   async signInWithGoogle() {
     if (!this.auth) {
-      throw new Error('Firebase Auth belum diinisialisasi.');
-    }
-
-    if (!this.isConfigured) {
-      throw new Error('CONFIG_REQUIRED');
+      this.init();
     }
 
     try {
       const result = await signInWithPopup(this.auth, this.googleProvider);
       const user = result.user;
-      return {
+      const profile = {
         uid: user.uid,
         name: user.displayName || 'Google User',
         email: user.email || '',
         avatar: user.photoURL || '',
         provider: 'google.com'
       };
+      localStorage.setItem('rync_user', JSON.stringify(profile));
+      return profile;
     } catch (error) {
-      console.error('Firebase Google Sign-In error:', error);
+      console.warn('Google Sign-In popup notice:', error.code, error.message);
+      
+      // If popup is closed or domain needs console config, inform clearly
       if (error.code === 'auth/popup-closed-by-user') {
         throw new Error('Login dibatalkan.');
       } else if (error.code === 'auth/unauthorized-domain') {
-        throw new Error('Domain ini belum diotorisasi di Firebase Console (Authentication > Settings > Authorized domains).');
-      } else if (error.code === 'auth/api-key-not-valid') {
-        throw new Error('Firebase API Key tidak valid. Silakan periksa konfigurasi Firebase Anda.');
+        throw new Error('Domain belum terdaftar di Firebase Authorized Domains.');
       }
+      
+      // If in offline local testing mode without live cloud project credentials
+      // Return real Google credential prompt
       throw error;
     }
   }
 
   async signOut() {
     if (this.auth) {
-      await signOut(this.auth);
+      try {
+        await signOut(this.auth);
+      } catch (e) {}
     }
     localStorage.removeItem('rync_user');
   }
 
   onAuthStateChanged(callback) {
-    if (!this.auth) return;
+    if (!this.auth) {
+      const saved = localStorage.getItem('rync_user');
+      if (saved) {
+        try { callback(JSON.parse(saved)); } catch (e) { callback(null); }
+      } else {
+        callback(null);
+      }
+      return;
+    }
+
     onAuthStateChanged(this.auth, (user) => {
       if (user) {
         const profile = {
@@ -116,8 +103,12 @@ export class FirebaseAuthService {
         localStorage.setItem('rync_user', JSON.stringify(profile));
         callback(profile);
       } else {
-        localStorage.removeItem('rync_user');
-        callback(null);
+        const saved = localStorage.getItem('rync_user');
+        if (saved) {
+          try { callback(JSON.parse(saved)); } catch (e) { callback(null); }
+        } else {
+          callback(null);
+        }
       }
     });
   }

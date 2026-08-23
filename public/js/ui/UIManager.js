@@ -27,12 +27,6 @@ export class UIManager {
       modalCloseBtn: document.getElementById('modalCloseBtn'),
       googleSignInActionBtn: document.getElementById('googleSignInActionBtn'),
       guestModeBtn: document.getElementById('guestModeBtn'),
-      toggleFirebaseConfigBtn: document.getElementById('toggleFirebaseConfigBtn'),
-      firebaseConfigForm: document.getElementById('firebaseConfigForm'),
-      fbApiKeyInput: document.getElementById('fbApiKeyInput'),
-      fbAuthDomainInput: document.getElementById('fbAuthDomainInput'),
-      fbProjectIdInput: document.getElementById('fbProjectIdInput'),
-      saveFirebaseConfigBtn: document.getElementById('saveFirebaseConfigBtn'),
       authLoggedOutView: document.getElementById('authLoggedOutView'),
       authLoggedInView: document.getElementById('authLoggedInView'),
       userModalAvatar: document.getElementById('userModalAvatar'),
@@ -61,7 +55,9 @@ export class UIManager {
       
       // Upload & Demo
       dropzone: document.getElementById('audioDropzone'),
+      heroDropzone: document.getElementById('heroDropzone'),
       audioFileInput: document.getElementById('audioFileInput'),
+      sampleWavBtn: document.getElementById('sampleWavBtn'),
       demoSynthBtn: document.getElementById('demoSynthBtn'),
 
       // Feature 1: Metronome
@@ -89,22 +85,17 @@ export class UIManager {
     this.initFirebaseAuthListener();
     this.bindEvents();
     this.startPlaybackTicker();
+
+    this.app.audioEngine.onPlaybackEnded = () => {
+      this.setPlayState(false);
+    };
   }
 
   initFirebaseAuthListener() {
-    // Listen to real Firebase Auth State
     firebaseAuth.onAuthStateChanged((user) => {
       this.currentUser = user;
       this.renderUserState();
     });
-
-    // Populate saved config if exists
-    const config = firebaseAuth.getStoredConfig();
-    if (config && this.elements.fbApiKeyInput) {
-      this.elements.fbApiKeyInput.value = config.apiKey || '';
-      this.elements.fbAuthDomainInput.value = config.authDomain || '';
-      this.elements.fbProjectIdInput.value = config.projectId || '';
-    }
   }
 
   bindEvents() {
@@ -125,38 +116,6 @@ export class UIManager {
       }
     });
 
-    // Toggle Firebase Project Setup Inputs
-    if (elements.toggleFirebaseConfigBtn) {
-      elements.toggleFirebaseConfigBtn.addEventListener('click', () => {
-        const isHidden = elements.firebaseConfigForm.style.display === 'none';
-        elements.firebaseConfigForm.style.display = isHidden ? 'flex' : 'none';
-      });
-    }
-
-    if (elements.saveFirebaseConfigBtn) {
-      elements.saveFirebaseConfigBtn.addEventListener('click', () => {
-        const apiKey = elements.fbApiKeyInput.value.trim();
-        const authDomain = elements.fbAuthDomainInput.value.trim();
-        const projectId = elements.fbProjectIdInput.value.trim();
-        
-        if (!apiKey || !authDomain || !projectId) {
-          alert('Mohon isi apiKey, authDomain, dan projectId Firebase.');
-          return;
-        }
-
-        firebaseAuth.saveConfig({
-          apiKey,
-          authDomain,
-          projectId,
-          storageBucket: `${projectId}.appspot.com`,
-          appId: `1:custom:web:${projectId}`
-        });
-
-        alert('Konfigurasi Firebase berhasil disimpan! Anda sekarang dapat Sign in dengan Google.');
-        elements.firebaseConfigForm.style.display = 'none';
-      });
-    }
-
     // Real Firebase Google Sign-In Action
     elements.googleSignInActionBtn.addEventListener('click', async () => {
       try {
@@ -165,12 +124,8 @@ export class UIManager {
         this.renderUserState();
         elements.authModal.classList.remove('active');
       } catch (err) {
-        if (err.message === 'CONFIG_REQUIRED') {
-          alert('Silakan masukkan Firebase Web App Config proyek Anda terlebih dahulu melalui menu "Atur Firebase Project Key".');
-          elements.firebaseConfigForm.style.display = 'flex';
-        } else {
-          alert('Google Auth Notice: ' + err.message);
-        }
+        console.warn('Google Sign-In:', err.message);
+        alert(err.message || 'Gagal login dengan Google.');
       }
     });
 
@@ -248,33 +203,102 @@ export class UIManager {
       app.audioEngine.setVolume(vol);
     });
 
-    // Audio Upload & Dropzone
-    elements.dropzone.addEventListener('click', () => elements.audioFileInput.click());
-    
-    elements.dropzone.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      elements.dropzone.classList.add('dragover');
-    });
+    // 4. File Upload Triggers (Active Dropzone, Hero Dropzone & Window Drag/Drop)
+    const triggerFileSelect = () => {
+      app.audioEngine.ensureContext();
+      elements.audioFileInput.value = '';
+      elements.audioFileInput.click();
+    };
 
-    elements.dropzone.addEventListener('dragleave', () => {
-      elements.dropzone.classList.remove('dragover');
-    });
+    if (elements.dropzone) {
+      elements.dropzone.addEventListener('click', triggerFileSelect);
+      
+      elements.dropzone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        elements.dropzone.classList.add('dragover');
+      });
 
-    elements.dropzone.addEventListener('drop', (e) => {
+      elements.dropzone.addEventListener('dragleave', () => {
+        elements.dropzone.classList.remove('dragover');
+      });
+
+      elements.dropzone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        elements.dropzone.classList.remove('dragover');
+        const files = e.dataTransfer.files;
+        if (files.length > 0) this.handleAudioFile(files[0]);
+      });
+    }
+
+    if (elements.heroDropzone) {
+      elements.heroDropzone.addEventListener('click', triggerFileSelect);
+      
+      elements.heroDropzone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        elements.heroDropzone.classList.add('dragover');
+      });
+
+      elements.heroDropzone.addEventListener('dragleave', () => {
+        elements.heroDropzone.classList.remove('dragover');
+      });
+
+      elements.heroDropzone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        elements.heroDropzone.classList.remove('dragover');
+        const files = e.dataTransfer.files;
+        if (files.length > 0) this.handleAudioFile(files[0]);
+      });
+    }
+
+    // Global Window File Drag and Drop
+    window.addEventListener('dragover', (e) => e.preventDefault());
+    window.addEventListener('drop', (e) => {
       e.preventDefault();
-      elements.dropzone.classList.remove('dragover');
       const files = e.dataTransfer.files;
-      if (files.length > 0) this.handleAudioFile(files[0]);
+      if (files && files.length > 0 && files[0].type.startsWith('audio/')) {
+        this.handleAudioFile(files[0]);
+      }
     });
 
+    // File Input Onchange
     elements.audioFileInput.addEventListener('change', (e) => {
       const files = e.target.files;
-      if (files.length > 0) this.handleAudioFile(files[0]);
+      if (files && files.length > 0) {
+        this.handleAudioFile(files[0]);
+      }
     });
+
+    // Sample Acoustic Track (WAV) Loader
+    if (elements.sampleWavBtn) {
+      elements.sampleWavBtn.addEventListener('click', async () => {
+        app.audioEngine.ensureContext();
+        if (!app.socketClient.roomId) {
+          app.socketClient.createRoom(this.getDeviceName());
+        }
+        this.setTrackLoading('Loading Acoustic Sample Track...');
+        try {
+          const buffer = await app.audioEngine.loadAudioFromUrl('/test_music_sample.wav', 'Acoustic Harmonics (Sample WAV)');
+          this.updateTrackUI('Acoustic Harmonics (Sample WAV)', buffer.duration);
+
+          if (app.socketClient.isHost) {
+            app.socketClient.sendTrackMetadata({
+              name: 'Acoustic Harmonics (Sample WAV)',
+              duration: buffer.duration
+            });
+          }
+        } catch (err) {
+          console.error(err);
+          alert('Gagal memuat sample audio: ' + err.message);
+        }
+      });
+    }
 
     // Preset Synthetic Demo
     elements.demoSynthBtn.addEventListener('click', async () => {
       app.audioEngine.ensureContext();
+      if (!app.socketClient.roomId) {
+        app.socketClient.createRoom(this.getDeviceName());
+      }
       this.setTrackLoading('Generating Neon Groove Synthwave...');
       try {
         const buffer = app.audioEngine.generateSyntheticTrack('synthwave');
@@ -373,6 +397,12 @@ export class UIManager {
   async handleAudioFile(file) {
     const app = this.app;
     app.audioEngine.ensureContext();
+
+    // If user uploads before creating/joining room, auto create room as Host
+    if (!app.socketClient.roomId) {
+      app.socketClient.createRoom(this.getDeviceName());
+    }
+
     this.setTrackLoading(`Decoding ${file.name}...`);
 
     try {
@@ -389,8 +419,12 @@ export class UIManager {
       }
     } catch (err) {
       console.error(err);
-      alert('Gagal mendecode file audio. Format yang didukung: MP3, WAV, FLAC, AAC, OGG.');
+      alert('Gagal mendecode file audio: ' + (err.message || 'Format tidak didukung'));
       this.setTrackLoading('No track loaded');
+    } finally {
+      if (this.elements.audioFileInput) {
+        this.elements.audioFileInput.value = '';
+      }
     }
   }
 
