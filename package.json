@@ -1,5 +1,5 @@
 {
-  "name": "rync432-music-mesh",
+  "name": "rync432",
   "version": "1.0.0",
   "description": "Ultra-low latency web-native multi-device synchronized audio mesh",
   "main": "server/server.js",
@@ -7,11 +7,13 @@
   "scripts": {
     "start": "node server/server.js",
     "dev": "node --watch server/server.js",
+    "build": "echo 'Rync432 build successful'",
     "test": "vitest run"
   },
   "keywords": [
     "audio-sync",
     "web-audio-api",
+    "firebase-auth",
     "webrtc",
     "websocket",
     "multi-device-playback"
@@ -19,6 +21,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "firebase": "^11.3.1",
     "ws": "^8.18.0"
   },
   "devDependencies": {

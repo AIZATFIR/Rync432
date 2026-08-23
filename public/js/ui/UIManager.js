@@ -1,3 +1,5 @@
+import { firebaseAuth } from '../auth/FirebaseAuth.js';
+
 export class UIManager {
   constructor(app) {
     this.app = app;
@@ -25,6 +27,12 @@ export class UIManager {
       modalCloseBtn: document.getElementById('modalCloseBtn'),
       googleSignInActionBtn: document.getElementById('googleSignInActionBtn'),
       guestModeBtn: document.getElementById('guestModeBtn'),
+      toggleFirebaseConfigBtn: document.getElementById('toggleFirebaseConfigBtn'),
+      firebaseConfigForm: document.getElementById('firebaseConfigForm'),
+      fbApiKeyInput: document.getElementById('fbApiKeyInput'),
+      fbAuthDomainInput: document.getElementById('fbAuthDomainInput'),
+      fbProjectIdInput: document.getElementById('fbProjectIdInput'),
+      saveFirebaseConfigBtn: document.getElementById('saveFirebaseConfigBtn'),
       authLoggedOutView: document.getElementById('authLoggedOutView'),
       authLoggedInView: document.getElementById('authLoggedInView'),
       userModalAvatar: document.getElementById('userModalAvatar'),
@@ -78,15 +86,31 @@ export class UIManager {
       deviceCountBadge: document.getElementById('deviceCountBadge')
     };
 
-    this.loadSavedUser();
+    this.initFirebaseAuthListener();
     this.bindEvents();
     this.startPlaybackTicker();
+  }
+
+  initFirebaseAuthListener() {
+    // Listen to real Firebase Auth State
+    firebaseAuth.onAuthStateChanged((user) => {
+      this.currentUser = user;
+      this.renderUserState();
+    });
+
+    // Populate saved config if exists
+    const config = firebaseAuth.getStoredConfig();
+    if (config && this.elements.fbApiKeyInput) {
+      this.elements.fbApiKeyInput.value = config.apiKey || '';
+      this.elements.fbAuthDomainInput.value = config.authDomain || '';
+      this.elements.fbProjectIdInput.value = config.projectId || '';
+    }
   }
 
   bindEvents() {
     const { elements, app } = this;
 
-    // 1. Google Auth Modal
+    // 1. Firebase Auth Modal
     elements.userAuthBtn.addEventListener('click', () => {
       elements.authModal.classList.add('active');
     });
@@ -101,16 +125,64 @@ export class UIManager {
       }
     });
 
-    elements.googleSignInActionBtn.addEventListener('click', () => {
-      this.handleGoogleSignIn();
+    // Toggle Firebase Project Setup Inputs
+    if (elements.toggleFirebaseConfigBtn) {
+      elements.toggleFirebaseConfigBtn.addEventListener('click', () => {
+        const isHidden = elements.firebaseConfigForm.style.display === 'none';
+        elements.firebaseConfigForm.style.display = isHidden ? 'flex' : 'none';
+      });
+    }
+
+    if (elements.saveFirebaseConfigBtn) {
+      elements.saveFirebaseConfigBtn.addEventListener('click', () => {
+        const apiKey = elements.fbApiKeyInput.value.trim();
+        const authDomain = elements.fbAuthDomainInput.value.trim();
+        const projectId = elements.fbProjectIdInput.value.trim();
+        
+        if (!apiKey || !authDomain || !projectId) {
+          alert('Mohon isi apiKey, authDomain, dan projectId Firebase.');
+          return;
+        }
+
+        firebaseAuth.saveConfig({
+          apiKey,
+          authDomain,
+          projectId,
+          storageBucket: `${projectId}.appspot.com`,
+          appId: `1:custom:web:${projectId}`
+        });
+
+        alert('Konfigurasi Firebase berhasil disimpan! Anda sekarang dapat Sign in dengan Google.');
+        elements.firebaseConfigForm.style.display = 'none';
+      });
+    }
+
+    // Real Firebase Google Sign-In Action
+    elements.googleSignInActionBtn.addEventListener('click', async () => {
+      try {
+        const user = await firebaseAuth.signInWithGoogle();
+        this.currentUser = user;
+        this.renderUserState();
+        elements.authModal.classList.remove('active');
+      } catch (err) {
+        if (err.message === 'CONFIG_REQUIRED') {
+          alert('Silakan masukkan Firebase Web App Config proyek Anda terlebih dahulu melalui menu "Atur Firebase Project Key".');
+          elements.firebaseConfigForm.style.display = 'flex';
+        } else {
+          alert('Google Auth Notice: ' + err.message);
+        }
+      }
     });
 
     elements.guestModeBtn.addEventListener('click', () => {
       elements.authModal.classList.remove('active');
     });
 
-    elements.signOutBtn.addEventListener('click', () => {
-      this.handleSignOut();
+    elements.signOutBtn.addEventListener('click', async () => {
+      await firebaseAuth.signOut();
+      this.currentUser = null;
+      this.renderUserState();
+      elements.authModal.classList.remove('active');
     });
 
     // 2. Room Actions
@@ -254,50 +326,21 @@ export class UIManager {
     elements.presetAirplay.addEventListener('click', () => this.applyPreset('airplay', 250));
   }
 
-  loadSavedUser() {
-    try {
-      const saved = localStorage.getItem('rync_user');
-      if (saved) {
-        this.currentUser = JSON.parse(saved);
-        this.renderUserState();
-      }
-    } catch (e) {}
-  }
-
-  handleGoogleSignIn() {
-    // Simulated Google OAuth Flow (produces real persistent user profile)
-    const mockGoogleProfiles = [
-      { name: 'Alex Johnson', email: 'alex.audio@gmail.com', avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&auto=format&fit=crop&q=80' },
-      { name: 'Siti Rahma', email: 'siti.music@gmail.com', avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&auto=format&fit=crop&q=80' },
-      { name: 'Dimas Pratama', email: 'dimas.sound@gmail.com', avatar: 'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=100&auto=format&fit=crop&q=80' }
-    ];
-
-    const randomUser = mockGoogleProfiles[Math.floor(Math.random() * mockGoogleProfiles.length)];
-    this.currentUser = randomUser;
-    localStorage.setItem('rync_user', JSON.stringify(randomUser));
-
-    this.renderUserState();
-    this.elements.authModal.classList.remove('active');
-  }
-
-  handleSignOut() {
-    this.currentUser = null;
-    localStorage.removeItem('rync_user');
-    this.renderUserState();
-    this.elements.authModal.classList.remove('active');
-  }
-
   renderUserState() {
     const { elements, currentUser } = this;
     if (currentUser) {
-      elements.userNameLabel.innerText = currentUser.name.split(' ')[0];
-      elements.userAvatarContainer.innerHTML = `<img src="${currentUser.avatar}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;">`;
+      elements.userNameLabel.innerText = currentUser.name ? currentUser.name.split(' ')[0] : 'User';
+      if (currentUser.avatar) {
+        elements.userAvatarContainer.innerHTML = `<img src="${currentUser.avatar}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;">`;
+      } else {
+        elements.userAvatarContainer.innerHTML = `<span style="font-weight:700;color:var(--spotify-green);">${currentUser.name ? currentUser.name.charAt(0) : 'U'}</span>`;
+      }
       
       elements.authLoggedOutView.style.display = 'none';
       elements.authLoggedInView.style.display = 'flex';
-      elements.userModalAvatar.src = currentUser.avatar;
-      elements.userModalName.innerText = currentUser.name;
-      elements.userModalEmail.innerText = currentUser.email;
+      elements.userModalAvatar.src = currentUser.avatar || 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2250%22 r=%2245%22 fill=%22%231ed760%22/></svg>';
+      elements.userModalName.innerText = currentUser.name || 'Firebase Google User';
+      elements.userModalEmail.innerText = currentUser.email || '';
     } else {
       elements.userNameLabel.innerText = 'Sign in';
       elements.userAvatarContainer.innerHTML = `
@@ -314,11 +357,11 @@ export class UIManager {
   }
 
   getDeviceName() {
-    if (this.currentUser) {
+    if (this.currentUser && this.currentUser.name) {
       return `${this.currentUser.name} Speaker`;
     }
     const ua = navigator.userAgent;
-    let name = 'Spotify Mesh Speaker';
+    let name = 'Rync Speaker';
     if (/iPhone|iPad/i.test(ua)) name = 'iOS Speaker';
     else if (/Android/i.test(ua)) name = 'Android Speaker';
     else if (/Macintosh/i.test(ua)) name = 'Mac Speaker';
