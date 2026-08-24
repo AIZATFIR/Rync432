@@ -204,10 +204,13 @@ export class UIManager {
     });
 
     // 4. File Upload Triggers (Active Dropzone, Hero Dropzone & Window Drag/Drop)
-    const triggerFileSelect = () => {
+    const triggerFileSelect = (e) => {
+      if (e) e.stopPropagation();
       app.audioEngine.ensureContext();
-      elements.audioFileInput.value = '';
-      elements.audioFileInput.click();
+      if (elements.audioFileInput) {
+        elements.audioFileInput.value = '';
+        elements.audioFileInput.click();
+      }
     };
 
     if (elements.dropzone) {
@@ -215,18 +218,22 @@ export class UIManager {
       
       elements.dropzone.addEventListener('dragover', (e) => {
         e.preventDefault();
+        e.stopPropagation();
         elements.dropzone.classList.add('dragover');
       });
 
-      elements.dropzone.addEventListener('dragleave', () => {
+      elements.dropzone.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         elements.dropzone.classList.remove('dragover');
       });
 
       elements.dropzone.addEventListener('drop', (e) => {
         e.preventDefault();
+        e.stopPropagation();
         elements.dropzone.classList.remove('dragover');
-        const files = e.dataTransfer.files;
-        if (files.length > 0) this.handleAudioFile(files[0]);
+        const files = e.dataTransfer ? e.dataTransfer.files : null;
+        if (files && files.length > 0) this.handleAudioFile(files[0]);
       });
     }
 
@@ -235,18 +242,22 @@ export class UIManager {
       
       elements.heroDropzone.addEventListener('dragover', (e) => {
         e.preventDefault();
+        e.stopPropagation();
         elements.heroDropzone.classList.add('dragover');
       });
 
-      elements.heroDropzone.addEventListener('dragleave', () => {
+      elements.heroDropzone.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         elements.heroDropzone.classList.remove('dragover');
       });
 
       elements.heroDropzone.addEventListener('drop', (e) => {
         e.preventDefault();
+        e.stopPropagation();
         elements.heroDropzone.classList.remove('dragover');
-        const files = e.dataTransfer.files;
-        if (files.length > 0) this.handleAudioFile(files[0]);
+        const files = e.dataTransfer ? e.dataTransfer.files : null;
+        if (files && files.length > 0) this.handleAudioFile(files[0]);
       });
     }
 
@@ -254,19 +265,21 @@ export class UIManager {
     window.addEventListener('dragover', (e) => e.preventDefault());
     window.addEventListener('drop', (e) => {
       e.preventDefault();
-      const files = e.dataTransfer.files;
-      if (files && files.length > 0 && files[0].type.startsWith('audio/')) {
+      const files = e.dataTransfer ? e.dataTransfer.files : null;
+      if (files && files.length > 0 && (files[0].type.startsWith('audio/') || /\.(mp3|wav|ogg|flac|m4a|aac)$/i.test(files[0].name))) {
         this.handleAudioFile(files[0]);
       }
     });
 
     // File Input Onchange
-    elements.audioFileInput.addEventListener('change', (e) => {
-      const files = e.target.files;
-      if (files && files.length > 0) {
-        this.handleAudioFile(files[0]);
-      }
-    });
+    if (elements.audioFileInput) {
+      elements.audioFileInput.addEventListener('change', (e) => {
+        const files = e.target.files;
+        if (files && files.length > 0) {
+          this.handleAudioFile(files[0]);
+        }
+      });
+    }
 
     // Sample Acoustic Track (WAV) Loader
     if (elements.sampleWavBtn) {
@@ -395,18 +408,21 @@ export class UIManager {
   }
 
   async handleAudioFile(file) {
+    if (!file) return;
     const app = this.app;
-    app.audioEngine.ensureContext();
+    await app.audioEngine.ensureContext();
 
     // If user uploads before creating/joining room, auto create room as Host
     if (!app.socketClient.roomId) {
       app.socketClient.createRoom(this.getDeviceName());
     }
 
-    this.setTrackLoading(`Decoding ${file.name}...`);
+    const fileSizeMb = (file.size / (1024 * 1024)).toFixed(1);
+    this.setTrackLoading(`Membaca ${file.name} (${fileSizeMb} MB)...`);
 
     try {
       const arrayBuffer = await file.arrayBuffer();
+      this.setTrackLoading(`Mendecode audio ${file.name}...`);
       const audioBuffer = await app.audioEngine.loadAudioFromArrayBuffer(arrayBuffer, file.name);
       this.updateTrackUI(file.name, audioBuffer.duration);
 
@@ -418,7 +434,7 @@ export class UIManager {
         app.socketClient.sendBinary(arrayBuffer);
       }
     } catch (err) {
-      console.error(err);
+      console.error('Audio load error:', err);
       alert('Gagal mendecode file audio: ' + (err.message || 'Format tidak didukung'));
       this.setTrackLoading('No track loaded');
     } finally {

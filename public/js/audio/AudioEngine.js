@@ -21,7 +21,7 @@ export class AudioEngine {
     this.metronome = null;
   }
 
-  ensureContext() {
+  async ensureContext() {
     if (!this.ctx) {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       this.ctx = new AudioContextClass({ latencyHint: 'interactive' });
@@ -39,12 +39,15 @@ export class AudioEngine {
       this.metronome = new Metronome(this.ctx);
     }
     if (this.ctx.state === 'suspended') {
-      this.ctx.resume();
+      try {
+        await this.ctx.resume();
+      } catch (e) {}
     }
+    return this.ctx;
   }
 
   async decodeAudioDataSafe(arrayBuffer) {
-    this.ensureContext();
+    await this.ensureContext();
     return new Promise((resolve, reject) => {
       // Clone buffer because decodeAudioData detaches the ArrayBuffer
       const bufferCopy = arrayBuffer.slice(0);
@@ -83,7 +86,7 @@ export class AudioEngine {
   }
 
   async loadAudioFromArrayBuffer(arrayBuffer, trackName = 'Uploaded Track') {
-    this.ensureContext();
+    await this.ensureContext();
     try {
       this.audioBuffer = await this.decodeAudioDataSafe(arrayBuffer);
       this.currentTrackName = trackName;
@@ -97,7 +100,7 @@ export class AudioEngine {
   }
 
   async loadAudioFromUrl(url, trackName = 'Remote Track') {
-    this.ensureContext();
+    await this.ensureContext();
     const response = await fetch(url);
     const arrayBuffer = await response.arrayBuffer();
     return this.loadAudioFromArrayBuffer(arrayBuffer, trackName);
@@ -105,7 +108,7 @@ export class AudioEngine {
 
   generateSyntheticTrack(type = 'synthwave') {
     this.ensureContext();
-    const sampleRate = this.ctx.sampleRate;
+    const sampleRate = this.ctx.sampleRate || 44100;
     const duration = 20; // 20 seconds loop
     const numSamples = sampleRate * duration;
     const buffer = this.ctx.createBuffer(2, numSamples, sampleRate);
