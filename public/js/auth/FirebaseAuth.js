@@ -9,12 +9,13 @@ import {
 
 // Official Rync432 Firebase App Configuration
 export const firebaseConfig = {
-  apiKey: "AIzaSyB_Rync432ProductionKeySampleWeb",
+  apiKey: "AIzaSyB7F4Hjqs9K3R2qu1AJ8eobgdW_eXHTlDw",
   authDomain: "rync432.firebaseapp.com",
   projectId: "rync432",
-  storageBucket: "rync432.appspot.com",
-  messagingSenderId: "948372615201",
-  appId: "1:948372615201:web:8a9b7c6d5e4f3a2b1c"
+  storageBucket: "rync432.firebasestorage.app",
+  messagingSenderId: "607666586504",
+  appId: "1:607666586504:web:0141bd10c4ca3fde58303d",
+  measurementId: "G-QMXEDY6BK5"
 };
 
 export class FirebaseAuthService {
