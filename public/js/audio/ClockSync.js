@@ -7,6 +7,7 @@ export class ClockSync {
     this.rtt = 0;
     this.isSynced = false;
     this.syncInterval = null;
+    this.useHttpFallback = false;
   }
 
   calculateSample({ t0, t1, t2, t3 }) {
@@ -44,9 +45,30 @@ export class ClockSync {
   }
 
   ping() {
-    if (!this.socketSender) return;
+    if (this.useHttpFallback || !this.socketSender) {
+      this.pingHttp();
+      return;
+    }
     const clientTimestamp = Date.now();
     this.socketSender('SYNC_PING', { clientTimestamp });
+  }
+
+  async pingHttp() {
+    const t0 = Date.now();
+    try {
+      const res = await fetch(`/api/health?t0=${t0}`, { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const t3 = Date.now();
+      const t1 = data.t1 || data.timestamp || t3;
+      const t2 = data.t2 || data.timestamp || t3;
+
+      const sample = this.calculateSample({ t0, t1, t2, t3 });
+      this.addSample(sample);
+    } catch (e) {
+      // Offline fallback: offset is 0
+      this.offset = 0;
+    }
   }
 
   handlePong({ clientTimestamp, serverReceiveTime, serverTransmitTime }) {

@@ -1,5 +1,4 @@
 {
-  "name": "rync432",
   "version": 2,
   "cleanUrls": true,
   "buildCommand": "npm run build",
