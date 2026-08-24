@@ -9,6 +9,7 @@ class App {
     this.audioEngine = null;
     this.uiManager = null;
     this.visualizer = null;
+    this.wakeLock = null;
   }
 
   init() {
@@ -29,7 +30,7 @@ class App {
       this.visualizer.start();
     }
 
-    // 5. Connect WebSocket
+    // 5. Connect WebSocket / Cloud Mesh
     this.socketClient.connect();
 
     // 6. Check URL query params for auto-join
@@ -41,6 +42,14 @@ class App {
         this.socketClient.joinRoom(roomParam.toUpperCase(), this.uiManager.getDeviceName());
       }, 500);
     }
+  }
+
+  async requestWakeLock() {
+    try {
+      if ('wakeLock' in navigator) {
+        this.wakeLock = await navigator.wakeLock.request('screen');
+      }
+    } catch (e) {}
   }
 
   async handleNetworkEvent(type, payload) {
@@ -58,11 +67,13 @@ class App {
       case 'ROOM_CREATED':
         uiManager.setRoomState(payload.roomId, true);
         uiManager.renderPeerList(payload.peers || [{ id: payload.peerId, isHost: true, deviceName: 'Master Speaker' }]);
+        this.requestWakeLock();
         break;
 
       case 'ROOM_JOINED':
         uiManager.setRoomState(payload.roomId, payload.isHost);
         uiManager.renderPeerList(payload.peers || []);
+        this.requestWakeLock();
         
         // If track is already loaded in room, update UI
         if (payload.currentTrack) {
@@ -95,6 +106,7 @@ class App {
         }
         break;
 
+      case 'TRACK_METADATA':
       case 'TRACK_LOADED':
         if (payload.isSynthetic) {
           audioEngine.generateSyntheticTrack();
@@ -113,14 +125,17 @@ class App {
         }
         break;
 
+      case 'SCHEDULED_PLAY':
       case 'PLAYBACK_SCHEDULED':
         audioEngine.schedulePlayAtServerTime(
-          payload.scheduledServerTime,
+          payload.targetServerTime || payload.scheduledServerTime,
           payload.startOffsetSec || 0
         );
         uiManager.setPlayState(true);
+        this.requestWakeLock();
         break;
 
+      case 'PAUSED':
       case 'PLAYBACK_PAUSED':
         audioEngine.stopLocalPlayback();
         audioEngine.pauseOffsetSec = payload.currentOffsetSec || 0;
