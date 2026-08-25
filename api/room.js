@@ -1,8 +1,18 @@
 // Serverless In-Memory & Edge Room Mesh Relay for Rync432
-// Supports Multi-Device Sync, Democratic Queue/Playlist, and WebRTC Signaling
+// Supports Multi-Device Sync, Binary Audio Relay, Democratic Queue, and WebRTC
 
 const rooms = globalThis.__rync_rooms || new Map();
+const audioStore = globalThis.__rync_audio_store || new Map();
 globalThis.__rync_rooms = rooms;
+globalThis.__rync_audio_store = audioStore;
+
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '30mb'
+    }
+  }
+};
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -31,11 +41,62 @@ export default async function handler(req, res) {
 
   const now = Date.now();
 
-  // Cleanup old inactive rooms (> 4 hours)
+  // Cleanup old inactive rooms & audio (> 3 hours)
   for (const [id, room] of rooms.entries()) {
-    if (now - (room.updatedAt || 0) > 4 * 3600 * 1000) {
+    if (now - (room.updatedAt || 0) > 3 * 3600 * 1000) {
       rooms.delete(id);
+      audioStore.delete(id);
     }
+  }
+
+  // 1. Binary Audio Relay for Uploaded Files (MP3 / WAV / FLAC)
+  if (action === 'upload_audio') {
+    const audioBase64 = body.audioBase64;
+    const trackName = body.trackName || 'Uploaded Track';
+    const duration = body.duration || 0;
+
+    if (audioBase64 && roomId) {
+      audioStore.set(roomId, {
+        base64: audioBase64,
+        contentType: body.contentType || 'audio/mpeg',
+        trackName,
+        duration,
+        uploadedAt: now
+      });
+
+      const room = rooms.get(roomId);
+      const audioUrl = `/api/room?action=get_audio&roomId=${encodeURIComponent(roomId)}&v=${now}`;
+      const item = {
+        id: 'q_' + Math.random().toString(36).substring(2, 9),
+        name: trackName,
+        artist: 'File Audio',
+        duration,
+        audioUrl,
+        addedBy: deviceName
+      };
+
+      if (room) {
+        room.track = item;
+        room.state = 'IDLE';
+        room.startOffsetSec = 0;
+        room.updatedAt = now;
+      }
+
+      return res.status(200).json({ success: true, audioUrl, track: item });
+    }
+    return res.status(400).json({ error: 'Missing audioBase64 or roomId' });
+  }
+
+  if (action === 'get_audio') {
+    const audioData = audioStore.get(roomId);
+    if (audioData && audioData.base64) {
+      const buffer = Buffer.from(audioData.base64, 'base64');
+      res.setHeader('Content-Type', audioData.contentType || 'audio/mpeg');
+      res.setHeader('Content-Length', buffer.length);
+      res.setHeader('X-Track-Title', encodeURIComponent(audioData.trackName));
+      return res.status(200).send(buffer);
+    }
+    return res.status(404).json({ error: 'Audio not found in room' });
   }
 
   if (action === 'create') {
@@ -118,7 +179,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // Update peer heartbeat
     if (peerId && room.peers[peerId]) {
       room.peers[peerId].lastSeen = now;
       if (deviceName && deviceName !== 'Speaker') {
@@ -136,7 +196,6 @@ export default async function handler(req, res) {
       };
     }
 
-    // Prune dead peers (> 25s inactive)
     for (const [pId, peer] of Object.entries(room.peers)) {
       if (pId !== peerId && now - (peer.lastSeen || 0) > 25000) {
         delete room.peers[pId];
@@ -173,7 +232,6 @@ export default async function handler(req, res) {
     return res.status(404).json({ error: 'Room not found' });
   }
 
-  // Queue actions: Add, Remove, Next
   if (action === 'add_queue') {
     const room = rooms.get(roomId);
     if (room) {
@@ -189,7 +247,6 @@ export default async function handler(req, res) {
         addedBy: deviceName
       };
 
-      // If nothing is playing, play immediately
       if (!room.track) {
         room.track = item;
         room.state = 'PLAYING';

@@ -1053,3 +1053,84 @@ input:checked + .slider-round:before {
   font-size: 0.7rem;
   color: var(--text-subdued);
 }
+
+/* Mobile Responsiveness Improvements */
+@media (max-width: 600px) {
+  .app-container {
+    padding: 8px 8px 30px 8px;
+    gap: 10px;
+  }
+
+  .app-header {
+    padding: 8px 10px;
+  }
+
+  .brand-title {
+    font-size: 1rem;
+  }
+
+  .brand-logo {
+    width: 28px;
+    height: 28px;
+  }
+
+  .spotify-card {
+    padding: 12px 10px;
+  }
+
+  .active-room-bar {
+    padding: 8px 10px;
+    gap: 8px;
+  }
+
+  .room-code-tag {
+    font-size: 1rem;
+    padding: 2px 8px;
+  }
+
+  .room-top-actions {
+    gap: 4px;
+  }
+
+  .room-top-actions .btn-spotify {
+    padding: 4px 8px;
+    font-size: 0.7rem;
+    min-height: 30px;
+  }
+
+  .segmented-channel-chips {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .channel-chip {
+    padding: 4px 6px;
+    font-size: 0.68rem;
+    flex: 1;
+    text-align: center;
+  }
+
+  .player-controls-row {
+    gap: 12px;
+  }
+
+  .btn-ctrl-secondary {
+    width: 38px;
+    height: 38px;
+  }
+
+  .btn-spotify-circle.play-toggle-btn {
+    width: 48px;
+    height: 48px;
+  }
+
+  .source-tabs-header {
+    gap: 4px;
+  }
+
+  .source-tab-btn {
+    padding: 4px 10px;
+    font-size: 0.72rem;
+  }
+}
+

@@ -70,6 +70,11 @@ class App {
         if (payload.currentTrack) {
           if (payload.currentTrack.isSynthetic) {
             audioEngine.generateSyntheticTrack();
+          } else if (payload.currentTrack.audioUrl) {
+            uiManager.setTrackLoading(`Mengunduh ${payload.currentTrack.name}...`);
+            audioEngine.loadAudioFromUrl(payload.currentTrack.audioUrl, payload.currentTrack.name).then(buf => {
+              uiManager.updateTrackUI(payload.currentTrack.name, buf.duration);
+            }).catch(e => console.warn('Load track error:', e));
           }
           uiManager.updateTrackUI(payload.currentTrack.name, payload.currentTrack.duration);
         }
@@ -106,6 +111,11 @@ class App {
       case 'TRACK_LOADED':
         if (payload.isSynthetic) {
           audioEngine.generateSyntheticTrack();
+        } else if (payload.audioUrl && (!audioEngine.audioBuffer || audioEngine.currentTrackName !== payload.name)) {
+          uiManager.setTrackLoading(`Mengunduh ${payload.name}...`);
+          audioEngine.loadAudioFromUrl(payload.audioUrl, payload.name).then(buf => {
+            uiManager.updateTrackUI(payload.name, buf.duration);
+          }).catch(e => console.warn('Auto download audio error:', e));
         }
         uiManager.updateTrackUI(payload.name, payload.duration);
         break;

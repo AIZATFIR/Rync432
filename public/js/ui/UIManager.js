@@ -308,7 +308,9 @@ export class UIManager {
       elements.playPauseToggleBtn.addEventListener('click', () => {
         app.audioEngine.ensureContext();
         if (!app.audioEngine.audioBuffer) {
-          if (this.cachedQueue.length > 0) {
+          if (app.socketClient.roomId) {
+            app.socketClient.schedulePlay(250, 0);
+          } else if (this.cachedQueue.length > 0) {
             app.socketClient.nextTrack();
           } else {
             alert('Pilih lagu dari YouTube, upload file, atau tab Demo terlebih dahulu.');
@@ -852,11 +854,43 @@ export class UIManager {
       const audioBuffer = await app.audioEngine.loadAudioFromArrayBuffer(arrayBuffer, file.name);
       this.updateTrackUI(file.name, audioBuffer.duration);
 
+      // Convert ArrayBuffer to Base64 for universal serverless relay to satellite phones
+      let binary = '';
+      const bytes = new Uint8Array(arrayBuffer);
+      const len = bytes.byteLength;
+      const chunkSize = 32768;
+      for (let i = 0; i < len; i += chunkSize) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + chunkSize, len)));
+      }
+      const base64 = btoa(binary);
+
+      let audioUrl = '';
+      try {
+        const uploadRes = await fetch('/api/room?action=upload_audio', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            roomId: app.socketClient.roomId,
+            trackName: file.name,
+            duration: audioBuffer.duration,
+            contentType: file.type || 'audio/mpeg',
+            audioBase64: base64,
+            deviceName: this.getDeviceName()
+          })
+        });
+        const uploadData = await uploadRes.json();
+        audioUrl = uploadData.audioUrl || `/api/room?action=get_audio&roomId=${app.socketClient.roomId}`;
+      } catch (e) {
+        console.warn('Binary upload fallback notice:', e);
+      }
+
       app.socketClient.addToQueue({
         name: file.name,
         artist: 'Local File',
-        duration: audioBuffer.duration
+        duration: audioBuffer.duration,
+        audioUrl
       });
+
       app.socketClient.sendBinary(arrayBuffer, file.name);
     } catch (err) {
       console.error('Audio load error:', err);
