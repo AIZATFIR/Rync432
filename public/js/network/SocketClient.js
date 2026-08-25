@@ -1,217 +1,215 @@
-import { ClockSync } from '../audio/ClockSync.js';
 import { CloudMesh } from './CloudMesh.js';
 
 export class SocketClient {
-  constructor(onEvent) {
+  constructor(clockSync, onEvent) {
+    this.clockSync = clockSync;
     this.onEvent = onEvent;
     this.ws = null;
-    this.clockSync = new ClockSync((type, payload) => this.send(type, payload));
-    this.cloudMesh = new CloudMesh((type, payload) => this.onEvent(type, payload));
     this.roomId = null;
     this.peerId = null;
     this.isHost = false;
-    this.statusPingInterval = null;
-    this.isServerlessMode = false;
+    this.isConnected = false;
+    this.reconnectAttempts = 0;
+    this.maxReconnectAttempts = 3;
+    this.reconnectDelay = 2000;
+    this.pingInterval = null;
+    this.cachedDeviceName = 'Speaker';
+
+    // Serverless CloudMesh (WebRTC + Firebase Firestore) fallback
+    this.cloudMesh = new CloudMesh((event, payload) => {
+      this.handleCloudMeshEvent(event, payload);
+    });
   }
 
-  connect() {
+  connect(url = null) {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
+    const wsUrl = url || `${protocol}//${host}`;
 
     try {
-      this.ws = new WebSocket(`${protocol}//${host}`);
-      this.ws.binaryType = 'arraybuffer';
+      this.ws = new WebSocket(wsUrl);
 
       this.ws.onopen = () => {
-        this.isServerlessMode = false;
-        this.clockSync.useHttpFallback = false;
-        this.clockSync.startPeriodicSync(2000);
-        this.onEvent('CONNECTED', { mode: 'websocket' });
-
-        this.statusPingInterval = setInterval(() => {
-          if (this.roomId && this.ws && this.ws.readyState === WebSocket.OPEN) {
-            this.send('PING_STATUS', {
-              rtt: Math.round(this.clockSync.rtt),
-              offset: Math.round(this.clockSync.getBestOffset())
-            });
-          }
-        }, 3000);
+        this.isConnected = true;
+        this.reconnectAttempts = 0;
+        this.onEvent('CONNECTED');
+        this.startPingLoop();
       };
 
       this.ws.onmessage = (event) => {
-        if (event.data instanceof ArrayBuffer) {
-          this.onEvent('BINARY_AUDIO_RECEIVED', event.data);
-          return;
-        }
-
         try {
-          const { type, payload } = JSON.parse(event.data);
-          if (type === 'SYNC_PONG') {
-            this.clockSync.handlePong(payload);
-            this.onEvent('SYNC_UPDATED', {
-              rtt: Math.round(this.clockSync.rtt),
-              offset: Math.round(this.clockSync.getBestOffset())
-            });
-            return;
-          }
-
-          if (type === 'ROOM_CREATED' || type === 'ROOM_JOINED') {
-            this.roomId = payload.roomId;
-            this.peerId = payload.peerId;
-            this.isHost = payload.isHost;
-          }
-
-          this.onEvent(type, payload);
-        } catch (e) {
-          console.error('WebSocket message parse error:', e);
+          const data = JSON.parse(event.data);
+          this.handleMessage(data);
+        } catch (err) {
+          console.error('Failed to parse WebSocket message:', err);
         }
-      };
-
-      this.ws.onerror = () => {
-        this.enableServerlessFallback();
       };
 
       this.ws.onclose = () => {
-        this.enableServerlessFallback();
+        this.isConnected = false;
+        this.stopPingLoop();
+        this.onEvent('DISCONNECTED');
+        this.attemptReconnect(wsUrl);
+      };
+
+      this.ws.onerror = () => {
+        this.isConnected = false;
       };
     } catch (err) {
-      this.enableServerlessFallback();
+      this.isConnected = false;
     }
   }
 
-  enableServerlessFallback() {
-    if (!this.isServerlessMode) {
-      this.isServerlessMode = true;
-      this.clockSync.useHttpFallback = true;
-      this.clockSync.startPeriodicSync(3000);
-      this.cloudMesh.init();
-      this.onEvent('CONNECTED', { mode: 'cloud_mesh' });
+  attemptReconnect(wsUrl) {
+    if (this.reconnectAttempts < this.maxReconnectAttempts) {
+      this.reconnectAttempts++;
+      setTimeout(() => {
+        this.connect(wsUrl);
+      }, this.reconnectDelay);
     }
   }
 
-  generateRoomCode() {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let code = '';
-    for (let i = 0; i < 4; i++) {
-      code += chars.charAt(Math.floor(Math.random() * chars.length));
+  startPingLoop() {
+    this.stopPingLoop();
+    this.pingInterval = setInterval(() => {
+      if (this.isConnected) {
+        this.clockSync.sendPing((t0) => {
+          this.send('PING', { clientSendTime: t0 });
+        });
+      }
+    }, 3000);
+  }
+
+  stopPingLoop() {
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
     }
-    return code;
   }
 
-  generatePeerId() {
-    return 'peer_' + Math.random().toString(36).substr(2, 9);
-  }
-
-  send(type, payload) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+  send(type, payload = {}) {
+    if (this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type, payload }));
     }
   }
 
-  sendBinary(arrayBuffer, trackName = 'Uploaded Track') {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(arrayBuffer);
-    } else if (this.isServerlessMode) {
-      this.cloudMesh.streamAudioToAllPeers(arrayBuffer, trackName);
-    }
-  }
-
-  uploadAudioFile(file, duration) {
-    if (this.isServerlessMode) {
-      this.cloudMesh.uploadAudioFileToStorage(file, duration);
-    }
-  }
-
+  // Democratic Room Controls (Host or any Peer can trigger)
   createRoom(deviceName = 'Master Speaker') {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.send('CREATE_ROOM', { deviceName });
-      return;
-    }
-
-    // Serverless / Firebase Cloud Mode
-    this.enableServerlessFallback();
-    const roomId = this.generateRoomCode();
-    const peerId = this.generatePeerId();
-
-    this.roomId = roomId;
-    this.peerId = peerId;
+    this.cachedDeviceName = deviceName;
+    this.peerId = 'peer_' + Math.random().toString(36).substring(2, 9);
+    this.roomId = Math.random().toString(36).substring(2, 6).toUpperCase();
     this.isHost = true;
 
-    this.cloudMesh.createRoom(roomId, peerId, deviceName);
+    if (this.isConnected) {
+      this.send('CREATE_ROOM', { deviceName });
+    }
 
+    this.cloudMesh.createRoom(this.roomId, this.peerId, deviceName);
     this.onEvent('ROOM_CREATED', {
-      roomId,
-      peerId,
-      isHost: true,
-      peers: [{ id: peerId, deviceName, isHost: true, latencyOffset: 0 }]
+      roomId: this.roomId,
+      peerId: this.peerId,
+      isHost: true
     });
   }
 
   joinRoom(roomId, deviceName = 'Satellite Speaker') {
-    const cleanRoomId = roomId.trim().toUpperCase();
-
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.send('JOIN_ROOM', { roomId: cleanRoomId, deviceName });
-      return;
-    }
-
-    // Serverless / Firebase Cloud Mode
-    this.enableServerlessFallback();
-    const peerId = this.generatePeerId();
-
-    this.roomId = cleanRoomId;
-    this.peerId = peerId;
+    this.cachedDeviceName = deviceName;
+    this.roomId = roomId.toUpperCase();
+    this.peerId = 'peer_' + Math.random().toString(36).substring(2, 9);
     this.isHost = false;
 
-    this.cloudMesh.joinRoom(cleanRoomId, peerId, deviceName);
+    if (this.isConnected) {
+      this.send('JOIN_ROOM', { roomId: this.roomId, deviceName });
+    }
 
+    this.cloudMesh.joinRoom(this.roomId, this.peerId, deviceName);
     this.onEvent('ROOM_JOINED', {
-      roomId: cleanRoomId,
-      peerId,
-      isHost: false,
-      peers: [{ id: peerId, deviceName, isHost: false, latencyOffset: 0 }]
+      roomId: this.roomId,
+      peerId: this.peerId,
+      isHost: false
     });
   }
 
-  schedulePlay(delayMs = 600, startOffsetSec = 0) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.send('SCHEDULE_PLAY', { delayMs, startOffsetSec });
-      return;
-    }
-
+  schedulePlay(delayMs = 500, startOffsetSec = 0) {
     const targetServerTime = this.clockSync.getServerTime() + delayMs;
+    this.send('SCHEDULE_PLAY', { targetServerTime, startOffsetSec });
     this.cloudMesh.broadcastPlay(targetServerTime, startOffsetSec);
-    this.onEvent('SCHEDULED_PLAY', {
-      targetServerTime,
-      startOffsetSec
-    });
   }
 
   pausePlayback(currentOffsetSec = 0) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.send('PAUSE_PLAYBACK', { currentOffsetSec });
-      return;
-    }
-
+    this.send('PAUSE', { currentOffsetSec });
     this.cloudMesh.broadcastPause(currentOffsetSec);
-    this.onEvent('PAUSED', { currentOffsetSec });
   }
 
   sendTrackMetadata(metadata) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.send('TRACK_METADATA', metadata);
-      return;
-    }
-
+    this.send('TRACK_METADATA', metadata);
     this.cloudMesh.broadcastTrack(metadata);
   }
 
   updateLatencyOffset(offsetMs) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.send('UPDATE_LATENCY_OFFSET', { offsetMs });
-      return;
-    }
-
+    this.send('UPDATE_LATENCY_OFFSET', { latencyOffset: offsetMs });
     this.cloudMesh.updateLatencyOffset(offsetMs);
+  }
+
+  updateRemotePeerSettings(targetPeerId, role, volume) {
+    this.cloudMesh.updateRemotePeerSettings(targetPeerId, role, volume);
+  }
+
+  sendBinary(arrayBuffer, trackName) {
+    this.cloudMesh.streamAudioToAllPeers(arrayBuffer, trackName);
+  }
+
+  uploadAudioFile(file, duration) {
+    this.cloudMesh.uploadAudioFileToStorage(file, duration);
+  }
+
+  handleCloudMeshEvent(event, payload) {
+    if (event === 'PEER_JOINED') {
+      this.onEvent('PEER_JOINED', payload);
+    } else if (event === 'TRACK_METADATA') {
+      this.onEvent('TRACK_METADATA', payload);
+    } else if (event === 'SCHEDULED_PLAY') {
+      this.onEvent('SCHEDULED_PLAY', payload);
+    } else if (event === 'PAUSED') {
+      this.onEvent('PAUSED', payload);
+    } else if (event === 'BINARY_AUDIO_RECEIVED') {
+      this.onEvent('BINARY_AUDIO_RECEIVED', payload);
+    } else if (event === 'AUDIO_TRANSFER_PROGRESS') {
+      this.onEvent('AUDIO_TRANSFER_PROGRESS', payload);
+    } else if (event === 'REMOTE_DEVICE_UPDATED') {
+      this.onEvent('REMOTE_DEVICE_UPDATED', payload);
+    }
+  }
+
+  handleMessage(data) {
+    const { type, payload } = data;
+    switch (type) {
+      case 'ROOM_CREATED':
+        this.roomId = payload.roomId;
+        this.peerId = payload.peerId;
+        this.isHost = true;
+        this.onEvent('ROOM_CREATED', payload);
+        break;
+      case 'ROOM_JOINED':
+        this.roomId = payload.roomId;
+        this.peerId = payload.peerId;
+        this.isHost = payload.isHost;
+        this.onEvent('ROOM_JOINED', payload);
+        break;
+      case 'PEER_JOINED':
+      case 'PEER_LEFT':
+        this.onEvent(type, payload);
+        break;
+      case 'PONG':
+        this.clockSync.handlePong(payload.clientSendTime, payload.serverReceiveTime, payload.serverSendTime);
+        break;
+      case 'SCHEDULED_PLAY':
+      case 'PAUSED':
+      case 'TRACK_METADATA':
+      case 'PEER_LATENCY_UPDATED':
+      case 'ERROR':
+        this.onEvent(type, payload);
+        break;
+    }
   }
 }

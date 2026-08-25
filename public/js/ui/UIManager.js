@@ -9,6 +9,7 @@ export class UIManager {
     this.currentUser = null;
     this.cachedPeers = [];
     this.qrScanner = null;
+    this.selectedDeviceForEdit = null;
   }
 
   init() {
@@ -19,8 +20,6 @@ export class UIManager {
       activeRoomSection: document.getElementById('activeRoomSection'),
       roomCodeDisplay: document.getElementById('roomCodeDisplay'),
       userRoleBadge: document.getElementById('userRoleBadge'),
-      hostControlsSection: document.getElementById('hostControlsSection'),
-      clientNotice: document.getElementById('clientNotice'),
       
       // Profile & Settings Modal
       userAuthBtn: document.getElementById('userAuthBtn'),
@@ -58,10 +57,23 @@ export class UIManager {
       roomQrCodeContainer: document.getElementById('roomQrCodeContainer'),
       copyRoomLinkModalBtn: document.getElementById('copyRoomLinkModalBtn'),
       devicesMatrixList: document.getElementById('devicesMatrixList'),
+
+      // Host Device Settings Modal
+      deviceSettingsModal: document.getElementById('deviceSettingsModal'),
+      deviceSettingsCloseBtn: document.getElementById('deviceSettingsCloseBtn'),
+      modalTargetDeviceName: document.getElementById('modalTargetDeviceName'),
+      modalSpatialStereo: document.getElementById('modalSpatialStereo'),
+      modalSpatialLeft: document.getElementById('modalSpatialLeft'),
+      modalSpatialRight: document.getElementById('modalSpatialRight'),
+      modalSpatialCenter: document.getElementById('modalSpatialCenter'),
+      modalDeviceVolume: document.getElementById('modalDeviceVolume'),
+      modalVolumeText: document.getElementById('modalVolumeText'),
+      saveDeviceSettingsBtn: document.getElementById('saveDeviceSettingsBtn'),
       
       // Player Controls
       trackTitle: document.getElementById('trackTitle'),
       trackSub: document.getElementById('trackSub'),
+      albumArtBox: document.getElementById('albumArtBox'),
       playBtn: document.getElementById('playBtn'),
       playIcon: document.getElementById('playIcon'),
       pauseIcon: document.getElementById('pauseIcon'),
@@ -85,14 +97,15 @@ export class UIManager {
       sampleWavBtn: document.getElementById('sampleWavBtn'),
       demoSynthBtn: document.getElementById('demoSynthBtn'),
 
-      // YouTube Inputs
+      // YouTube Search & Stream Inputs
       ytUrlInput: document.getElementById('ytUrlInput'),
       fetchYtAudioBtn: document.getElementById('fetchYtAudioBtn'),
+      ytSearchResults: document.getElementById('ytSearchResults'),
       ytSampleSynth: document.getElementById('ytSampleSynth'),
       ytSampleLofi: document.getElementById('ytSampleLofi'),
       ytSampleRock: document.getElementById('ytSampleRock'),
 
-      // Spatial Channel Matrix Selector
+      // Spatial Channel Selector (This Device)
       spatialStereo: document.getElementById('spatialStereo'),
       spatialLeft: document.getElementById('spatialLeft'),
       spatialRight: document.getElementById('spatialRight'),
@@ -281,11 +294,10 @@ export class UIManager {
       });
     }
 
-    // 3. Playback Controls
+    // 3. Collaborative Democratic Playback Controls (Everyone can Play/Pause)
     if (elements.playBtn) {
       elements.playBtn.addEventListener('click', () => {
         app.audioEngine.ensureContext();
-        if (!app.socketClient.isHost) return;
         
         if (app.audioEngine.isPlaying) {
           const currentPos = app.audioEngine.getCurrentPlaybackPosition();
@@ -300,7 +312,7 @@ export class UIManager {
     // Progress Bar Scrubbing
     if (elements.progressBar) {
       elements.progressBar.addEventListener('click', (e) => {
-        if (!app.socketClient.isHost || !app.audioEngine.audioBuffer) return;
+        if (!app.audioEngine.audioBuffer) return;
         const rect = elements.progressBar.getBoundingClientRect();
         const clickX = e.clientX - rect.left;
         const pct = Math.max(0, Math.min(1, clickX / rect.width));
@@ -338,10 +350,10 @@ export class UIManager {
     if (elements.tabBtnYoutube) elements.tabBtnYoutube.addEventListener('click', () => switchTab('youtube'));
     if (elements.tabBtnDemo) elements.tabBtnDemo.addEventListener('click', () => switchTab('demo'));
 
-    // 5. YouTube Stream Extractor
-    const handleYtFetch = async (url) => {
-      if (!url) {
-        alert('Masukkan link YouTube / YT Music');
+    // 5. YouTube Search & Multi-Engine Stream Extractor
+    const handleYtSearchOrStream = async (queryOrUrl) => {
+      if (!queryOrUrl) {
+        alert('Masukkan judul lagu atau link YouTube');
         return;
       }
       app.audioEngine.ensureContext();
@@ -349,30 +361,55 @@ export class UIManager {
         app.socketClient.createRoom(this.getDeviceName());
       }
 
-      this.setTrackLoading('Mengekstrak YouTube...');
-      try {
-        const streamEndpoint = `/api/yt-stream?url=${encodeURIComponent(url)}`;
-        const buffer = await app.audioEngine.loadAudioFromUrl(streamEndpoint, 'YouTube Audio');
-        this.updateTrackUI(app.audioEngine.currentTrackName, buffer.duration);
+      // If user pasted a direct URL
+      if (/^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be|music\.youtube\.com)/i.test(queryOrUrl)) {
+        await this.streamAudioFromUrl(queryOrUrl, 'YouTube Audio');
+        return;
+      }
 
-        if (app.socketClient.isHost) {
-          app.socketClient.sendTrackMetadata({
-            name: app.audioEngine.currentTrackName,
-            duration: buffer.duration,
-            audioUrl: streamEndpoint
-          });
+      // Otherwise: Perform live search
+      if (elements.ytSearchResults) {
+        elements.ytSearchResults.style.display = 'flex';
+        elements.ytSearchResults.innerHTML = `
+          <div style="font-size: 0.78rem; color: var(--text-silver); text-align: center; padding: 10px;">
+            Mencari "${queryOrUrl}"...
+          </div>
+        `;
+      }
+
+      try {
+        const res = await fetch(`/api/yt-search?q=${encodeURIComponent(queryOrUrl)}`);
+        const data = await res.json();
+        const results = data.results || [];
+
+        if (results.length === 0) {
+          if (elements.ytSearchResults) {
+            elements.ytSearchResults.innerHTML = `
+              <div style="font-size: 0.78rem; color: var(--text-silver); text-align: center; padding: 8px;">
+                Lagu tidak ditemukan. Silakan coba kata kunci lain.
+              </div>
+            `;
+          }
+          return;
         }
+
+        this.renderSearchResults(results);
       } catch (err) {
-        console.error('YouTube extraction error:', err);
-        alert('Gagal mengekstrak YouTube: ' + err.message + '\nSilakan gunakan tab Upload File MP3.');
-        this.setTrackLoading('Pilih trek lagu');
+        console.error('Search error:', err);
+        if (elements.ytSearchResults) {
+          elements.ytSearchResults.innerHTML = `
+            <div style="font-size: 0.78rem; color: var(--text-negative); text-align: center; padding: 8px;">
+              Gagal mencari lagu.
+            </div>
+          `;
+        }
       }
     };
 
     if (elements.fetchYtAudioBtn) {
       elements.fetchYtAudioBtn.addEventListener('click', () => {
-        const url = elements.ytUrlInput?.value.trim() || '';
-        handleYtFetch(url);
+        const q = elements.ytUrlInput?.value.trim() || '';
+        handleYtSearchOrStream(q);
       });
     }
 
@@ -382,26 +419,27 @@ export class UIManager {
       });
     }
 
+    // Quick Sample Chips
     if (elements.ytSampleSynth) {
       elements.ytSampleSynth.addEventListener('click', () => {
-        if (elements.ytUrlInput) elements.ytUrlInput.value = 'https://www.youtube.com/watch?v=4xDzrJKXOOY';
+        if (elements.ytUrlInput) elements.ytUrlInput.value = 'Synthwave Radio';
         elements.fetchYtAudioBtn.click();
       });
     }
     if (elements.ytSampleLofi) {
       elements.ytSampleLofi.addEventListener('click', () => {
-        if (elements.ytUrlInput) elements.ytUrlInput.value = 'https://www.youtube.com/watch?v=jfKfPfyJRdk';
+        if (elements.ytUrlInput) elements.ytUrlInput.value = 'Lofi Hip Hop';
         elements.fetchYtAudioBtn.click();
       });
     }
     if (elements.ytSampleRock) {
       elements.ytSampleRock.addEventListener('click', () => {
-        if (elements.ytUrlInput) elements.ytUrlInput.value = 'https://www.youtube.com/watch?v=kXYiU_JCYtU';
+        if (elements.ytUrlInput) elements.ytUrlInput.value = 'Acoustic Guitar Hits';
         elements.fetchYtAudioBtn.click();
       });
     }
 
-    // 6. Spatial Channel Matrix Selector
+    // 6. Spatial Channel Selector (This Device)
     const selectSpatialChannel = (role) => {
       app.audioEngine.setSpatialChannel(role);
       [elements.spatialStereo, elements.spatialLeft, elements.spatialRight, elements.spatialCenter].forEach(btn => {
@@ -417,7 +455,60 @@ export class UIManager {
     if (elements.spatialRight) elements.spatialRight.addEventListener('click', () => selectSpatialChannel('right'));
     if (elements.spatialCenter) elements.spatialCenter.addEventListener('click', () => selectSpatialChannel('center'));
 
-    // 7. Single File Upload Trigger
+    // 7. Host Device Settings Modal Controls
+    let tempRole = 'stereo';
+    let tempVolume = 1.0;
+
+    const setTempRole = (role) => {
+      tempRole = role;
+      [elements.modalSpatialStereo, elements.modalSpatialLeft, elements.modalSpatialRight, elements.modalSpatialCenter].forEach(btn => {
+        if (btn) {
+          if (btn.id.toLowerCase().includes(role)) btn.classList.add('active');
+          else btn.classList.remove('active');
+        }
+      });
+    };
+
+    if (elements.modalSpatialStereo) elements.modalSpatialStereo.addEventListener('click', () => setTempRole('stereo'));
+    if (elements.modalSpatialLeft) elements.modalSpatialLeft.addEventListener('click', () => setTempRole('left'));
+    if (elements.modalSpatialRight) elements.modalSpatialRight.addEventListener('click', () => setTempRole('right'));
+    if (elements.modalSpatialCenter) elements.modalSpatialCenter.addEventListener('click', () => setTempRole('center'));
+
+    if (elements.modalDeviceVolume) {
+      elements.modalDeviceVolume.addEventListener('input', (e) => {
+        tempVolume = parseFloat(e.target.value);
+        if (elements.modalVolumeText) elements.modalVolumeText.innerText = `${Math.round(tempVolume * 100)}%`;
+      });
+    }
+
+    if (elements.saveDeviceSettingsBtn) {
+      elements.saveDeviceSettingsBtn.addEventListener('click', () => {
+        if (this.selectedDeviceForEdit) {
+          const targetId = this.selectedDeviceForEdit.id;
+          app.socketClient.updateRemotePeerSettings(targetId, tempRole, tempVolume);
+          if (targetId === app.socketClient.peerId) {
+            app.audioEngine.setSpatialChannel(tempRole);
+            app.audioEngine.setVolume(tempVolume);
+            selectSpatialChannel(tempRole);
+          }
+          if (elements.deviceSettingsModal) elements.deviceSettingsModal.classList.remove('active');
+        }
+      });
+    }
+
+    if (elements.deviceSettingsCloseBtn) {
+      elements.deviceSettingsCloseBtn.addEventListener('click', () => {
+        if (elements.deviceSettingsModal) elements.deviceSettingsModal.classList.remove('active');
+      });
+    }
+
+    if (elements.deviceSettingsModal) {
+      elements.deviceSettingsModal.addEventListener('click', (e) => {
+        if (e.target === elements.deviceSettingsModal) elements.deviceSettingsModal.classList.remove('active');
+      });
+    }
+
+    // 8. Single File Upload Trigger
     const triggerFileSelect = (e) => {
       if (e) e.stopPropagation();
       app.audioEngine.ensureContext();
@@ -470,13 +561,11 @@ export class UIManager {
           const buffer = await app.audioEngine.loadAudioFromUrl('/test_music_sample.wav', 'Acoustic WAV');
           this.updateTrackUI('Acoustic WAV', buffer.duration);
 
-          if (app.socketClient.isHost) {
-            app.socketClient.sendTrackMetadata({
-              name: 'Acoustic WAV',
-              duration: buffer.duration,
-              audioUrl: '/test_music_sample.wav'
-            });
-          }
+          app.socketClient.sendTrackMetadata({
+            name: 'Acoustic WAV',
+            duration: buffer.duration,
+            audioUrl: '/test_music_sample.wav'
+          });
         } catch (err) {
           console.error(err);
           alert('Gagal memuat sample: ' + err.message);
@@ -496,13 +585,11 @@ export class UIManager {
           const buffer = app.audioEngine.generateSyntheticTrack('synthwave');
           this.updateTrackUI(app.audioEngine.currentTrackName, buffer.duration);
 
-          if (app.socketClient.isHost) {
-            app.socketClient.sendTrackMetadata({
-              name: app.audioEngine.currentTrackName,
-              duration: buffer.duration,
-              isSynthetic: true
-            });
-          }
+          app.socketClient.sendTrackMetadata({
+            name: app.audioEngine.currentTrackName,
+            duration: buffer.duration,
+            isSynthetic: true
+          });
         } catch (err) {
           alert('Error: ' + err.message);
         }
@@ -540,6 +627,80 @@ export class UIManager {
     if (elements.presetWired) elements.presetWired.addEventListener('click', () => this.applyPreset('wired', 0));
     if (elements.presetInternal) elements.presetInternal.addEventListener('click', () => this.applyPreset('internal', 15));
     if (elements.presetBt) elements.presetBt.addEventListener('click', () => this.applyPreset('bt', 120));
+  }
+
+  renderSearchResults(results) {
+    const list = this.elements.ytSearchResults;
+    if (!list) return;
+    list.innerHTML = '';
+
+    results.forEach((item) => {
+      const card = document.createElement('div');
+      card.className = 'yt-result-item';
+      card.innerHTML = `
+        <img class="yt-result-thumb" src="${item.thumbnail}" alt="Thumbnail">
+        <div class="yt-result-info">
+          <div class="yt-result-title">${item.title}</div>
+          <div class="yt-result-meta">${item.channel} • ${this.formatTime(item.duration)}</div>
+        </div>
+        <button class="btn-spotify btn-spotify-primary" style="padding: 4px 10px; font-size: 0.72rem; min-height: 28px;">
+          Play
+        </button>
+      `;
+
+      card.addEventListener('click', () => {
+        if (this.elements.albumArtBox) {
+          this.elements.albumArtBox.innerHTML = `<img src="${item.thumbnail}" alt="Artwork">`;
+        }
+        this.streamAudioFromUrl(item.url, item.title);
+      });
+
+      list.appendChild(card);
+    });
+  }
+
+  async streamAudioFromUrl(url, trackTitle) {
+    this.setTrackLoading(`Mengekstrak ${trackTitle}...`);
+    try {
+      const streamEndpoint = `/api/yt-stream?url=${encodeURIComponent(url)}`;
+      const buffer = await this.app.audioEngine.loadAudioFromUrl(streamEndpoint, trackTitle);
+      this.updateTrackUI(trackTitle, buffer.duration);
+
+      this.app.socketClient.sendTrackMetadata({
+        name: trackTitle,
+        duration: buffer.duration,
+        audioUrl: streamEndpoint
+      });
+    } catch (err) {
+      console.error('Audio stream error:', err);
+      alert('Gagal mengekstrak audio: ' + err.message);
+      this.setTrackLoading('Pilih trek lagu');
+    }
+  }
+
+  openDeviceSettingsModal(peer) {
+    this.selectedDeviceForEdit = peer;
+    const { elements } = this;
+    if (!elements.deviceSettingsModal) return;
+
+    if (elements.modalTargetDeviceName) {
+      const isSelf = peer.id === this.app.socketClient.peerId;
+      elements.modalTargetDeviceName.innerText = `${peer.deviceName || 'Speaker'} ${isSelf ? '(You)' : ''}`;
+    }
+
+    const currentRole = peer.role || 'stereo';
+    [elements.modalSpatialStereo, elements.modalSpatialLeft, elements.modalSpatialRight, elements.modalSpatialCenter].forEach(btn => {
+      if (btn) {
+        if (btn.id.toLowerCase().includes(currentRole)) btn.classList.add('active');
+        else btn.classList.remove('active');
+      }
+    });
+
+    const currentVol = peer.volume !== undefined ? peer.volume : 1.0;
+    if (elements.modalDeviceVolume) elements.modalDeviceVolume.value = currentVol;
+    if (elements.modalVolumeText) elements.modalVolumeText.innerText = `${Math.round(currentVol * 100)}%`;
+
+    elements.deviceSettingsModal.classList.add('active');
   }
 
   renderUserState() {
@@ -607,14 +768,12 @@ export class UIManager {
       const audioBuffer = await app.audioEngine.loadAudioFromArrayBuffer(arrayBuffer, file.name);
       this.updateTrackUI(file.name, audioBuffer.duration);
 
-      if (app.socketClient.isHost) {
-        app.socketClient.sendTrackMetadata({
-          name: file.name,
-          duration: audioBuffer.duration
-        });
-        app.socketClient.sendBinary(arrayBuffer, file.name);
-        app.socketClient.uploadAudioFile(file, audioBuffer.duration);
-      }
+      app.socketClient.sendTrackMetadata({
+        name: file.name,
+        duration: audioBuffer.duration
+      });
+      app.socketClient.sendBinary(arrayBuffer, file.name);
+      app.socketClient.uploadAudioFile(file, audioBuffer.duration);
     } catch (err) {
       console.error('Audio load error:', err);
       alert('Gagal mendecode audio: ' + (err.message || 'Format tidak didukung'));
@@ -678,15 +837,11 @@ export class UIManager {
         this.elements.userRoleBadge.className = 'role-pill host';
         this.elements.userRoleBadge.innerText = 'HOST';
       }
-      if (this.elements.hostControlsSection) this.elements.hostControlsSection.style.display = 'flex';
-      if (this.elements.clientNotice) this.elements.clientNotice.style.display = 'none';
     } else {
       if (this.elements.userRoleBadge) {
         this.elements.userRoleBadge.className = 'role-pill peer';
         this.elements.userRoleBadge.innerText = 'SATELLITE';
       }
-      if (this.elements.hostControlsSection) this.elements.hostControlsSection.style.display = 'none';
-      if (this.elements.clientNotice) this.elements.clientNotice.style.display = 'block';
     }
   }
 
@@ -715,7 +870,7 @@ export class UIManager {
       div.className = 'device-item';
 
       const offsetStr = peer.latencyOffset !== undefined ? `${peer.latencyOffset > 0 ? '+' : ''}${peer.latencyOffset}ms` : '0ms';
-      const rttStr = peer.rtt ? `${peer.rtt}ms` : '<5ms';
+      const roleStr = peer.role ? peer.role.toUpperCase() : 'STEREO';
 
       div.innerHTML = `
         <div class="device-name-group">
@@ -724,11 +879,16 @@ export class UIManager {
           </svg>
           <div>
             <div class="device-name">${peer.deviceName || 'Speaker'} ${isSelf ? '<span style="color:var(--spotify-green);font-size:0.7rem;">(You)</span>' : ''}</div>
-            <div class="device-latency-tag">Delay: ${offsetStr} • ${peer.isHost ? 'Host' : 'Satellite'}</div>
+            <div class="device-latency-tag">${roleStr} • ${peer.isHost ? 'Host' : 'Satellite'}</div>
           </div>
         </div>
-        <span class="ping-badge">${rttStr}</span>
+        <button class="chip-btn" style="padding: 2px 8px; font-size: 0.68rem;">Atur</button>
       `;
+
+      div.addEventListener('click', () => {
+        this.openDeviceSettingsModal(peer);
+      });
+
       if (list) list.appendChild(div);
     });
 
@@ -744,40 +904,25 @@ export class UIManager {
       const isSelf = peer.id === this.app.socketClient.peerId;
       const div = document.createElement('div');
       div.className = 'device-item';
-      div.style.flexDirection = 'column';
-      div.style.alignItems = 'flex-start';
-      div.style.gap = '6px';
-
       div.innerHTML = `
-        <div style="display:flex;justify-content:space-between;width:100%;align-items:center;">
-          <div class="device-name-group">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--spotify-green)" stroke-width="2">
-              <rect width="16" height="20" x="4" y="2" rx="2"/><circle cx="12" cy="14" r="4"/>
-            </svg>
+        <div class="device-name-group">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--spotify-green)" stroke-width="2">
+            <rect width="16" height="20" x="4" y="2" rx="2"/><circle cx="12" cy="14" r="4"/>
+          </svg>
+          <div>
             <div class="device-name">${peer.deviceName || 'Speaker'} ${isSelf ? '<span style="color:var(--spotify-green);font-size:0.7rem;">(You)</span>' : ''}</div>
+            <div class="device-latency-tag">Channel: ${(peer.role || 'stereo').toUpperCase()}</div>
           </div>
-          <span class="ping-badge">${peer.isHost ? 'Host' : 'Satellite'}</span>
         </div>
-        <div style="display:flex;gap:4px;width:100%;">
-          <button class="chip-btn ${this.app.audioEngine.spatialRole === 'stereo' ? 'active' : ''}" style="flex:1;padding:3px 4px;font-size:0.68rem;" onclick="window.__ryncApp.uiManager.setSpatialRole('stereo')">Stereo</button>
-          <button class="chip-btn ${this.app.audioEngine.spatialRole === 'left' ? 'active' : ''}" style="flex:1;padding:3px 4px;font-size:0.68rem;" onclick="window.__ryncApp.uiManager.setSpatialRole('left')">Left</button>
-          <button class="chip-btn ${this.app.audioEngine.spatialRole === 'right' ? 'active' : ''}" style="flex:1;padding:3px 4px;font-size:0.68rem;" onclick="window.__ryncApp.uiManager.setSpatialRole('right')">Right</button>
-          <button class="chip-btn ${this.app.audioEngine.spatialRole === 'center' ? 'active' : ''}" style="flex:1;padding:3px 4px;font-size:0.68rem;" onclick="window.__ryncApp.uiManager.setSpatialRole('center')">Center</button>
-        </div>
+        <button class="chip-btn" style="padding: 2px 8px; font-size: 0.68rem;">Pilih Channel</button>
       `;
+
+      div.addEventListener('click', () => {
+        this.openDeviceSettingsModal(peer);
+      });
+
       list.appendChild(div);
     });
-  }
-
-  setSpatialRole(role) {
-    this.app.audioEngine.setSpatialChannel(role);
-    [this.elements.spatialStereo, this.elements.spatialLeft, this.elements.spatialRight, this.elements.spatialCenter].forEach(btn => {
-      if (btn) {
-        if (btn.dataset.role === role) btn.classList.add('active');
-        else btn.classList.remove('active');
-      }
-    });
-    this.renderDevicesMatrix();
   }
 
   startPlaybackTicker() {

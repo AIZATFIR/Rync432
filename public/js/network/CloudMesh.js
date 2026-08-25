@@ -7,7 +7,8 @@ import {
   onSnapshot, 
   updateDoc, 
   collection, 
-  addDoc 
+  addDoc,
+  deleteDoc
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 import { 
   getStorage, 
@@ -22,24 +23,26 @@ export class CloudMesh {
     this.db = null;
     this.storage = null;
     this.unsubscribeRoom = null;
+    this.unsubscribePeers = null;
+    this.unsubscribeSignals = null;
     this.roomId = null;
     this.peerId = null;
     this.isHost = false;
     this.heartbeatInterval = null;
     
     // WebRTC P2P Connections
-    this.peerConnections = new Map(); // peerId -> RTCPeerConnection
-    this.dataChannels = new Map();    // peerId -> RTCDataChannel
-    this.incomingAudioChunks = new Map(); // senderId -> { chunks: [], total: 0, received: 0, name: '' }
-    this.unsubscribeSignals = null;
+    this.peerConnections = new Map();
+    this.dataChannels = new Map();
+    this.incomingAudioChunks = new Map();
     this.currentAudioArrayBuffer = null;
   }
 
-  init() {
+  async init() {
     try {
       if (firebaseAuth.app) {
         this.db = getFirestore(firebaseAuth.app);
         this.storage = getStorage(firebaseAuth.app);
+        await firebaseAuth.ensureAuthenticated();
       }
     } catch (e) {
       console.warn('Firestore/Storage init notice:', e.message);
@@ -50,7 +53,7 @@ export class CloudMesh {
     this.roomId = roomId;
     this.peerId = peerId;
     this.isHost = true;
-    this.init();
+    await this.init();
 
     const roomData = {
       roomId,
@@ -59,21 +62,22 @@ export class CloudMesh {
       track: null,
       targetServerTime: 0,
       startOffsetSec: 0,
-      updatedAt: Date.now(),
-      peers: {
-        [peerId]: {
-          id: peerId,
-          deviceName,
-          isHost: true,
-          latencyOffset: 0,
-          lastSeen: Date.now()
-        }
-      }
+      updatedAt: Date.now()
     };
 
     if (this.db) {
       try {
         await setDoc(doc(this.db, 'rooms', roomId), roomData);
+        // Add Host to peers subcollection
+        await setDoc(doc(this.db, 'rooms', roomId, 'peers', peerId), {
+          id: peerId,
+          deviceName,
+          isHost: true,
+          role: 'stereo',
+          volume: 1.0,
+          latencyOffset: 0,
+          lastSeen: Date.now()
+        });
       } catch (err) {
         console.warn('Firestore room create notice:', err.message);
       }
@@ -89,26 +93,21 @@ export class CloudMesh {
     this.roomId = roomId;
     this.peerId = peerId;
     this.isHost = false;
-    this.init();
+    await this.init();
 
     if (this.db) {
       try {
-        const roomRef = doc(this.db, 'rooms', roomId);
-        const snapshot = await getDoc(roomRef);
-        if (snapshot.exists()) {
-          const data = snapshot.data();
-          const peers = data.peers || {};
-          peers[peerId] = {
-            id: peerId,
-            deviceName,
-            isHost: false,
-            latencyOffset: 0,
-            lastSeen: Date.now()
-          };
-          await updateDoc(roomRef, { peers, updatedAt: Date.now() });
-        }
+        await setDoc(doc(this.db, 'rooms', roomId, 'peers', peerId), {
+          id: peerId,
+          deviceName,
+          isHost: false,
+          role: 'stereo',
+          volume: 1.0,
+          latencyOffset: 0,
+          lastSeen: Date.now()
+        });
       } catch (err) {
-        console.warn('Firestore room join notice:', err.message);
+        console.warn('Firestore peer join notice:', err.message);
       }
     }
 
@@ -122,38 +121,18 @@ export class CloudMesh {
     if (!this.db) return;
 
     try {
+      // 1. Listen to Room State (Track, Play/Pause)
       this.unsubscribeRoom = onSnapshot(doc(this.db, 'rooms', roomId), (docSnap) => {
         if (!docSnap.exists()) return;
         const data = docSnap.data();
 
-        // 1. Update Peer List & connect WebRTC to new peers if Host
-        if (data.peers) {
-          const peersArray = Object.values(data.peers);
-          this.onEvent('PEER_JOINED', {
-            peers: peersArray,
-            peerCount: peersArray.length
-          });
-
-          if (this.isHost) {
-            peersArray.forEach(peer => {
-              if (peer.id !== this.peerId && !this.peerConnections.has(peer.id)) {
-                this.initiateWebRTCOffer(peer.id);
-              }
-            });
-          }
-        }
-
-        // 2. Track Metadata & Audio URL
         if (data.track) {
           this.onEvent('TRACK_METADATA', data.track);
-
-          // If satellite device does not have the audio yet, fetch from audioUrl
           if (!this.isHost && data.track.audioUrl) {
             this.fetchRemoteAudioUrl(data.track.audioUrl, data.track.name);
           }
         }
 
-        // 3. Playback State Broadcast
         if (data.state === 'PLAYING' && data.targetServerTime) {
           this.onEvent('SCHEDULED_PLAY', {
             targetServerTime: data.targetServerTime,
@@ -164,11 +143,54 @@ export class CloudMesh {
             currentOffsetSec: data.startOffsetSec || 0
           });
         }
-      }, (err) => {
-        console.warn('Firestore snapshot listener notice:', err.message);
       });
+
+      // 2. Listen to Peers Subcollection (Real-time presence & count)
+      this.unsubscribePeers = onSnapshot(collection(this.db, 'rooms', roomId, 'peers'), (querySnapshot) => {
+        const peersList = [];
+        querySnapshot.forEach((docSnap) => {
+          const peer = docSnap.data();
+          peersList.push(peer);
+
+          // If Host changed this device's channel or volume
+          if (peer.id === this.peerId) {
+            this.onEvent('REMOTE_DEVICE_UPDATED', {
+              role: peer.role || 'stereo',
+              volume: peer.volume !== undefined ? peer.volume : 1.0
+            });
+          }
+        });
+
+        this.onEvent('PEER_JOINED', {
+          peers: peersList,
+          peerCount: peersList.length
+        });
+
+        // If Host, connect WebRTC offer to new peers
+        if (this.isHost) {
+          peersList.forEach(peer => {
+            if (peer.id !== this.peerId && !this.peerConnections.has(peer.id)) {
+              this.initiateWebRTCOffer(peer.id);
+            }
+          });
+        }
+      });
+
     } catch (e) {
       console.warn('Firestore subscribe error:', e.message);
+    }
+  }
+
+  async updateRemotePeerSettings(targetPeerId, role, volume) {
+    if (!this.db || !this.roomId) return;
+    try {
+      await updateDoc(doc(this.db, 'rooms', this.roomId, 'peers', targetPeerId), {
+        role,
+        volume: volume !== undefined ? volume : 1.0,
+        updatedAt: Date.now()
+      });
+    } catch (e) {
+      console.warn('Failed to update remote peer settings:', e.message);
     }
   }
 
@@ -177,7 +199,7 @@ export class CloudMesh {
     try {
       const response = await fetch(url);
       const arrayBuffer = await response.arrayBuffer();
-      this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 100, status: 'Decoding audio...' });
+      this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 100, status: 'Audio siap!' });
       this.onEvent('BINARY_AUDIO_RECEIVED', arrayBuffer);
     } catch (err) {
       console.warn('Failed to fetch audio from URL:', err.message);
@@ -216,11 +238,8 @@ export class CloudMesh {
     channel.binaryType = 'arraybuffer';
 
     channel.onopen = () => {
-      console.log(`WebRTC DataChannel OPEN with peer: ${targetPeerId}`);
       this.dataChannels.set(targetPeerId, channel);
-
-      // If Host has audio ready, stream it directly to the newly connected peer!
-      if (this.isHost && this.currentAudioArrayBuffer) {
+      if (this.currentAudioArrayBuffer) {
         this.streamAudioToPeer(channel, this.currentAudioArrayBuffer);
       }
     };
@@ -243,17 +262,15 @@ export class CloudMesh {
         return;
       }
 
-      // Binary Chunk
       if (event.data instanceof ArrayBuffer) {
         const stream = this.incomingAudioChunks.get(targetPeerId);
         if (stream) {
           stream.chunks.push(event.data);
           stream.receivedBytes += event.data.byteLength;
           const pct = Math.min(99, Math.round((stream.receivedBytes / stream.totalBytes) * 100));
-          this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct, status: `Menerima audio P2P (${pct}%)...` });
+          this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct, status: `Menerima P2P (${pct}%)...` });
 
           if (stream.chunks.length >= stream.totalChunks || stream.receivedBytes >= stream.totalBytes) {
-            // Merge all chunks
             const completeBuffer = new Uint8Array(stream.receivedBytes);
             let offset = 0;
             for (const c of stream.chunks) {
@@ -343,11 +360,10 @@ export class CloudMesh {
         }
       }
     } catch (e) {
-      console.warn('Signal handling error:', e.message);
+      console.warn('Signal error:', e.message);
     }
   }
 
-  // Stream Binary Audio via WebRTC DataChannels (64KB chunks)
   streamAudioToAllPeers(arrayBuffer, trackName = 'Uploaded Track') {
     this.currentAudioArrayBuffer = arrayBuffer;
     this.dataChannels.forEach((channel) => {
@@ -358,11 +374,10 @@ export class CloudMesh {
   }
 
   streamAudioToPeer(channel, arrayBuffer, trackName = 'Uploaded Track') {
-    const chunkSize = 64 * 1024; // 64KB chunks
+    const chunkSize = 64 * 1024;
     const totalBytes = arrayBuffer.byteLength;
     const totalChunks = Math.ceil(totalBytes / chunkSize);
 
-    // Send header first
     channel.send(JSON.stringify({
       type: 'AUDIO_HEADER',
       name: trackName,
@@ -370,20 +385,16 @@ export class CloudMesh {
       totalChunks
     }));
 
-    // Stream chunks with small pacing delay
-    let chunkIndex = 0;
     for (let offset = 0; offset < totalBytes; offset += chunkSize) {
       const chunk = arrayBuffer.slice(offset, offset + chunkSize);
       channel.send(chunk);
-      chunkIndex++;
     }
   }
 
-  // Upload to Firebase Storage as Cloud Download Fallback
   async uploadAudioFileToStorage(file, duration) {
     if (!this.storage || !this.roomId) return;
     
-    this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 15, status: `Mengunggah ${file.name} ke Cloud...` });
+    this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 15, status: `Upload ${file.name}...` });
     try {
       const storageRef = ref(this.storage, `rooms/${this.roomId}/track_${Date.now()}_${file.name}`);
       const uploadTask = uploadBytesResumable(storageRef, file);
@@ -391,21 +402,19 @@ export class CloudMesh {
       uploadTask.on('state_changed', 
         (snapshot) => {
           const progress = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
-          this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: progress, status: `Mengunggah ke Cloud (${progress}%)...` });
+          this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: progress, status: `Upload Cloud (${progress}%)...` });
         },
         (error) => {
           console.warn('Storage upload error:', error.message);
         },
         async () => {
           const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
-          console.log('Firebase Storage download URL generated:', downloadUrl);
-          
           await this.broadcastTrack({
             name: file.name,
             duration,
             audioUrl: downloadUrl
           });
-          this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 100, status: 'Audio siap di seluruh perangkat!' });
+          this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 100, status: 'Audio siap di semua speaker!' });
         }
       );
     } catch (e) {
@@ -413,6 +422,7 @@ export class CloudMesh {
     }
   }
 
+  // Democratic Playback broadcast (Any member can call)
   async broadcastPlay(targetServerTime, startOffsetSec) {
     if (!this.db || !this.roomId) return;
     try {
@@ -455,15 +465,10 @@ export class CloudMesh {
   async updateLatencyOffset(offsetMs) {
     if (!this.db || !this.roomId || !this.peerId) return;
     try {
-      const roomRef = doc(this.db, 'rooms', this.roomId);
-      const snap = await getDoc(roomRef);
-      if (snap.exists()) {
-        const peers = snap.data().peers || {};
-        if (peers[this.peerId]) {
-          peers[this.peerId].latencyOffset = offsetMs;
-          await updateDoc(roomRef, { peers });
-        }
-      }
+      await updateDoc(doc(this.db, 'rooms', this.roomId, 'peers', this.peerId), {
+        latencyOffset: offsetMs,
+        lastSeen: Date.now()
+      });
     } catch (e) {}
   }
 
@@ -472,15 +477,9 @@ export class CloudMesh {
     this.heartbeatInterval = setInterval(async () => {
       if (!this.db || !this.roomId || !this.peerId) return;
       try {
-        const roomRef = doc(this.db, 'rooms', this.roomId);
-        const snap = await getDoc(roomRef);
-        if (snap.exists()) {
-          const peers = snap.data().peers || {};
-          if (peers[this.peerId]) {
-            peers[this.peerId].lastSeen = Date.now();
-            await updateDoc(roomRef, { peers });
-          }
-        }
+        await updateDoc(doc(this.db, 'rooms', this.roomId, 'peers', this.peerId), {
+          lastSeen: Date.now()
+        });
       } catch (e) {}
     }, 10000);
   }
@@ -496,6 +495,10 @@ export class CloudMesh {
     if (this.unsubscribeRoom) {
       this.unsubscribeRoom();
       this.unsubscribeRoom = null;
+    }
+    if (this.unsubscribePeers) {
+      this.unsubscribePeers();
+      this.unsubscribePeers = null;
     }
     if (this.unsubscribeSignals) {
       this.unsubscribeSignals();

@@ -2,6 +2,7 @@ import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebase
 import { 
   getAuth, 
   signInWithPopup, 
+  signInAnonymously,
   GoogleAuthProvider, 
   signOut, 
   onAuthStateChanged 
@@ -34,8 +35,20 @@ export class FirebaseAuthService {
       this.googleProvider.setCustomParameters({
         prompt: 'select_account'
       });
+      this.ensureAuthenticated();
     } catch (err) {
       console.warn('Firebase initialization:', err.message);
+    }
+  }
+
+  async ensureAuthenticated() {
+    if (!this.auth) return;
+    if (!this.auth.currentUser) {
+      try {
+        await signInAnonymously(this.auth);
+      } catch (e) {
+        console.warn('Anonymous auth init notice:', e.message);
+      }
     }
   }
 
@@ -58,16 +71,11 @@ export class FirebaseAuthService {
       return profile;
     } catch (error) {
       console.warn('Google Sign-In popup notice:', error.code, error.message);
-      
-      // If popup is closed or domain needs console config, inform clearly
       if (error.code === 'auth/popup-closed-by-user') {
         throw new Error('Login dibatalkan.');
       } else if (error.code === 'auth/unauthorized-domain') {
         throw new Error('Domain belum terdaftar di Firebase Authorized Domains.');
       }
-      
-      // If in offline local testing mode without live cloud project credentials
-      // Return real Google credential prompt
       throw error;
     }
   }
@@ -76,6 +84,7 @@ export class FirebaseAuthService {
     if (this.auth) {
       try {
         await signOut(this.auth);
+        await signInAnonymously(this.auth);
       } catch (e) {}
     }
     localStorage.removeItem('rync_user');
@@ -93,7 +102,7 @@ export class FirebaseAuthService {
     }
 
     onAuthStateChanged(this.auth, (user) => {
-      if (user) {
+      if (user && !user.isAnonymous) {
         const profile = {
           uid: user.uid,
           name: user.displayName || 'Google User',

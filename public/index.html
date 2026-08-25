@@ -79,7 +79,7 @@
         <!-- Host Tile -->
         <div class="action-tile">
           <h3>Host Room</h3>
-          <p>Mulai room baru sebagai Master kontrol.</p>
+          <p>Mulai room baru sebagai Master.</p>
           <button class="btn-spotify btn-spotify-primary" id="createRoomBtn">
             Buat Room
           </button>
@@ -88,7 +88,7 @@
         <!-- Join Tile -->
         <div class="action-tile">
           <h3>Join Room</h3>
-          <p>Masukkan 4 kode room atau scan QR.</p>
+          <p>Masukkan kode room atau scan QR.</p>
           <div class="spotify-input-wrap">
             <input type="text" id="roomCodeInput" class="spotify-input room-code-input" placeholder="KODE" maxlength="4">
             <button class="btn-spotify btn-spotify-primary" id="joinRoomBtn">Gabung</button>
@@ -143,7 +143,7 @@
               </div>
               <div class="track-info-texts">
                 <div class="track-title" id="trackTitle">Pilih trek lagu</div>
-                <div class="track-sub" id="trackSub">Upload file, YouTube, atau demo</div>
+                <div class="track-sub" id="trackSub">Upload file, YouTube search, atau demo</div>
               </div>
             </div>
 
@@ -163,9 +163,9 @@
               </div>
             </div>
 
-            <!-- Host Play Control -->
-            <div id="hostControlsSection" class="player-controls-row">
-              <button class="btn-spotify-circle play-btn" id="playBtn" title="Play / Pause">
+            <!-- Collaborative Play Control (Everyone can play/pause) -->
+            <div class="player-controls-row">
+              <button class="btn-spotify-circle play-btn" id="playBtn" title="Play / Pause Bersama">
                 <svg id="playIcon" width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
                   <polygon points="6 3 20 12 6 21 6 3"></polygon>
                 </svg>
@@ -176,14 +176,7 @@
               </button>
             </div>
 
-            <!-- Satellite Notice -->
-            <div id="clientNotice" style="display: none; margin-top: 10px; text-align: center;">
-              <span style="font-size: 0.82rem; color: var(--text-announcement); font-weight: 600;">
-                Satellite Speaker Aktif (Otomatis Sync)
-              </span>
-            </div>
-
-            <!-- Volume & Spatial Channel Control -->
+            <!-- Volume & Spatial Channel Control (This Device) -->
             <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 12px;">
               <div class="volume-control-wrap">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -195,7 +188,7 @@
 
               <!-- Channel Selector (This Phone) -->
               <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
-                <span style="font-size: 0.76rem; color: var(--text-silver); font-weight: 600;">Channel:</span>
+                <span style="font-size: 0.76rem; color: var(--text-silver); font-weight: 600;">Channel Saya:</span>
                 <div class="segmented-channel-chips">
                   <button class="channel-chip active" id="spatialStereo" data-role="stereo">Stereo</button>
                   <button class="channel-chip" id="spatialLeft" data-role="left">Left (L)</button>
@@ -210,13 +203,32 @@
           <!-- Source Hub Tabs -->
           <div class="spotify-card">
             <div class="source-tabs-header">
-              <button class="source-tab-btn active" id="tabBtnFile">File</button>
-              <button class="source-tab-btn" id="tabBtnYoutube">YouTube</button>
+              <button class="source-tab-btn active" id="tabBtnYoutube">YouTube</button>
+              <button class="source-tab-btn" id="tabBtnFile">File</button>
               <button class="source-tab-btn" id="tabBtnDemo">Demo</button>
             </div>
 
-            <!-- Tab: File -->
-            <div class="source-tab-content active" id="tabContentFile">
+            <!-- Tab: YouTube Search & Stream -->
+            <div class="source-tab-content active" id="tabContentYoutube">
+              <div class="yt-stream-box">
+                <div class="spotify-input-wrap">
+                  <input type="text" id="ytUrlInput" class="spotify-input" placeholder="Cari judul lagu atau paste link..." style="flex: 1;">
+                  <button class="btn-spotify btn-spotify-primary" id="fetchYtAudioBtn">Cari</button>
+                </div>
+
+                <!-- Live Search Results Dropdown/List -->
+                <div class="yt-search-results" id="ytSearchResults" style="display: none;"></div>
+
+                <div class="preset-chips" style="margin-top: 10px;">
+                  <button class="chip-btn" id="ytSampleSynth">Synthwave</button>
+                  <button class="chip-btn" id="ytSampleLofi">Lofi Beats</button>
+                  <button class="chip-btn" id="ytSampleRock">Acoustic</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tab: File Upload -->
+            <div class="source-tab-content" id="tabContentFile" style="display: none;">
               <div class="dropzone-box" id="audioDropzone">
                 <div class="dropzone-icon">
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -227,21 +239,6 @@
                 </div>
                 <div style="font-weight: 700; font-size: 0.9rem; color: #fff;">Upload Musik (MP3 / WAV / FLAC)</div>
                 <div style="font-size: 0.76rem; color: var(--text-silver);">Klik atau drag & drop file</div>
-              </div>
-            </div>
-
-            <!-- Tab: YouTube -->
-            <div class="source-tab-content" id="tabContentYoutube" style="display: none;">
-              <div class="yt-stream-box">
-                <div class="spotify-input-wrap">
-                  <input type="text" id="ytUrlInput" class="spotify-input" placeholder="Paste link YouTube / YT Music" style="flex: 1;">
-                  <button class="btn-spotify btn-spotify-primary" id="fetchYtAudioBtn">Sync</button>
-                </div>
-                <div class="preset-chips" style="margin-top: 10px;">
-                  <button class="chip-btn" id="ytSampleSynth">Synthwave</button>
-                  <button class="chip-btn" id="ytSampleLofi">Lofi</button>
-                  <button class="chip-btn" id="ytSampleRock">Acoustic</button>
-                </div>
               </div>
             </div>
 
@@ -260,7 +257,7 @@
         <div class="devices-stage">
           <div class="spotify-card">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-              <div style="font-weight: 700; font-size: 0.95rem; color: #fff;">Speaker Aktif</div>
+              <div style="font-weight: 700; font-size: 0.95rem; color: #fff;">Speaker Aktif (Klik utk Atur)</div>
               <button class="btn-spotify btn-spotify-outline" id="manageDevicesBtn" style="padding: 4px 10px; font-size: 0.72rem; min-height: 28px;">
                 QR Code
               </button>
@@ -302,6 +299,40 @@
     </div>
   </div>
 
+  <!-- Host Device Settings Modal (Per-Device Channel & Volume Control) -->
+  <div class="modal-overlay" id="deviceSettingsModal">
+    <div class="modal-content" style="max-width: 380px;">
+      <button class="modal-close-btn" id="deviceSettingsCloseBtn">&times;</button>
+      
+      <div style="text-align: center;">
+        <h3 style="font-size: 1.1rem; font-weight: 700; color: #fff;" id="modalTargetDeviceName">Pengaturan Speaker</h3>
+        <p style="font-size: 0.78rem; color: var(--text-silver); margin-top: 2px;">Atur alokasi channel suara dan volume speaker ini.</p>
+      </div>
+
+      <div class="settings-box" style="margin-top: 8px;">
+        <div style="font-size: 0.8rem; font-weight: 700; color: #fff; margin-bottom: 8px;">Alokasi Channel:</div>
+        <div class="segmented-channel-chips" style="width: 100%;">
+          <button class="channel-chip active" id="modalSpatialStereo" style="flex: 1;">Stereo</button>
+          <button class="channel-chip" id="modalSpatialLeft" style="flex: 1;">Left (L)</button>
+          <button class="channel-chip" id="modalSpatialRight" style="flex: 1;">Right (R)</button>
+          <button class="channel-chip" id="modalSpatialCenter" style="flex: 1;">Center</button>
+        </div>
+      </div>
+
+      <div class="settings-box">
+        <div style="display: flex; justify-content: space-between; font-size: 0.8rem; font-weight: 700; color: #fff; margin-bottom: 6px;">
+          <span>Volume Speaker:</span>
+          <span id="modalVolumeText" style="color: var(--spotify-green);">100%</span>
+        </div>
+        <input type="range" class="range-slider" id="modalDeviceVolume" min="0" max="1" step="0.05" value="1">
+      </div>
+
+      <button class="btn-spotify btn-spotify-primary" id="saveDeviceSettingsBtn" style="width: 100%;">
+        Terapkan ke Speaker
+      </button>
+    </div>
+  </div>
+
   <!-- Spotify Connect Devices & QR Modal -->
   <div class="modal-overlay" id="devicesModal">
     <div class="modal-content" style="max-width: 440px;">
@@ -321,7 +352,7 @@
       </button>
 
       <div style="margin-top: 8px;">
-        <div style="font-weight: 700; font-size: 0.85rem; color: #fff; margin-bottom: 6px;">Speaker di Room:</div>
+        <div style="font-weight: 700; font-size: 0.85rem; color: #fff; margin-bottom: 6px;">Speaker di Room (Klik utk Atur):</div>
         <div class="devices-list" id="devicesMatrixList"></div>
       </div>
     </div>
