@@ -248,9 +248,8 @@ export class CloudMesh {
 
       // 4. Playback state with clean Pause protection and exact track synchronization
       if (data.state === 'PLAYING') {
-        const isFreshPlay = data.targetServerTime && (data.targetServerTime > (this.lastPauseTime + 100));
-        if (isFreshPlay && (data.targetServerTime !== this.lastKnownState || data.track?.id !== this.lastKnownTrack?.id)) {
-          this.isPaused = false;
+        const isFreshPlay = data.targetServerTime && (data.targetServerTime > (this.lastPauseTime + 300));
+        if (isFreshPlay && !this.isPaused && (data.targetServerTime !== this.lastKnownState || data.track?.id !== this.lastKnownTrack?.id)) {
           this.lastKnownState = data.targetServerTime;
           if (data.track && (data.track.id !== this.lastKnownTrack?.id || data.track.name !== this.lastKnownTrack?.name)) {
             this.lastKnownTrack = data.track;
@@ -263,7 +262,7 @@ export class CloudMesh {
             track: data.track || this.lastKnownTrack
           });
         }
-      } else if (data.state === 'PAUSED' && this.lastKnownState !== 'PAUSED') {
+      } else if (data.state === 'PAUSED' && (this.lastKnownState !== 'PAUSED' || !this.isPaused)) {
         this.isPaused = true;
         this.lastKnownState = 'PAUSED';
         this.lastPauseTime = Date.now();
@@ -674,8 +673,22 @@ export class CloudMesh {
 
     channel.onopen = () => {
       this.dataChannels.set(targetPeerId, channel);
-      if (this.currentAudioArrayBuffer) {
-        this.streamAudioToPeer(channel, this.currentAudioArrayBuffer);
+      if (this.isHost) {
+        const targetTrack = this.lastKnownTrack;
+        const activeBuffer = (targetTrack && (this.localAudioBufferCache.get(targetTrack.id) || this.localAudioBufferCache.get(targetTrack.name)))
+          || this.currentAudioArrayBuffer;
+        if (activeBuffer && (activeBuffer instanceof ArrayBuffer || activeBuffer.byteLength)) {
+          this.streamAudioToPeer(channel, activeBuffer, targetTrack?.name || 'Uploaded Track');
+        }
+      } else {
+        if (this.lastKnownTrack) {
+          const cached = this.localAudioBufferCache.get(this.lastKnownTrack.id) || this.localAudioBufferCache.get(this.lastKnownTrack.name);
+          if (!cached) {
+            try {
+              channel.send(JSON.stringify({ type: 'REQUEST_AUDIO_BUFFER', trackName: this.lastKnownTrack.name, trackId: this.lastKnownTrack.id }));
+            } catch (e) { }
+          }
+        }
       }
     };
 

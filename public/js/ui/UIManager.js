@@ -1207,6 +1207,13 @@ export class UIManager {
     if (this.elements.trackSub) this.elements.trackSub.innerText = 'Sync audio...';
   }
 
+  clearTrackLoading() {
+    if (this.elements.trackSub && this.elements.trackSub.innerText.includes('Sync audio')) {
+      const dur = this.app.audioEngine?.currentTrackDuration || 0;
+      this.elements.trackSub.innerText = `${this.formatTime(dur)} • Ready`;
+    }
+  }
+
   updateTrackUI(title, duration, thumbnail = '') {
     if (this.elements.trackTitle) this.elements.trackTitle.innerText = title;
     if (this.elements.trackSub) this.elements.trackSub.innerText = `${this.formatTime(duration)} • Ready`;

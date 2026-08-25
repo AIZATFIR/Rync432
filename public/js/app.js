@@ -34,6 +34,16 @@ class App {
       }
     });
 
+    // Global User Gesture Unlock for iOS Safari and Android Chrome
+    const unlockAudio = () => {
+      if (this.audioEngine) {
+        this.audioEngine.ensureContext();
+      }
+    };
+    ['touchstart', 'touchend', 'click', 'keydown'].forEach(evt => {
+      window.addEventListener(evt, unlockAudio, { passive: true });
+    });
+
     const urlParams = new URLSearchParams(window.location.search);
     const roomParam = urlParams.get('room');
     if (roomParam && roomParam.length === 4) {
@@ -76,15 +86,15 @@ class App {
         this.requestWakeLock();
         
         if (payload.currentTrack) {
+          if (this.socketClient?.cloudMesh) {
+            this.socketClient.cloudMesh.lastKnownTrack = payload.currentTrack;
+          }
+          uiManager.updateTrackUI(payload.currentTrack.name || 'Shared Track', payload.currentTrack.duration || 0, payload.currentTrack.thumbnail || '');
           if (payload.currentTrack.isSynthetic) {
             audioEngine.generateSyntheticTrack();
-          } else if (payload.currentTrack.audioUrl) {
-            uiManager.setTrackLoading(`Mengunduh ${payload.currentTrack.name}...`);
-            audioEngine.loadAudioFromUrl(payload.currentTrack.audioUrl, payload.currentTrack.name).then(buf => {
-              uiManager.updateTrackUI(payload.currentTrack.name, buf.duration, payload.currentTrack.thumbnail || '');
-            }).catch(e => console.warn('Load track error:', e));
+          } else if (this.socketClient?.cloudMesh) {
+            this.socketClient.cloudMesh.loadTrackBuffer(payload.currentTrack);
           }
-          uiManager.updateTrackUI(payload.currentTrack.name, payload.currentTrack.duration, payload.currentTrack.thumbnail || '');
         }
 
         if (payload.playbackState && payload.playbackState.isPlaying) {
@@ -151,13 +161,13 @@ class App {
           }
 
           const currentTrack = this.socketClient?.cloudMesh?.lastKnownTrack;
-          // Hanya decode & pasang ke player aktif jika cocok dengan lagu yang sedang aktif
-          const isCurrent = !currentTrack || currentTrack.name === trackTitle || currentTrack.id === payload?.trackId;
+          const isCurrent = !currentTrack || currentTrack.name === trackTitle || currentTrack.id === payload?.trackId || (trackTitle && currentTrack.name && (currentTrack.name.includes(trackTitle) || trackTitle.includes(currentTrack.name)));
 
           if (isCurrent) {
             const buffer = await audioEngine.loadAudioFromArrayBuffer(rawBuffer, trackTitle);
             uiManager.updateTrackUI(trackTitle, buffer.duration, currentTrack?.thumbnail || '');
             uiManager.renderQueue(uiManager.cachedQueue);
+            uiManager.clearTrackLoading();
           }
         } catch (err) {
           console.error('Failed to decode received audio stream:', err);
@@ -167,13 +177,13 @@ class App {
       case 'SCHEDULED_PLAY':
       case 'PLAYBACK_SCHEDULED':
         if (payload.track) {
-          const currentT = this.socketClient?.cloudMesh?.lastKnownTrack;
-          if (!currentT || currentT.id !== payload.track.id || currentT.name !== payload.track.name) {
-            if (this.socketClient?.cloudMesh) {
-              this.socketClient.cloudMesh.lastKnownTrack = payload.track;
-            }
-            uiManager.updateTrackUI(payload.track.name || 'Shared Track', payload.track.duration || 0, payload.track.thumbnail || '');
-            uiManager.renderQueue(uiManager.cachedQueue);
+          if (this.socketClient?.cloudMesh) {
+            this.socketClient.cloudMesh.lastKnownTrack = payload.track;
+          }
+          uiManager.updateTrackUI(payload.track.name || 'Shared Track', payload.track.duration || 0, payload.track.thumbnail || '');
+          uiManager.renderQueue(uiManager.cachedQueue);
+          
+          if (!audioEngine.audioBuffer || (payload.track.name && audioEngine.currentTrackName !== payload.track.name)) {
             if (this.socketClient?.cloudMesh) {
               await this.socketClient.cloudMesh.loadTrackBuffer(payload.track);
             }
