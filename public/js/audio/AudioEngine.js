@@ -7,6 +7,13 @@ export class AudioEngine {
     this.ctx = null;
     this.audioBuffer = null;
     this.currentSource = null;
+    
+    // DSP Mastering Nodes (Studio Quality Sound)
+    this.bassFilter = null;
+    this.warmthFilter = null;
+    this.trebleFilter = null;
+    this.compressorNode = null;
+    
     this.pannerNode = null;
     this.gainNode = null;
     this.analyserNode = null;
@@ -18,6 +25,7 @@ export class AudioEngine {
     this.pauseOffsetSec = 0;
     this.onPlaybackEnded = null;
     this.spatialRole = 'stereo'; // 'stereo' | 'left' | 'right' | 'center'
+    this.currentEqPreset = 'studio';
 
     this.latencyTuner = new LatencyTuner();
     this.metronome = null;
@@ -28,7 +36,32 @@ export class AudioEngine {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       this.ctx = new AudioContextClass({ latencyHint: 'interactive' });
       
-      // Panner Node for Spatial Left/Right/Center/Stereo Matrix
+      // 1. Studio Equalizer Filter Nodes
+      this.bassFilter = this.ctx.createBiquadFilter();
+      this.bassFilter.type = 'lowshelf';
+      this.bassFilter.frequency.value = 100;
+
+      this.warmthFilter = this.ctx.createBiquadFilter();
+      this.warmthFilter.type = 'peaking';
+      this.warmthFilter.frequency.value = 400;
+      this.warmthFilter.Q.value = 1.0;
+
+      this.trebleFilter = this.ctx.createBiquadFilter();
+      this.trebleFilter.type = 'highshelf';
+      this.trebleFilter.frequency.value = 10000;
+
+      // 2. Studio Multi-Band Dynamics Compressor (Apple & Spotify RMS Punch)
+      this.compressorNode = this.ctx.createDynamicsCompressor();
+      this.compressorNode.threshold.value = -20;
+      this.compressorNode.knee.value = 25;
+      this.compressorNode.ratio.value = 3.5;
+      this.compressorNode.attack.value = 0.003;
+      this.compressorNode.release.value = 0.25;
+
+      // Apply initial studio preset
+      this.setEqPreset(this.currentEqPreset);
+
+      // 3. Panner Node for Spatial Matrix
       if (this.ctx.createStereoPanner) {
         this.pannerNode = this.ctx.createStereoPanner();
       } else {
@@ -42,19 +75,66 @@ export class AudioEngine {
       this.analyserNode.fftSize = 256;
       this.analyserNode.smoothingTimeConstant = 0.8;
 
-      // Routing: panner -> gain -> analyser -> destination
+      // Master Pipeline Routing:
+      // Source -> bassFilter -> warmthFilter -> trebleFilter -> compressor -> panner -> gain -> analyser -> destination
+      this.bassFilter.connect(this.warmthFilter);
+      this.warmthFilter.connect(this.trebleFilter);
+      this.trebleFilter.connect(this.compressorNode);
+      this.compressorNode.connect(this.pannerNode);
       this.pannerNode.connect(this.gainNode);
       this.gainNode.connect(this.analyserNode);
       this.analyserNode.connect(this.ctx.destination);
 
       this.metronome = new Metronome(this.ctx);
     }
+
     if (this.ctx.state === 'suspended') {
       try {
         await this.ctx.resume();
       } catch (e) {}
     }
     return this.ctx;
+  }
+
+  setEqPreset(preset = 'studio') {
+    this.currentEqPreset = preset;
+    if (!this.ctx || !this.bassFilter) return;
+
+    const t = this.ctx.currentTime;
+    switch (preset) {
+      case 'studio': // Apple Music / Spotify Mastered Sound
+        this.bassFilter.gain.setValueAtTime(4.5, t);
+        this.warmthFilter.gain.setValueAtTime(1.5, t);
+        this.trebleFilter.gain.setValueAtTime(3.0, t);
+        this.compressorNode.threshold.setValueAtTime(-20, t);
+        this.compressorNode.ratio.setValueAtTime(3.5, t);
+        break;
+
+      case 'bassboost': // Deep Heavy Bass
+        this.bassFilter.gain.setValueAtTime(8.5, t);
+        this.warmthFilter.gain.setValueAtTime(2.0, t);
+        this.trebleFilter.gain.setValueAtTime(1.5, t);
+        this.compressorNode.threshold.setValueAtTime(-18, t);
+        this.compressorNode.ratio.setValueAtTime(4.0, t);
+        break;
+
+      case 'vocal': // Crisp Vocals & Acoustic
+        this.bassFilter.gain.setValueAtTime(1.0, t);
+        this.warmthFilter.gain.setValueAtTime(4.0, t);
+        this.trebleFilter.gain.setValueAtTime(4.5, t);
+        this.compressorNode.threshold.setValueAtTime(-22, t);
+        this.compressorNode.ratio.setValueAtTime(2.5, t);
+        break;
+
+      case 'flat': // Pure Raw Audio (Bypass)
+      default:
+        this.bassFilter.gain.setValueAtTime(0, t);
+        this.warmthFilter.gain.setValueAtTime(0, t);
+        this.trebleFilter.gain.setValueAtTime(0, t);
+        this.compressorNode.threshold.setValueAtTime(0, t);
+        this.compressorNode.ratio.setValueAtTime(1.0, t);
+        break;
+    }
   }
 
   setSpatialChannel(role = 'stereo') {
@@ -228,7 +308,9 @@ export class AudioEngine {
 
     this.currentSource = this.ctx.createBufferSource();
     this.currentSource.buffer = this.audioBuffer;
-    this.currentSource.connect(this.pannerNode || this.gainNode);
+
+    // Connect source to DSP chain entrance (bassFilter)
+    this.currentSource.connect(this.bassFilter || this.pannerNode || this.gainNode);
 
     if (scheduledContextTime > this.ctx.currentTime) {
       this.currentSource.start(scheduledContextTime, startOffsetSec);

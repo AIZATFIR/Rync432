@@ -135,6 +135,13 @@ export class UIManager {
       presetInternal: document.getElementById('presetInternal'),
       presetBt: document.getElementById('presetBt'),
 
+      // Equalizer & DSP Presets
+      eqStudioBtn: document.getElementById('eqStudioBtn'),
+      eqBassBtn: document.getElementById('eqBassBtn'),
+      eqVocalBtn: document.getElementById('eqVocalBtn'),
+      eqFlatBtn: document.getElementById('eqFlatBtn'),
+      activeEqNameTag: document.getElementById('activeEqNameTag'),
+
       // Devices List
       devicesList: document.getElementById('devicesList')
     };
@@ -668,6 +675,45 @@ export class UIManager {
     if (elements.presetWired) elements.presetWired.addEventListener('click', () => this.applyPreset('wired', 0));
     if (elements.presetInternal) elements.presetInternal.addEventListener('click', () => this.applyPreset('internal', 15));
     if (elements.presetBt) elements.presetBt.addEventListener('click', () => this.applyPreset('bt', 120));
+
+    // 9. Equalizer & DSP Mastering Presets
+    const eqButtons = [
+      { el: elements.eqStudioBtn, key: 'studio' },
+      { el: elements.eqBassBtn, key: 'bassboost' },
+      { el: elements.eqVocalBtn, key: 'vocal' },
+      { el: elements.eqFlatBtn, key: 'flat' }
+    ];
+
+    eqButtons.forEach(({ el, key }) => {
+      if (el) {
+        el.addEventListener('click', () => {
+          app.audioEngine.ensureContext();
+          this.applyEqPreset(key);
+        });
+      }
+    });
+  }
+
+  applyEqPreset(preset) {
+    this.app.audioEngine.setEqPreset(preset);
+    const { elements } = this;
+    const btns = [elements.eqStudioBtn, elements.eqBassBtn, elements.eqVocalBtn, elements.eqFlatBtn];
+    btns.forEach(btn => {
+      if (btn) {
+        if (btn.dataset.eq === preset) btn.classList.add('active');
+        else btn.classList.remove('active');
+      }
+    });
+
+    const labelMap = {
+      studio: 'Studio Master',
+      bassboost: 'Bass Boost',
+      vocal: 'Vocal / Clear',
+      flat: 'Flat (Raw)'
+    };
+    if (elements.activeEqNameTag) {
+      elements.activeEqNameTag.innerText = labelMap[preset] || 'Studio Master';
+    }
   }
 
   renderSearchResults(results) {
