@@ -114,14 +114,20 @@ class App {
         uiManager.updateTrackUI(payload.name, payload.duration);
         break;
 
+      case 'AUDIO_TRANSFER_PROGRESS':
+        if (payload.status) {
+          uiManager.setTrackLoading(payload.status);
+        }
+        break;
+
       case 'BINARY_AUDIO_RECEIVED':
-        uiManager.setTrackLoading('Received binary audio stream from Host. Decoding buffer...');
+        uiManager.setTrackLoading('Memproses buffer audio dari Host...');
         try {
-          const buffer = await audioEngine.loadAudioFromArrayBuffer(payload, 'Host Shared Track');
-          uiManager.updateTrackUI(audioEngine.currentTrackName, buffer.duration);
+          const buffer = await audioEngine.loadAudioFromArrayBuffer(payload, audioEngine.currentTrackName || 'Host Shared Track');
+          uiManager.updateTrackUI(audioEngine.currentTrackName || 'Host Shared Track', buffer.duration);
         } catch (err) {
           console.error('Failed to decode received audio stream:', err);
-          uiManager.setTrackLoading('Decode failed. Please check audio format.');
+          uiManager.setTrackLoading('Gagal decode audio. Cek format file.');
         }
         break;
 

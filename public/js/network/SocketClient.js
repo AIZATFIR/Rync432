@@ -108,9 +108,17 @@ export class SocketClient {
     }
   }
 
-  sendBinary(arrayBuffer) {
+  sendBinary(arrayBuffer, trackName = 'Uploaded Track') {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(arrayBuffer);
+    } else if (this.isServerlessMode) {
+      this.cloudMesh.streamAudioToAllPeers(arrayBuffer, trackName);
+    }
+  }
+
+  uploadAudioFile(file, duration) {
+    if (this.isServerlessMode) {
+      this.cloudMesh.uploadAudioFileToStorage(file, duration);
     }
   }
 

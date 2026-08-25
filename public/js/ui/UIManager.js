@@ -431,7 +431,8 @@ export class UIManager {
           name: file.name,
           duration: audioBuffer.duration
         });
-        app.socketClient.sendBinary(arrayBuffer);
+        app.socketClient.sendBinary(arrayBuffer, file.name);
+        app.socketClient.uploadAudioFile(file, audioBuffer.duration);
       }
     } catch (err) {
       console.error('Audio load error:', err);
