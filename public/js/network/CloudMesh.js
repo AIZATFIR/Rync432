@@ -206,8 +206,11 @@ export class CloudMesh {
           }
           this.localPeersMap.set(p.id, p);
 
-          if (this.isHost && p.id !== this.peerId && !this.peerConnections.has(p.id)) {
-            this.initiateWebRTCOffer(p.id);
+          if (this.isHost && p.id !== this.peerId) {
+            const pc = this.peerConnections.get(p.id);
+            if (!pc || pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
+              this.initiateWebRTCOffer(p.id);
+            }
           }
         });
 
@@ -298,10 +301,13 @@ export class CloudMesh {
       || this.localAudioBufferCache.get(track.name);
 
     if (cached) {
+      this.pendingTrackBufferRequest = null;
       this.updateLoadingState(false, 'Siap');
       this.onEvent('BINARY_AUDIO_RECEIVED', { arrayBuffer: cached, trackName: track.name, trackId: track.id });
       return;
     }
+
+    this.pendingTrackBufferRequest = track;
 
     let fetchUrl = track.audioUrl;
     if (!fetchUrl || fetchUrl.startsWith('blob:')) {
@@ -313,13 +319,20 @@ export class CloudMesh {
   }
 
   requestTrackBufferFromPeers(trackName, trackId) {
+    const now = Date.now();
+    if (this.lastRequestPeerTime && (now - this.lastRequestPeerTime < 1000)) return;
+    this.lastRequestPeerTime = now;
+
+    let sent = false;
     this.dataChannels.forEach(channel => {
       if (channel.readyState === 'open') {
         try {
           channel.send(JSON.stringify({ type: 'REQUEST_AUDIO_BUFFER', trackName, trackId }));
+          sent = true;
         } catch (e) { }
       }
     });
+    return sent;
   }
 
   async updateLoadingState(isLoading, status = '') {
@@ -524,8 +537,10 @@ export class CloudMesh {
   }
 
   async fetchRemoteAudioUrl(url, trackName, trackId) {
-    this.updateLoadingState(true, `Mengunduh ${trackName}...`);
-    this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 20, status: `Mengunduh ${trackName}...` });
+    if (!this.incomingAudioChunks.size) {
+      this.updateLoadingState(true, `Mengunduh ${trackName}...`);
+      this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 20, status: `Mengunduh ${trackName}...` });
+    }
     try {
       const response = await fetch(url);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -534,12 +549,16 @@ export class CloudMesh {
       if (trackId) this.localAudioBufferCache.set(trackId, arrayBuffer);
       this.localAudioBufferCache.set(url, arrayBuffer);
 
+      this.pendingTrackBufferRequest = null;
       this.updateLoadingState(false, 'Siap');
       this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 100, status: 'Audio siap!' });
       this.onEvent('BINARY_AUDIO_RECEIVED', { arrayBuffer, trackName, trackId });
     } catch (err) {
       console.warn('Remote fetch notice, awaiting WebRTC stream:', err.message);
-      this.updateLoadingState(true, 'Menunggu audio...');
+      if (!this.incomingAudioChunks.size) {
+        this.updateLoadingState(true, 'Menunggu audio P2P...');
+        this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status: 'Menunggu audio P2P...' });
+      }
       this.requestTrackBufferFromPeers(trackName, trackId);
     }
   }
@@ -649,7 +668,8 @@ export class CloudMesh {
     const config = {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' }
       ]
     };
 
@@ -661,6 +681,14 @@ export class CloudMesh {
           type: 'candidate',
           candidate: event.candidate.toJSON()
         });
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
+        try { pc.close(); } catch (e) { }
+        this.peerConnections.delete(targetPeerId);
+        this.dataChannels.delete(targetPeerId);
       }
     };
 
@@ -683,6 +711,20 @@ export class CloudMesh {
           || this.currentAudioArrayBuffer;
         if (activeBuffer && (activeBuffer instanceof ArrayBuffer || activeBuffer.byteLength)) {
           this.streamAudioToPeer(channel, activeBuffer, targetTrack?.name || 'Uploaded Track', targetTrack?.id || '');
+        }
+      } else {
+        const reqTrack = this.pendingTrackBufferRequest || this.lastKnownTrack;
+        if (reqTrack) {
+          const cached = this.localAudioBufferCache.get(reqTrack.id) || this.localAudioBufferCache.get(reqTrack.name);
+          if (!cached) {
+            try {
+              channel.send(JSON.stringify({
+                type: 'REQUEST_AUDIO_BUFFER',
+                trackName: reqTrack.name,
+                trackId: reqTrack.id
+              }));
+            } catch (e) { }
+          }
         }
       }
     };
