@@ -1,3 +1,6 @@
+// Genuine YouTube Direct Audio Stream Extractor (InnerTube Android Client + Cobalt Relay)
+// Zero mock/demo fallbacks - extracts genuine high-bitrate Opus/AAC audio streams directly from YouTube.
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -19,7 +22,6 @@ export default async function handler(req, res) {
   }
 
   if (!videoId) {
-    // If not a full YouTube URL, check if queryUrl is already an audio file or direct stream
     if (queryUrl.startsWith('http') && !queryUrl.includes('youtube') && !queryUrl.includes('youtu.be')) {
       return res.redirect(queryUrl);
     }
@@ -28,93 +30,150 @@ export default async function handler(req, res) {
     });
   }
 
-  // Multi-engine endpoints
-  const streamEngines = [
-    { type: 'piped', url: `https://pipedapi.kavin.rocks/streams/${videoId}` },
-    { type: 'piped', url: `https://api.piped.privacydev.net/streams/${videoId}` },
-    { type: 'invidious', url: `https://inv.tux.pizza/api/v1/videos/${videoId}` },
-    { type: 'invidious', url: `https://invidious.nerdvpn.de/api/v1/videos/${videoId}` },
-    { type: 'invidious', url: `https://invidious.private.coffee/api/v1/videos/${videoId}` }
-  ];
-
-  let audioUrl = null;
+  let directAudioUrl = null;
   let trackTitle = 'YouTube Audio';
-  let trackDuration = 180;
+  let trackDuration = 210;
 
-  for (const engine of streamEngines) {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 4500);
-
-      const response = await fetch(engine.url, {
-        signal: controller.signal,
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-      });
-      clearTimeout(timeout);
-
-      if (response.ok) {
-        const data = await response.json();
-        trackTitle = data.title || trackTitle;
-        trackDuration = data.duration || data.lengthSeconds || trackDuration;
-
-        if (engine.type === 'piped') {
-          const audioStreams = data.audioStreams || [];
-          if (audioStreams.length > 0) {
-            // Pick best bitrate audio
-            const sorted = audioStreams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-            audioUrl = sorted[0].url;
-            break;
+  // 1. YouTube InnerTube Android Client API (Official Client Emulation)
+  try {
+    const innertubeRes = await fetch('https://www.youtube.com/youtubei/v1/player', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip',
+        'X-YouTube-Client-Name': '3',
+        'X-YouTube-Client-Version': '19.09.37'
+      },
+      body: JSON.stringify({
+        videoId,
+        context: {
+          client: {
+            clientName: 'ANDROID',
+            clientVersion: '19.09.37',
+            androidSdkVersion: 30,
+            hl: 'en',
+            gl: 'US'
           }
-        } else if (engine.type === 'invidious') {
-          const formats = data.adaptiveFormats || [];
-          const audioFormats = formats.filter(f => f.type && f.type.startsWith('audio/'));
-          if (audioFormats.length > 0) {
-            audioUrl = audioFormats[0].url;
+        }
+      })
+    });
+
+    if (innertubeRes.ok) {
+      const data = await innertubeRes.json();
+      trackTitle = data?.videoDetails?.title || trackTitle;
+      trackDuration = parseInt(data?.videoDetails?.lengthSeconds || '210', 10);
+
+      const formats = data?.streamingData?.adaptiveFormats || [];
+      const audioStreams = formats.filter(f => f.mimeType && f.mimeType.startsWith('audio/'));
+
+      if (audioStreams.length > 0) {
+        // Find best audio stream with direct URL
+        const withUrl = audioStreams.filter(f => f.url);
+        if (withUrl.length > 0) {
+          const sorted = withUrl.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+          directAudioUrl = sorted[0].url;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('InnerTube API notice:', err.message);
+  }
+
+  // 2. Cobalt Fast Media Proxy (High Quality Audio Extractor)
+  if (!directAudioUrl) {
+    const cobaltInstances = [
+      'https://api.cobalt.tools/api/json',
+      'https://cobalt-api.kwiatekm.tokyo/api/json',
+      'https://api.wuk.sh/api/json'
+    ];
+
+    for (const endpoint of cobaltInstances) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 4000);
+
+        const cobaltRes = await fetch(endpoint, {
+          method: 'POST',
+          signal: controller.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'User-Agent': 'Rync432-MusicMesh/2.0'
+          },
+          body: JSON.stringify({
+            url: `https://www.youtube.com/watch?v=${videoId}`,
+            isAudioOnly: true,
+            aFormat: 'mp3'
+          })
+        });
+        clearTimeout(timeout);
+
+        if (cobaltRes.ok) {
+          const data = await cobaltRes.json();
+          if (data.url) {
+            directAudioUrl = data.url;
             break;
           }
         }
-      }
-    } catch (e) {
-      // try next engine
+      } catch (e) {}
     }
   }
 
-  // If audio stream was resolved successfully
-  if (audioUrl) {
-    // If client requested metadata only
-    if (req.query?.meta === '1') {
-      return res.status(200).json({ videoId, title: trackTitle, duration: trackDuration, audioUrl });
-    }
+  // 3. Invidious / Piped Backup Nodes
+  if (!directAudioUrl) {
+    const backupNodes = [
+      `https://inv.tux.pizza/api/v1/videos/${videoId}`,
+      `https://invidious.nerdvpn.de/api/v1/videos/${videoId}`,
+      `https://pipedapi.kavin.rocks/streams/${videoId}`
+    ];
 
+    for (const node of backupNodes) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3500);
+        const resp = await fetch(node, { signal: controller.signal });
+        clearTimeout(timeout);
+
+        if (resp.ok) {
+          const data = await resp.json();
+          trackTitle = data.title || trackTitle;
+          const audioFormats = (data.adaptiveFormats || data.audioStreams || []).filter(f => (f.type || f.mimeType || '').startsWith('audio/') && f.url);
+          if (audioFormats.length > 0) {
+            directAudioUrl = audioFormats[0].url;
+            break;
+          }
+        }
+      } catch (e) {}
+    }
+  }
+
+  // Stream binary to Web Audio engine
+  if (directAudioUrl) {
     try {
-      const audioResponse = await fetch(audioUrl);
+      const audioResponse = await fetch(directAudioUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+        }
+      });
+
       if (audioResponse.ok) {
-        const contentType = audioResponse.headers.get('content-type') || 'audio/webm';
+        const contentType = audioResponse.headers.get('content-type') || 'audio/mp4';
         res.setHeader('Content-Type', contentType);
         res.setHeader('X-Track-Title', encodeURIComponent(trackTitle));
         res.setHeader('X-Track-Duration', trackDuration);
-        const buffer = await audioResponse.arrayBuffer();
-        return res.status(200).send(Buffer.from(buffer));
+        res.setHeader('Cache-Control', 'public, max-age=3600');
+
+        const arrayBuffer = await audioResponse.arrayBuffer();
+        return res.status(200).send(Buffer.from(arrayBuffer));
       }
     } catch (streamErr) {
-      return res.redirect(audioUrl);
+      // If direct proxy failed, redirect to URL
+      return res.redirect(directAudioUrl);
     }
   }
 
-  // Fallback high-fidelity sample stream if external datacenters throttle
-  try {
-    const fallbackRes = await fetch(`https://rync432.vercel.app/test_music_sample.wav`);
-    if (fallbackRes.ok) {
-      res.setHeader('Content-Type', 'audio/wav');
-      res.setHeader('X-Track-Title', encodeURIComponent(`${trackTitle} (Audio Stream)`));
-      res.setHeader('X-Track-Duration', 30);
-      const buffer = await fallbackRes.arrayBuffer();
-      return res.status(200).send(Buffer.from(buffer));
-    }
-  } catch (err) {}
-
   return res.status(502).json({
-    error: 'Audio stream YouTube sedang sibuk. Silakan coba link lain atau gunakan tab Upload File MP3.',
+    error: 'Gagal mengekstrak audio YouTube. Silakan gunakan link video YouTube lain atau gunakan tab Upload File.',
     videoId
   });
 }

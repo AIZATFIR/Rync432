@@ -308,7 +308,11 @@ export class UIManager {
       elements.playPauseToggleBtn.addEventListener('click', () => {
         app.audioEngine.ensureContext();
         if (!app.audioEngine.audioBuffer) {
-          elements.demoSynthBtn?.click();
+          if (this.cachedQueue.length > 0) {
+            app.socketClient.nextTrack();
+          } else {
+            alert('Pilih lagu dari YouTube, upload file, atau tab Demo terlebih dahulu.');
+          }
           return;
         }
 
@@ -325,10 +329,9 @@ export class UIManager {
     if (elements.redoBtn) {
       elements.redoBtn.addEventListener('click', () => {
         app.audioEngine.ensureContext();
-        if (!app.audioEngine.audioBuffer) {
-          elements.demoSynthBtn?.click();
+        if (app.audioEngine.audioBuffer) {
+          app.socketClient.schedulePlay(200, 0);
         }
-        app.socketClient.schedulePlay(200, 0);
       });
     }
 
@@ -708,6 +711,9 @@ export class UIManager {
         thumbnail,
         audioUrl: streamEndpoint
       });
+
+      // Start synchronized room playback immediately
+      this.app.socketClient.schedulePlay(250, 0);
     } catch (err) {
       console.error('Audio stream error:', err);
       alert('Gagal mengekstrak audio: ' + err.message);
