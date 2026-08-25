@@ -140,6 +140,12 @@ export class SocketClient {
     this.cloudMesh.prevTrack();
   }
 
+  refetchCurrentTrack() {
+    if (this.cloudMesh && this.cloudMesh.lastKnownTrack) {
+      this.cloudMesh.loadTrackBuffer(this.cloudMesh.lastKnownTrack);
+    }
+  }
+
   updateLatencyOffset(offsetMs) {
     this.cloudMesh.updateLatencyOffset(offsetMs);
   }

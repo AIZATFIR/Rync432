@@ -296,13 +296,27 @@ export class CloudMesh {
 
     if (cached) {
       this.updateLoadingState(false, 'Siap');
-      this.onEvent('BINARY_AUDIO_RECEIVED', { arrayBuffer: cached, trackName: track.name });
+      this.onEvent('BINARY_AUDIO_RECEIVED', { arrayBuffer: cached, trackName: track.name, trackId: track.id });
       return;
     }
 
-    if (track.audioUrl) {
-      this.fetchRemoteAudioUrl(track.audioUrl, track.name, track.id);
+    let fetchUrl = track.audioUrl;
+    if (!fetchUrl || fetchUrl.startsWith('blob:')) {
+      fetchUrl = `/api/room?action=get_audio&roomId=${encodeURIComponent(this.roomId)}&audioId=${encodeURIComponent(track.audioId || track.id || '')}&trackName=${encodeURIComponent(track.name || '')}`;
     }
+
+    this.requestTrackBufferFromPeers(track.name, track.id);
+    this.fetchRemoteAudioUrl(fetchUrl, track.name, track.id);
+  }
+
+  requestTrackBufferFromPeers(trackName, trackId) {
+    this.dataChannels.forEach(channel => {
+      if (channel.readyState === 'open') {
+        try {
+          channel.send(JSON.stringify({ type: 'REQUEST_AUDIO_BUFFER', trackName, trackId }));
+        } catch (e) { }
+      }
+    });
   }
 
   async updateLoadingState(isLoading, status = '') {
@@ -511,6 +525,7 @@ export class CloudMesh {
     this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 20, status: `Mengunduh ${trackName}...` });
     try {
       const response = await fetch(url);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const arrayBuffer = await response.arrayBuffer();
       this.localAudioBufferCache.set(trackName, arrayBuffer);
       if (trackId) this.localAudioBufferCache.set(trackId, arrayBuffer);
@@ -518,10 +533,11 @@ export class CloudMesh {
 
       this.updateLoadingState(false, 'Siap');
       this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 100, status: 'Audio siap!' });
-      this.onEvent('BINARY_AUDIO_RECEIVED', { arrayBuffer, trackName });
+      this.onEvent('BINARY_AUDIO_RECEIVED', { arrayBuffer, trackName, trackId });
     } catch (err) {
-      this.updateLoadingState(false, 'Gagal');
-      console.warn('Failed to fetch audio from URL:', err.message);
+      console.warn('Remote fetch notice, awaiting WebRTC stream:', err.message);
+      this.updateLoadingState(true, 'Menunggu audio...');
+      this.requestTrackBufferFromPeers(trackName, trackId);
     }
   }
 
@@ -692,6 +708,11 @@ export class CloudMesh {
             this.onEvent('TRACK_METADATA', msg.metadata);
           } else if (msg.type === 'PEER_SETTINGS') {
             this.onEvent('REMOTE_DEVICE_UPDATED', { role: msg.role, volume: msg.volume });
+          } else if (msg.type === 'REQUEST_AUDIO_BUFFER') {
+            const cached = this.localAudioBufferCache.get(msg.trackId) || this.localAudioBufferCache.get(msg.trackName);
+            if (cached && (cached instanceof ArrayBuffer || cached.byteLength)) {
+              this.streamAudioToPeer(channel, cached, msg.trackName);
+            }
           }
         } catch (e) { }
         return;
