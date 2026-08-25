@@ -230,16 +230,31 @@
           <!-- Source Hub Tabs -->
           <div class="spotify-card">
             <div class="source-tabs-header">
-              <button class="source-tab-btn active" id="tabBtnYoutube">YouTube</button>
-              <button class="source-tab-btn" id="tabBtnFile">File</button>
+              <button class="source-tab-btn active" id="tabBtnFile">File</button>
+              <button class="source-tab-btn" id="tabBtnYoutube">YouTube</button>
               <button class="source-tab-btn" id="tabBtnDemo">Demo</button>
             </div>
 
+            <!-- Tab: File Upload -->
+            <div class="source-tab-content active" id="tabContentFile">
+              <div class="dropzone-box" id="audioDropzone">
+                <div class="dropzone-icon">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="17 8 12 3 7 8"></polyline>
+                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                  </svg>
+                </div>
+                <div style="font-weight: 700; font-size: 0.9rem; color: #fff;">Upload Musik (MP3 / WAV / FLAC)</div>
+                <div style="font-size: 0.76rem; color: var(--text-silver);">Klik atau drag & drop file musik ke sini</div>
+              </div>
+            </div>
+
             <!-- Tab: YouTube Search & Stream -->
-            <div class="source-tab-content active" id="tabContentYoutube">
+            <div class="source-tab-content" id="tabContentYoutube" style="display: none;">
               <div class="yt-stream-box">
                 <div class="spotify-input-wrap">
-                  <input type="text" id="ytUrlInput" class="spotify-input" placeholder="Cari judul lagu atau link YouTube..." style="flex: 1;">
+                  <input type="text" id="ytUrlInput" class="spotify-input" placeholder="Cari judul lagu atau paste link..." style="flex: 1;">
                   <button class="btn-spotify btn-spotify-primary" id="fetchYtAudioBtn">Cari</button>
                 </div>
 
@@ -251,21 +266,6 @@
                   <button class="chip-btn" id="ytSampleLofi">Lofi Beats</button>
                   <button class="chip-btn" id="ytSampleRock">Acoustic</button>
                 </div>
-              </div>
-            </div>
-
-            <!-- Tab: File Upload -->
-            <div class="source-tab-content" id="tabContentFile" style="display: none;">
-              <div class="dropzone-box" id="audioDropzone">
-                <div class="dropzone-icon">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                    <polyline points="17 8 12 3 7 8"></polyline>
-                    <line x1="12" y1="3" x2="12" y2="15"></line>
-                  </svg>
-                </div>
-                <div style="font-weight: 700; font-size: 0.9rem; color: #fff;">Upload Musik (MP3 / WAV / FLAC)</div>
-                <div style="font-size: 0.76rem; color: var(--text-silver);">Klik atau drag & drop file</div>
               </div>
             </div>
 
