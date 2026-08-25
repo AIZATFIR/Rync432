@@ -1,9 +1,16 @@
+import { ClockSync } from '../audio/ClockSync.js';
 import { CloudMesh } from './CloudMesh.js';
 
 export class SocketClient {
-  constructor(clockSync, onEvent) {
-    this.clockSync = clockSync;
-    this.onEvent = onEvent;
+  constructor(clockSyncOrOnEvent, onEvent) {
+    if (typeof clockSyncOrOnEvent === 'function') {
+      this.clockSync = new ClockSync();
+      this.onEvent = clockSyncOrOnEvent;
+    } else {
+      this.clockSync = clockSyncOrOnEvent || new ClockSync();
+      this.onEvent = typeof onEvent === 'function' ? onEvent : (() => {});
+    }
+
     this.ws = null;
     this.roomId = null;
     this.peerId = null;
