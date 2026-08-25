@@ -1,36 +1,15 @@
-import { firebaseAuth } from '../auth/FirebaseAuth.js';
-import { 
-  getFirestore, 
-  doc, 
-  setDoc, 
-  getDoc, 
-  onSnapshot, 
-  updateDoc, 
-  collection, 
-  addDoc,
-  deleteDoc
-} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
-import { 
-  getStorage, 
-  ref, 
-  uploadBytesResumable, 
-  getDownloadURL 
-} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js';
-
 export class CloudMesh {
   constructor(onEvent) {
     this.onEvent = onEvent;
-    this.db = null;
-    this.storage = null;
-    this.unsubscribeRoom = null;
-    this.unsubscribePeers = null;
-    this.unsubscribeSignals = null;
     this.roomId = null;
     this.peerId = null;
+    this.deviceName = 'Speaker';
     this.isHost = false;
-    this.heartbeatInterval = null;
+    this.pollInterval = null;
     this.broadcastChannel = null;
     this.localPeersMap = new Map();
+    this.lastKnownState = null;
+    this.lastKnownTrack = null;
     
     // WebRTC P2P Connections
     this.peerConnections = new Map();
@@ -39,85 +18,46 @@ export class CloudMesh {
     this.currentAudioArrayBuffer = null;
   }
 
-  async init() {
-    try {
-      if (firebaseAuth.app) {
-        this.db = getFirestore(firebaseAuth.app);
-        this.storage = getStorage(firebaseAuth.app);
-      }
-    } catch (e) {
-      console.warn('Firestore/Storage init notice:', e.message);
-    }
-  }
-
   async createRoom(roomId, peerId, deviceName) {
     this.roomId = roomId;
     this.peerId = peerId;
+    this.deviceName = deviceName;
     this.isHost = true;
-    await this.init();
 
     this.initBroadcastChannel(roomId, deviceName);
 
-    const roomData = {
-      roomId,
-      hostId: peerId,
-      state: 'IDLE',
-      track: null,
-      targetServerTime: 0,
-      startOffsetSec: 0,
-      updatedAt: Date.now()
-    };
-
-    if (this.db) {
-      try {
-        await setDoc(doc(this.db, 'rooms', roomId), roomData);
-        await setDoc(doc(this.db, 'rooms', roomId, 'peers', peerId), {
-          id: peerId,
-          deviceName,
-          isHost: true,
-          role: 'stereo',
-          volume: 1.0,
-          latencyOffset: 0,
-          lastSeen: Date.now()
-        });
-      } catch (err) {
-        console.warn('Firestore room create notice:', err.message);
-      }
+    try {
+      await fetch('/api/room?action=create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId, peerId, deviceName })
+      });
+    } catch (e) {
+      console.warn('API create notice:', e.message);
     }
 
-    this.subscribe(roomId);
-    this.subscribeSignals(roomId);
-    this.startHeartbeat(deviceName);
-    return roomData;
+    this.startPolling();
   }
 
   async joinRoom(roomId, peerId, deviceName) {
     this.roomId = roomId;
     this.peerId = peerId;
+    this.deviceName = deviceName;
     this.isHost = false;
-    await this.init();
 
     this.initBroadcastChannel(roomId, deviceName);
 
-    if (this.db) {
-      try {
-        await setDoc(doc(this.db, 'rooms', roomId, 'peers', peerId), {
-          id: peerId,
-          deviceName,
-          isHost: false,
-          role: 'stereo',
-          volume: 1.0,
-          latencyOffset: 0,
-          lastSeen: Date.now()
-        });
-      } catch (err) {
-        console.warn('Firestore peer join notice:', err.message);
-      }
+    try {
+      await fetch('/api/room?action=join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId, peerId, deviceName })
+      });
+    } catch (e) {
+      console.warn('API join notice:', e.message);
     }
 
-    this.subscribe(roomId);
-    this.subscribeSignals(roomId);
-    this.startHeartbeat(deviceName);
+    this.startPolling();
   }
 
   initBroadcastChannel(roomId, deviceName) {
@@ -183,7 +123,6 @@ export class CloudMesh {
       }
     };
 
-    // Announce presence
     this.broadcastChannel.postMessage({
       type: 'ANNOUNCE_PEER',
       peer: this.localPeersMap.get(this.peerId)
@@ -196,67 +135,74 @@ export class CloudMesh {
     this.onEvent('PEER_JOINED', { peers, peerCount: peers.length });
   }
 
-  subscribe(roomId) {
-    this.unsubscribe();
-    if (!this.db) return;
+  startPolling() {
+    this.stopPolling();
+    this.pollLoop();
+    this.pollInterval = setInterval(() => this.pollLoop(), 1200);
+  }
+
+  stopPolling() {
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+      this.pollInterval = null;
+    }
+  }
+
+  async pollLoop() {
+    if (!this.roomId || !this.peerId) return;
 
     try {
-      // 1. Listen to Room State (Track, Play/Pause)
-      this.unsubscribeRoom = onSnapshot(doc(this.db, 'rooms', roomId), (docSnap) => {
-        if (!docSnap.exists()) return;
-        const data = docSnap.data();
+      const url = `/api/room?action=poll&roomId=${encodeURIComponent(this.roomId)}&peerId=${encodeURIComponent(this.peerId)}&deviceName=${encodeURIComponent(this.deviceName)}`;
+      const res = await fetch(url);
+      if (!res.ok) return;
 
-        if (data.track) {
-          this.onEvent('TRACK_METADATA', data.track);
-          if (!this.isHost && data.track.audioUrl) {
-            this.fetchRemoteAudioUrl(data.track.audioUrl, data.track.name);
-          }
-        }
+      const data = await res.json();
 
-        if (data.state === 'PLAYING' && data.targetServerTime) {
-          this.onEvent('SCHEDULED_PLAY', {
-            targetServerTime: data.targetServerTime,
-            startOffsetSec: data.startOffsetSec || 0
-          });
-        } else if (data.state === 'PAUSED') {
-          this.onEvent('PAUSED', {
-            currentOffsetSec: data.startOffsetSec || 0
-          });
-        }
-      }, (err) => console.warn('Room onSnapshot notice:', err.message));
-
-      // 2. Listen to Peers Subcollection (Real-time presence & count)
-      this.unsubscribePeers = onSnapshot(collection(this.db, 'rooms', roomId, 'peers'), (querySnapshot) => {
-        const peersList = [];
-        querySnapshot.forEach((docSnap) => {
-          const peer = docSnap.data();
-          peersList.push(peer);
-
-          // Merge with local map
-          this.localPeersMap.set(peer.id, peer);
-
-          if (peer.id === this.peerId) {
+      // 1. Peer list update
+      if (Array.isArray(data.peers)) {
+        data.peers.forEach(p => {
+          this.localPeersMap.set(p.id, p);
+          if (p.id === this.peerId) {
             this.onEvent('REMOTE_DEVICE_UPDATED', {
-              role: peer.role || 'stereo',
-              volume: peer.volume !== undefined ? peer.volume : 1.0
+              role: p.role || 'stereo',
+              volume: p.volume !== undefined ? p.volume : 1.0
             });
           }
         });
-
         this.dispatchLocalPeers();
+      }
 
-        // If Host, connect WebRTC offer to new peers
-        if (this.isHost) {
-          peersList.forEach(peer => {
-            if (peer.id !== this.peerId && !this.peerConnections.has(peer.id)) {
-              this.initiateWebRTCOffer(peer.id);
-            }
-          });
+      // 2. Track update
+      if (data.track && JSON.stringify(data.track) !== JSON.stringify(this.lastKnownTrack)) {
+        this.lastKnownTrack = data.track;
+        this.onEvent('TRACK_METADATA', data.track);
+        if (!this.isHost && data.track.audioUrl) {
+          this.fetchRemoteAudioUrl(data.track.audioUrl, data.track.name);
         }
-      }, (err) => console.warn('Peers onSnapshot notice:', err.message));
+      }
 
-    } catch (e) {
-      console.warn('Firestore subscribe error:', e.message);
+      // 3. Playback state update
+      if (data.state === 'PLAYING' && data.targetServerTime && data.targetServerTime !== this.lastKnownState) {
+        this.lastKnownState = data.targetServerTime;
+        this.onEvent('SCHEDULED_PLAY', {
+          targetServerTime: data.targetServerTime,
+          startOffsetSec: data.startOffsetSec || 0
+        });
+      } else if (data.state === 'PAUSED' && this.lastKnownState !== 'PAUSED') {
+        this.lastKnownState = 'PAUSED';
+        this.onEvent('PAUSED', {
+          currentOffsetSec: data.startOffsetSec || 0
+        });
+      }
+
+      // 4. WebRTC Signals
+      if (Array.isArray(data.signals) && data.signals.length > 0) {
+        for (const sig of data.signals) {
+          await this.handleIncomingSignal(sig.from, sig.data);
+        }
+      }
+    } catch (err) {
+      // Network hiccup - keep retrying
     }
   }
 
@@ -276,15 +222,13 @@ export class CloudMesh {
       });
     }
 
-    if (this.db && this.roomId) {
-      try {
-        await updateDoc(doc(this.db, 'rooms', this.roomId, 'peers', targetPeerId), {
-          role,
-          volume: volume !== undefined ? volume : 1.0,
-          updatedAt: Date.now()
-        });
-      } catch (e) {}
-    }
+    try {
+      await fetch('/api/room?action=update_peer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId: this.roomId, targetPeerId, role, volume })
+      });
+    } catch (e) {}
   }
 
   async fetchRemoteAudioUrl(url, trackName) {
@@ -299,6 +243,79 @@ export class CloudMesh {
     }
   }
 
+  async broadcastPlay(targetServerTime, startOffsetSec) {
+    this.lastKnownState = targetServerTime;
+
+    if (this.broadcastChannel) {
+      this.broadcastChannel.postMessage({
+        type: 'SCHEDULED_PLAY',
+        payload: { targetServerTime, startOffsetSec }
+      });
+    }
+
+    try {
+      await fetch('/api/room?action=update_playback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: this.roomId,
+          state: 'PLAYING',
+          targetServerTime,
+          startOffsetSec
+        })
+      });
+    } catch (e) {}
+  }
+
+  async broadcastPause(currentOffsetSec) {
+    this.lastKnownState = 'PAUSED';
+
+    if (this.broadcastChannel) {
+      this.broadcastChannel.postMessage({
+        type: 'PAUSED',
+        payload: { currentOffsetSec }
+      });
+    }
+
+    try {
+      await fetch('/api/room?action=update_playback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: this.roomId,
+          state: 'PAUSED',
+          startOffsetSec: currentOffsetSec
+        })
+      });
+    } catch (e) {}
+  }
+
+  async broadcastTrack(metadata) {
+    this.lastKnownTrack = metadata;
+
+    if (this.broadcastChannel) {
+      this.broadcastChannel.postMessage({
+        type: 'TRACK_METADATA',
+        payload: metadata
+      });
+    }
+
+    try {
+      await fetch('/api/room?action=update_playback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: this.roomId,
+          track: metadata
+        })
+      });
+    } catch (e) {}
+  }
+
+  async updateLatencyOffset(offsetMs) {
+    // Local tuner update
+  }
+
   // --- WebRTC P2P DataChannel Implementation ---
   createPeerConnection(targetPeerId) {
     const config = {
@@ -311,7 +328,7 @@ export class CloudMesh {
     const pc = new RTCPeerConnection(config);
 
     pc.onicecandidate = (event) => {
-      if (event.candidate && this.db) {
+      if (event.candidate) {
         this.sendSignal(targetPeerId, {
           type: 'candidate',
           candidate: event.candidate.toJSON()
@@ -401,30 +418,17 @@ export class CloudMesh {
   }
 
   async sendSignal(targetPeerId, signalData) {
-    if (!this.db || !this.roomId) return;
     try {
-      await addDoc(collection(this.db, 'rooms', this.roomId, 'signals'), {
-        from: this.peerId,
-        to: targetPeerId,
-        data: signalData,
-        createdAt: Date.now()
+      await fetch('/api/room?action=signal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: this.roomId,
+          peerId: this.peerId,
+          to: targetPeerId,
+          data: signalData
+        })
       });
-    } catch (e) {}
-  }
-
-  subscribeSignals(roomId) {
-    if (!this.db) return;
-    try {
-      this.unsubscribeSignals = onSnapshot(collection(this.db, 'rooms', roomId, 'signals'), async (snapshot) => {
-        snapshot.docChanges().forEach(async (change) => {
-          if (change.type === 'added') {
-            const signal = change.doc.data();
-            if (signal.to === this.peerId) {
-              await this.handleIncomingSignal(signal.from, signal.data);
-            }
-          }
-        });
-      }, () => {});
     } catch (e) {}
   }
 
@@ -485,138 +489,11 @@ export class CloudMesh {
   }
 
   async uploadAudioFileToStorage(file, duration) {
-    if (!this.storage || !this.roomId) return;
-    
-    this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 15, status: `Upload ${file.name}...` });
-    try {
-      const storageRef = ref(this.storage, `rooms/${this.roomId}/track_${Date.now()}_${file.name}`);
-      const uploadTask = uploadBytesResumable(storageRef, file);
-
-      uploadTask.on('state_changed', 
-        (snapshot) => {
-          const progress = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
-          this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: progress, status: `Upload Cloud (${progress}%)...` });
-        },
-        (error) => {
-          console.warn('Storage upload error:', error.message);
-        },
-        async () => {
-          const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
-          await this.broadcastTrack({
-            name: file.name,
-            duration,
-            audioUrl: downloadUrl
-          });
-          this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 100, status: 'Audio siap di semua speaker!' });
-        }
-      );
-    } catch (e) {
-      console.warn('Storage upload exception:', e.message);
-    }
-  }
-
-  // Democratic Playback broadcast (Any member can call)
-  async broadcastPlay(targetServerTime, startOffsetSec) {
-    if (this.broadcastChannel) {
-      this.broadcastChannel.postMessage({
-        type: 'SCHEDULED_PLAY',
-        payload: { targetServerTime, startOffsetSec }
-      });
-    }
-
-    if (this.db && this.roomId) {
-      try {
-        await updateDoc(doc(this.db, 'rooms', this.roomId), {
-          state: 'PLAYING',
-          targetServerTime,
-          startOffsetSec,
-          updatedAt: Date.now()
-        });
-      } catch (e) {}
-    }
-  }
-
-  async broadcastPause(currentOffsetSec) {
-    if (this.broadcastChannel) {
-      this.broadcastChannel.postMessage({
-        type: 'PAUSED',
-        payload: { currentOffsetSec }
-      });
-    }
-
-    if (this.db && this.roomId) {
-      try {
-        await updateDoc(doc(this.db, 'rooms', this.roomId), {
-          state: 'PAUSED',
-          startOffsetSec: currentOffsetSec,
-          updatedAt: Date.now()
-        });
-      } catch (e) {}
-    }
-  }
-
-  async broadcastTrack(metadata) {
-    if (this.broadcastChannel) {
-      this.broadcastChannel.postMessage({
-        type: 'TRACK_METADATA',
-        payload: metadata
-      });
-    }
-
-    if (this.db && this.roomId) {
-      try {
-        await updateDoc(doc(this.db, 'rooms', this.roomId), {
-          track: metadata,
-          updatedAt: Date.now()
-        });
-      } catch (e) {}
-    }
-  }
-
-  async updateLatencyOffset(offsetMs) {
-    if (this.db && this.roomId && this.peerId) {
-      try {
-        await updateDoc(doc(this.db, 'rooms', this.roomId, 'peers', this.peerId), {
-          latencyOffset: offsetMs,
-          lastSeen: Date.now()
-        });
-      } catch (e) {}
-    }
-  }
-
-  startHeartbeat(deviceName) {
-    this.stopHeartbeat();
-    this.heartbeatInterval = setInterval(async () => {
-      if (this.db && this.roomId && this.peerId) {
-        try {
-          await updateDoc(doc(this.db, 'rooms', this.roomId, 'peers', this.peerId), {
-            lastSeen: Date.now()
-          });
-        } catch (e) {}
-      }
-    }, 10000);
-  }
-
-  stopHeartbeat() {
-    if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval);
-      this.heartbeatInterval = null;
-    }
+    // In serverless mode, streaming P2P directly or via yt-stream
   }
 
   unsubscribe() {
-    if (this.unsubscribeRoom) {
-      this.unsubscribeRoom();
-      this.unsubscribeRoom = null;
-    }
-    if (this.unsubscribePeers) {
-      this.unsubscribePeers();
-      this.unsubscribePeers = null;
-    }
-    if (this.unsubscribeSignals) {
-      this.unsubscribeSignals();
-      this.unsubscribeSignals = null;
-    }
+    this.stopPolling();
     if (this.broadcastChannel) {
       try {
         this.broadcastChannel.postMessage({
@@ -627,6 +504,5 @@ export class CloudMesh {
       } catch (e) {}
       this.broadcastChannel = null;
     }
-    this.stopHeartbeat();
   }
 }

@@ -34,8 +34,8 @@
 
       <div class="header-right">
         <div class="status-pill">
-          <div class="status-dot" id="connectionDot"></div>
-          <span id="connectionStatus">Sync</span>
+          <div class="status-dot connected" id="connectionDot"></div>
+          <span id="connectionStatus">Online</span>
         </div>
 
         <button class="user-profile-btn" id="userAuthBtn" title="Profile & Settings">
@@ -163,15 +163,32 @@
               </div>
             </div>
 
-            <!-- Collaborative Play Control (Everyone can play/pause) -->
+            <!-- Distinct Player Controls: Redo / Play / Pause / Next -->
             <div class="player-controls-row">
-              <button class="btn-spotify-circle play-btn" id="playBtn" title="Play / Pause Bersama">
-                <svg id="playIcon" width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+              <button class="btn-ctrl-secondary" id="redoBtn" title="Restart (0:00)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                  <polygon points="19 20 9 12 19 4 19 20"></polygon>
+                  <line x1="5" y1="19" x2="5" y2="5"></line>
+                </svg>
+              </button>
+
+              <button class="btn-spotify-circle play-btn" id="playBtn" title="Play">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor">
                   <polygon points="6 3 20 12 6 21 6 3"></polygon>
                 </svg>
-                <svg id="pauseIcon" width="28" height="28" viewBox="0 0 24 24" fill="currentColor" style="display: none;">
+              </button>
+
+              <button class="btn-spotify-circle pause-btn" id="pauseBtn" title="Pause">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
                   <rect x="6" y="4" width="4" height="16"></rect>
                   <rect x="14" y="4" width="4" height="16"></rect>
+                </svg>
+              </button>
+
+              <button class="btn-ctrl-secondary" id="nextBtn" title="Next Trek">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                  <polygon points="5 4 15 12 5 20 5 4"></polygon>
+                  <line x1="19" y1="5" x2="19" y2="19"></line>
                 </svg>
               </button>
             </div>

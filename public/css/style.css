@@ -308,6 +308,39 @@ body {
   border: 1px solid rgba(243, 114, 127, 0.3);
 }
 
+/* Player Controls Row (Redo, Play, Pause, Next) */
+.player-controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 10px;
+}
+
+.btn-ctrl-secondary {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-circle);
+  background: var(--spotify-mid-surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-silver);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.btn-ctrl-secondary:hover {
+  color: var(--text-base);
+  border-color: var(--spotify-green);
+  transform: scale(1.06);
+}
+
+.btn-ctrl-secondary:active {
+  transform: scale(0.95);
+}
+
 .btn-spotify-circle.play-btn {
   width: 52px;
   height: 52px;
@@ -320,6 +353,39 @@ body {
   justify-content: center;
   cursor: pointer;
   box-shadow: 0 4px 12px rgba(30, 215, 96, 0.4);
+  transition: transform var(--transition-fast);
+}
+
+.btn-spotify-circle.play-btn:hover {
+  transform: scale(1.06);
+}
+
+.btn-spotify-circle.play-btn:active {
+  transform: scale(0.95);
+}
+
+.btn-spotify-circle.pause-btn {
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-circle);
+  background-color: var(--spotify-mid-surface);
+  color: var(--text-base);
+  border: 1px solid var(--border-gray);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.btn-spotify-circle.pause-btn:hover {
+  background-color: var(--spotify-elevated);
+  border-color: var(--text-base);
+  transform: scale(1.06);
+}
+
+.btn-spotify-circle.pause-btn:active {
+  transform: scale(0.95);
 }
 
 .btn-google-login {
@@ -503,13 +569,6 @@ canvas#visualizerCanvas {
   font-size: 0.7rem;
   color: var(--text-silver);
   font-variant-numeric: tabular-nums;
-}
-
-.player-controls-row {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-top: 8px;
 }
 
 /* Volume Slider */

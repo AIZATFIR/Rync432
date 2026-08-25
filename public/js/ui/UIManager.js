@@ -10,6 +10,7 @@ export class UIManager {
     this.cachedPeers = [];
     this.qrScanner = null;
     this.selectedDeviceForEdit = null;
+    this.demoTrackIndex = 0;
   }
 
   init() {
@@ -70,13 +71,14 @@ export class UIManager {
       modalVolumeText: document.getElementById('modalVolumeText'),
       saveDeviceSettingsBtn: document.getElementById('saveDeviceSettingsBtn'),
       
-      // Player Controls
+      // Separate Player Controls
       trackTitle: document.getElementById('trackTitle'),
       trackSub: document.getElementById('trackSub'),
       albumArtBox: document.getElementById('albumArtBox'),
+      redoBtn: document.getElementById('redoBtn'),
       playBtn: document.getElementById('playBtn'),
-      playIcon: document.getElementById('playIcon'),
-      pauseIcon: document.getElementById('pauseIcon'),
+      pauseBtn: document.getElementById('pauseBtn'),
+      nextBtn: document.getElementById('nextBtn'),
       currentTimeText: document.getElementById('currentTimeText'),
       totalTimeText: document.getElementById('totalTimeText'),
       progressBar: document.getElementById('progressBar'),
@@ -294,17 +296,46 @@ export class UIManager {
       });
     }
 
-    // 3. Collaborative Democratic Playback Controls (Everyone can Play/Pause)
+    // 3. Separate Player Controls (Redo, Play, Pause, Next)
+    if (elements.redoBtn) {
+      elements.redoBtn.addEventListener('click', () => {
+        app.audioEngine.ensureContext();
+        if (!app.audioEngine.audioBuffer) {
+          elements.demoSynthBtn?.click();
+        }
+        app.socketClient.schedulePlay(200, 0);
+      });
+    }
+
     if (elements.playBtn) {
       elements.playBtn.addEventListener('click', () => {
         app.audioEngine.ensureContext();
-        
-        if (app.audioEngine.isPlaying) {
-          const currentPos = app.audioEngine.getCurrentPlaybackPosition();
-          app.socketClient.pausePlayback(currentPos);
+        if (!app.audioEngine.audioBuffer) {
+          // If no track loaded yet, auto-load synth demo
+          elements.demoSynthBtn?.click();
+          return;
+        }
+        const currentPos = app.audioEngine.pauseOffsetSec || 0;
+        app.socketClient.schedulePlay(200, currentPos);
+      });
+    }
+
+    if (elements.pauseBtn) {
+      elements.pauseBtn.addEventListener('click', () => {
+        app.audioEngine.ensureContext();
+        const currentPos = app.audioEngine.getCurrentPlaybackPosition();
+        app.socketClient.pausePlayback(currentPos);
+      });
+    }
+
+    if (elements.nextBtn) {
+      elements.nextBtn.addEventListener('click', () => {
+        app.audioEngine.ensureContext();
+        this.demoTrackIndex = (this.demoTrackIndex + 1) % 2;
+        if (this.demoTrackIndex === 0) {
+          elements.demoSynthBtn?.click();
         } else {
-          const currentPos = app.audioEngine.pauseOffsetSec || 0;
-          app.socketClient.schedulePlay(500, currentPos);
+          elements.sampleWavBtn?.click();
         }
       });
     }
@@ -317,7 +348,7 @@ export class UIManager {
         const clickX = e.clientX - rect.left;
         const pct = Math.max(0, Math.min(1, clickX / rect.width));
         const targetSec = pct * app.audioEngine.currentTrackDuration;
-        app.socketClient.schedulePlay(400, targetSec);
+        app.socketClient.schedulePlay(300, targetSec);
       });
     }
 
@@ -361,13 +392,11 @@ export class UIManager {
         app.socketClient.createRoom(this.getDeviceName());
       }
 
-      // If user pasted a direct URL
       if (/^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be|music\.youtube\.com)/i.test(queryOrUrl)) {
         await this.streamAudioFromUrl(queryOrUrl, 'YouTube Audio');
         return;
       }
 
-      // Otherwise: Perform live search
       if (elements.ytSearchResults) {
         elements.ytSearchResults.style.display = 'flex';
         elements.ytSearchResults.innerHTML = `
@@ -846,13 +875,7 @@ export class UIManager {
   }
 
   setPlayState(isPlaying) {
-    if (isPlaying) {
-      if (this.elements.playIcon) this.elements.playIcon.style.display = 'none';
-      if (this.elements.pauseIcon) this.elements.pauseIcon.style.display = 'block';
-    } else {
-      if (this.elements.playIcon) this.elements.playIcon.style.display = 'block';
-      if (this.elements.pauseIcon) this.elements.pauseIcon.style.display = 'none';
-    }
+    // Both play and pause buttons remain clearly separate
   }
 
   renderPeerList(peers = []) {
