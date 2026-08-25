@@ -17,14 +17,13 @@ export class SocketClient {
     this.isConnected = false;
     this.cachedDeviceName = 'Speaker';
 
-    // Serverless CloudMesh (WebRTC + BroadcastChannel + /api/room relay)
+    // Serverless CloudMesh
     this.cloudMesh = new CloudMesh((event, payload) => {
       this.handleCloudMeshEvent(event, payload);
     });
   }
 
   connect() {
-    // Verify serverless connectivity via /api/health
     fetch('/api/health')
       .then((res) => res.json())
       .then((data) => {
@@ -35,7 +34,6 @@ export class SocketClient {
         }
       })
       .catch(() => {
-        // Fallback online if browser has network
         if (navigator.onLine) {
           this.isConnected = true;
           this.onEvent('CONNECTED');
@@ -45,7 +43,6 @@ export class SocketClient {
         }
       });
 
-    // Health / Clock sync interval
     setInterval(() => {
       const t0 = Date.now();
       fetch(`/api/health?t0=${t0}`)
@@ -68,7 +65,6 @@ export class SocketClient {
     }, 4000);
   }
 
-  // Democratic Room Controls
   createRoom(deviceName = 'Master Speaker') {
     this.cachedDeviceName = deviceName;
     this.peerId = 'peer_' + Math.random().toString(36).substring(2, 9);
@@ -112,6 +108,18 @@ export class SocketClient {
     this.cloudMesh.broadcastTrack(metadata);
   }
 
+  addToQueue(track) {
+    this.cloudMesh.addToQueue(track);
+  }
+
+  removeFromQueue(queueId) {
+    this.cloudMesh.removeFromQueue(queueId);
+  }
+
+  nextTrack() {
+    this.cloudMesh.nextTrack();
+  }
+
   updateLatencyOffset(offsetMs) {
     this.cloudMesh.updateLatencyOffset(offsetMs);
   }
@@ -133,6 +141,8 @@ export class SocketClient {
       this.onEvent('PEER_JOINED', payload);
     } else if (event === 'TRACK_METADATA') {
       this.onEvent('TRACK_METADATA', payload);
+    } else if (event === 'QUEUE_UPDATED') {
+      this.onEvent('QUEUE_UPDATED', payload);
     } else if (event === 'SCHEDULED_PLAY') {
       this.onEvent('SCHEDULED_PLAY', payload);
     } else if (event === 'PAUSED') {

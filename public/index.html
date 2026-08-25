@@ -163,7 +163,7 @@
               </div>
             </div>
 
-            <!-- Distinct Player Controls: Redo / Play / Pause / Next -->
+            <!-- Classic Spotify Player Controls: Redo | Single Play/Pause Toggle | Next -->
             <div class="player-controls-row">
               <button class="btn-ctrl-secondary" id="redoBtn" title="Restart (0:00)">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
@@ -172,20 +172,18 @@
                 </svg>
               </button>
 
-              <button class="btn-spotify-circle play-btn" id="playBtn" title="Play">
-                <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor">
+              <!-- Single Alternating Play/Pause Toggle Button -->
+              <button class="btn-spotify-circle play-toggle-btn" id="playPauseToggleBtn" title="Play / Pause Bersama">
+                <svg id="togglePlayIcon" width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
                   <polygon points="6 3 20 12 6 21 6 3"></polygon>
                 </svg>
-              </button>
-
-              <button class="btn-spotify-circle pause-btn" id="pauseBtn" title="Pause">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+                <svg id="togglePauseIcon" width="28" height="28" viewBox="0 0 24 24" fill="currentColor" style="display: none;">
                   <rect x="6" y="4" width="4" height="16"></rect>
                   <rect x="14" y="4" width="4" height="16"></rect>
                 </svg>
               </button>
 
-              <button class="btn-ctrl-secondary" id="nextBtn" title="Next Trek">
+              <button class="btn-ctrl-secondary" id="nextBtn" title="Lagu Selanjutnya (Next)">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
                   <polygon points="5 4 15 12 5 20 5 4"></polygon>
                   <line x1="19" y1="5" x2="19" y2="19"></line>
@@ -217,6 +215,18 @@
 
           </div>
 
+          <!-- Collaborative Queue / Playlist Section -->
+          <div class="spotify-card" id="queueCardSection">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+              <div style="font-weight: 700; font-size: 0.95rem; color: #fff;">Antrean Lagu (Queue)</div>
+              <span id="queueCountBadge" style="font-size: 0.72rem; color: var(--text-silver); font-weight: 600;">0 lagu</span>
+            </div>
+
+            <div class="queue-list" id="queueListContainer">
+              <div class="queue-empty-msg">Antrean kosong. Tambah lagu dari YouTube, upload file, atau demo.</div>
+            </div>
+          </div>
+
           <!-- Source Hub Tabs -->
           <div class="spotify-card">
             <div class="source-tabs-header">
@@ -229,7 +239,7 @@
             <div class="source-tab-content active" id="tabContentYoutube">
               <div class="yt-stream-box">
                 <div class="spotify-input-wrap">
-                  <input type="text" id="ytUrlInput" class="spotify-input" placeholder="Cari judul lagu atau paste link..." style="flex: 1;">
+                  <input type="text" id="ytUrlInput" class="spotify-input" placeholder="Cari judul lagu atau link YouTube..." style="flex: 1;">
                   <button class="btn-spotify btn-spotify-primary" id="fetchYtAudioBtn">Cari</button>
                 </div>
 
@@ -384,7 +394,6 @@
 
       <!-- Account Card -->
       <div class="settings-box">
-        <!-- Logged Out -->
         <div id="authLoggedOutView" style="display: flex; flex-direction: column; gap: 8px;">
           <button class="btn-google-login" id="googleSignInActionBtn">
             <svg class="google-g-icon" viewBox="0 0 24 24">
@@ -397,7 +406,6 @@
           </button>
         </div>
 
-        <!-- Logged In -->
         <div id="authLoggedInView" style="display: none; align-items: center; justify-content: space-between;">
           <div style="display: flex; align-items: center; gap: 10px;">
             <img id="userModalAvatar" src="" alt="Avatar" style="width: 38px; height: 38px; border-radius: 50%; border: 2px solid var(--spotify-green);">
@@ -434,7 +442,7 @@
           <div class="current-offset-display" id="latencyDisplay">0 ms</div>
         </div>
 
-        <!-- Precision Step Controls (+ and -) -->
+        <!-- Precision Step Controls -->
         <div class="precision-step-group" style="margin-top: 8px;">
           <button class="step-btn" id="stepMinus1">−</button>
           <span style="font-size: 0.78rem; font-weight: 600; color: var(--text-silver);">Fine Tune</span>

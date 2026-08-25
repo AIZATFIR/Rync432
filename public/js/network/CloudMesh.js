@@ -10,6 +10,7 @@ export class CloudMesh {
     this.localPeersMap = new Map();
     this.lastKnownState = null;
     this.lastKnownTrack = null;
+    this.lastKnownQueue = null;
     
     // WebRTC P2P Connections
     this.peerConnections = new Map();
@@ -115,6 +116,10 @@ export class CloudMesh {
           this.onEvent('TRACK_METADATA', msg.payload);
           break;
 
+        case 'QUEUE_UPDATED':
+          this.onEvent('QUEUE_UPDATED', msg.payload);
+          break;
+
         case 'REMOTE_DEVICE_UPDATED':
           if (msg.targetPeerId === this.peerId) {
             this.onEvent('REMOTE_DEVICE_UPDATED', msg.payload);
@@ -158,7 +163,7 @@ export class CloudMesh {
 
       const data = await res.json();
 
-      // 1. Peer list update
+      // 1. Peer list
       if (Array.isArray(data.peers)) {
         data.peers.forEach(p => {
           this.localPeersMap.set(p.id, p);
@@ -172,7 +177,13 @@ export class CloudMesh {
         this.dispatchLocalPeers();
       }
 
-      // 2. Track update
+      // 2. Queue list
+      if (Array.isArray(data.queue) && JSON.stringify(data.queue) !== JSON.stringify(this.lastKnownQueue)) {
+        this.lastKnownQueue = data.queue;
+        this.onEvent('QUEUE_UPDATED', { queue: data.queue });
+      }
+
+      // 3. Track update
       if (data.track && JSON.stringify(data.track) !== JSON.stringify(this.lastKnownTrack)) {
         this.lastKnownTrack = data.track;
         this.onEvent('TRACK_METADATA', data.track);
@@ -181,7 +192,7 @@ export class CloudMesh {
         }
       }
 
-      // 3. Playback state update
+      // 4. Playback state
       if (data.state === 'PLAYING' && data.targetServerTime && data.targetServerTime !== this.lastKnownState) {
         this.lastKnownState = data.targetServerTime;
         this.onEvent('SCHEDULED_PLAY', {
@@ -195,15 +206,75 @@ export class CloudMesh {
         });
       }
 
-      // 4. WebRTC Signals
+      // 5. WebRTC Signals
       if (Array.isArray(data.signals) && data.signals.length > 0) {
         for (const sig of data.signals) {
           await this.handleIncomingSignal(sig.from, sig.data);
         }
       }
-    } catch (err) {
-      // Network hiccup - keep retrying
-    }
+    } catch (err) {}
+  }
+
+  async addToQueue(track) {
+    try {
+      const res = await fetch('/api/room?action=add_queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: this.roomId,
+          deviceName: this.deviceName,
+          ...track
+        })
+      });
+      const data = await res.json();
+      if (data.queue) {
+        this.lastKnownQueue = data.queue;
+        this.onEvent('QUEUE_UPDATED', { queue: data.queue });
+        if (this.broadcastChannel) {
+          this.broadcastChannel.postMessage({
+            type: 'QUEUE_UPDATED',
+            payload: { queue: data.queue }
+          });
+        }
+      }
+    } catch (e) {}
+  }
+
+  async removeFromQueue(queueId) {
+    try {
+      const res = await fetch('/api/room?action=remove_queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: this.roomId,
+          queueId
+        })
+      });
+      const data = await res.json();
+      if (data.queue) {
+        this.lastKnownQueue = data.queue;
+        this.onEvent('QUEUE_UPDATED', { queue: data.queue });
+      }
+    } catch (e) {}
+  }
+
+  async nextTrack() {
+    try {
+      const res = await fetch('/api/room?action=next_track', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId: this.roomId })
+      });
+      const data = await res.json();
+      if (data.track) {
+        this.lastKnownTrack = data.track;
+        this.onEvent('TRACK_METADATA', data.track);
+      }
+      if (data.queue) {
+        this.lastKnownQueue = data.queue;
+        this.onEvent('QUEUE_UPDATED', { queue: data.queue });
+      }
+    } catch (e) {}
   }
 
   async updateRemotePeerSettings(targetPeerId, role, volume) {
@@ -312,11 +383,9 @@ export class CloudMesh {
     } catch (e) {}
   }
 
-  async updateLatencyOffset(offsetMs) {
-    // Local tuner update
-  }
+  async updateLatencyOffset(offsetMs) {}
 
-  // --- WebRTC P2P DataChannel Implementation ---
+  // --- WebRTC P2P DataChannel ---
   createPeerConnection(targetPeerId) {
     const config = {
       iceServers: [
@@ -488,9 +557,7 @@ export class CloudMesh {
     }
   }
 
-  async uploadAudioFileToStorage(file, duration) {
-    // In serverless mode, streaming P2P directly or via yt-stream
-  }
+  async uploadAudioFileToStorage(file, duration) {}
 
   unsubscribe() {
     this.stopPolling();

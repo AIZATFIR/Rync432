@@ -8,9 +8,11 @@ export class UIManager {
     this.elements = {};
     this.currentUser = null;
     this.cachedPeers = [];
+    this.cachedQueue = [];
     this.qrScanner = null;
     this.selectedDeviceForEdit = null;
     this.demoTrackIndex = 0;
+    this.isPlayingState = false;
   }
 
   init() {
@@ -71,19 +73,25 @@ export class UIManager {
       modalVolumeText: document.getElementById('modalVolumeText'),
       saveDeviceSettingsBtn: document.getElementById('saveDeviceSettingsBtn'),
       
-      // Separate Player Controls
+      // Single Play/Pause Toggle & Controls
       trackTitle: document.getElementById('trackTitle'),
       trackSub: document.getElementById('trackSub'),
       albumArtBox: document.getElementById('albumArtBox'),
       redoBtn: document.getElementById('redoBtn'),
-      playBtn: document.getElementById('playBtn'),
-      pauseBtn: document.getElementById('pauseBtn'),
+      playPauseToggleBtn: document.getElementById('playPauseToggleBtn'),
+      togglePlayIcon: document.getElementById('togglePlayIcon'),
+      togglePauseIcon: document.getElementById('togglePauseIcon'),
       nextBtn: document.getElementById('nextBtn'),
       currentTimeText: document.getElementById('currentTimeText'),
       totalTimeText: document.getElementById('totalTimeText'),
       progressBar: document.getElementById('progressBar'),
       progressFill: document.getElementById('progressFill'),
       volumeSlider: document.getElementById('volumeSlider'),
+
+      // Queue Section
+      queueCardSection: document.getElementById('queueCardSection'),
+      queueCountBadge: document.getElementById('queueCountBadge'),
+      queueListContainer: document.getElementById('queueListContainer'),
       
       // Multi-Source Hub Tabs
       tabBtnFile: document.getElementById('tabBtnFile'),
@@ -135,8 +143,10 @@ export class UIManager {
     this.bindEvents();
     this.startPlaybackTicker();
 
+    // Auto next track when current finishes
     this.app.audioEngine.onPlaybackEnded = () => {
       this.setPlayState(false);
+      this.app.socketClient.nextTrack();
     };
   }
 
@@ -169,7 +179,6 @@ export class UIManager {
       });
     }
 
-    // Google Sign-In
     if (elements.googleSignInActionBtn) {
       elements.googleSignInActionBtn.addEventListener('click', async () => {
         try {
@@ -178,7 +187,6 @@ export class UIManager {
           this.renderUserState();
           elements.authModal.classList.remove('active');
         } catch (err) {
-          console.warn('Google Sign-In:', err.message);
           alert(err.message || 'Gagal login Google.');
         }
       });
@@ -192,7 +200,7 @@ export class UIManager {
       });
     }
 
-    // 2. Room Actions (Host & Join)
+    // 2. Room Actions
     if (elements.createRoomBtn) {
       elements.createRoomBtn.addEventListener('click', () => {
         app.audioEngine.ensureContext();
@@ -258,7 +266,6 @@ export class UIManager {
       });
     }
 
-    // Copy Link Buttons
     const copyLinkHandler = () => {
       const roomId = app.socketClient.roomId || 'DEMO';
       const url = `${window.location.origin}/?room=${roomId}`;
@@ -270,7 +277,7 @@ export class UIManager {
     if (elements.copyRoomLinkBtn) elements.copyRoomLinkBtn.addEventListener('click', copyLinkHandler);
     if (elements.copyRoomLinkModalBtn) elements.copyRoomLinkModalBtn.addEventListener('click', copyLinkHandler);
 
-    // Spotify Connect Modal Open / Close
+    // Devices & QR Modal
     const openConnectModal = () => {
       const roomId = app.socketClient.roomId || 'DEMO';
       const roomUrl = `${window.location.origin}/?room=${roomId}`;
@@ -296,7 +303,25 @@ export class UIManager {
       });
     }
 
-    // 3. Separate Player Controls (Redo, Play, Pause, Next)
+    // 3. Single Alternating Play/Pause Toggle & Redo & Next
+    if (elements.playPauseToggleBtn) {
+      elements.playPauseToggleBtn.addEventListener('click', () => {
+        app.audioEngine.ensureContext();
+        if (!app.audioEngine.audioBuffer) {
+          elements.demoSynthBtn?.click();
+          return;
+        }
+
+        if (this.isPlayingState) {
+          const currentPos = app.audioEngine.getCurrentPlaybackPosition();
+          app.socketClient.pausePlayback(currentPos);
+        } else {
+          const currentPos = app.audioEngine.pauseOffsetSec || 0;
+          app.socketClient.schedulePlay(200, currentPos);
+        }
+      });
+    }
+
     if (elements.redoBtn) {
       elements.redoBtn.addEventListener('click', () => {
         app.audioEngine.ensureContext();
@@ -307,35 +332,16 @@ export class UIManager {
       });
     }
 
-    if (elements.playBtn) {
-      elements.playBtn.addEventListener('click', () => {
-        app.audioEngine.ensureContext();
-        if (!app.audioEngine.audioBuffer) {
-          // If no track loaded yet, auto-load synth demo
-          elements.demoSynthBtn?.click();
-          return;
-        }
-        const currentPos = app.audioEngine.pauseOffsetSec || 0;
-        app.socketClient.schedulePlay(200, currentPos);
-      });
-    }
-
-    if (elements.pauseBtn) {
-      elements.pauseBtn.addEventListener('click', () => {
-        app.audioEngine.ensureContext();
-        const currentPos = app.audioEngine.getCurrentPlaybackPosition();
-        app.socketClient.pausePlayback(currentPos);
-      });
-    }
-
     if (elements.nextBtn) {
       elements.nextBtn.addEventListener('click', () => {
         app.audioEngine.ensureContext();
-        this.demoTrackIndex = (this.demoTrackIndex + 1) % 2;
-        if (this.demoTrackIndex === 0) {
-          elements.demoSynthBtn?.click();
+        if (this.cachedQueue.length > 0) {
+          app.socketClient.nextTrack();
         } else {
-          elements.sampleWavBtn?.click();
+          // Switch demo track
+          this.demoTrackIndex = (this.demoTrackIndex + 1) % 2;
+          if (this.demoTrackIndex === 0) elements.demoSynthBtn?.click();
+          else elements.sampleWavBtn?.click();
         }
       });
     }
@@ -381,7 +387,7 @@ export class UIManager {
     if (elements.tabBtnYoutube) elements.tabBtnYoutube.addEventListener('click', () => switchTab('youtube'));
     if (elements.tabBtnDemo) elements.tabBtnDemo.addEventListener('click', () => switchTab('demo'));
 
-    // 5. YouTube Search & Multi-Engine Stream Extractor
+    // 5. Genuine Live YouTube Search & Stream
     const handleYtSearchOrStream = async (queryOrUrl) => {
       if (!queryOrUrl) {
         alert('Masukkan judul lagu atau link YouTube');
@@ -401,7 +407,7 @@ export class UIManager {
         elements.ytSearchResults.style.display = 'flex';
         elements.ytSearchResults.innerHTML = `
           <div style="font-size: 0.78rem; color: var(--text-silver); text-align: center; padding: 10px;">
-            Mencari "${queryOrUrl}"...
+            Mencari "${queryOrUrl}" di YouTube...
           </div>
         `;
       }
@@ -415,7 +421,7 @@ export class UIManager {
           if (elements.ytSearchResults) {
             elements.ytSearchResults.innerHTML = `
               <div style="font-size: 0.78rem; color: var(--text-silver); text-align: center; padding: 8px;">
-                Lagu tidak ditemukan. Silakan coba kata kunci lain.
+                Lagu tidak ditemukan di YouTube. Coba kata kunci lain.
               </div>
             `;
           }
@@ -451,19 +457,19 @@ export class UIManager {
     // Quick Sample Chips
     if (elements.ytSampleSynth) {
       elements.ytSampleSynth.addEventListener('click', () => {
-        if (elements.ytUrlInput) elements.ytUrlInput.value = 'Synthwave Radio';
+        if (elements.ytUrlInput) elements.ytUrlInput.value = 'Synthwave 80s';
         elements.fetchYtAudioBtn.click();
       });
     }
     if (elements.ytSampleLofi) {
       elements.ytSampleLofi.addEventListener('click', () => {
-        if (elements.ytUrlInput) elements.ytUrlInput.value = 'Lofi Hip Hop';
+        if (elements.ytUrlInput) elements.ytUrlInput.value = 'Lofi Hip Hop Chill';
         elements.fetchYtAudioBtn.click();
       });
     }
     if (elements.ytSampleRock) {
       elements.ytSampleRock.addEventListener('click', () => {
-        if (elements.ytUrlInput) elements.ytUrlInput.value = 'Acoustic Guitar Hits';
+        if (elements.ytUrlInput) elements.ytUrlInput.value = 'Acoustic Guitar Fingerstyle';
         elements.fetchYtAudioBtn.click();
       });
     }
@@ -537,7 +543,7 @@ export class UIManager {
       });
     }
 
-    // 8. Single File Upload Trigger
+    // 8. File Upload Trigger
     const triggerFileSelect = (e) => {
       if (e) e.stopPropagation();
       app.audioEngine.ensureContext();
@@ -559,7 +565,6 @@ export class UIManager {
       });
     }
 
-    // Global Drop
     window.addEventListener('dragover', (e) => e.preventDefault());
     window.addEventListener('drop', (e) => {
       e.preventDefault();
@@ -590,13 +595,13 @@ export class UIManager {
           const buffer = await app.audioEngine.loadAudioFromUrl('/test_music_sample.wav', 'Acoustic WAV');
           this.updateTrackUI('Acoustic WAV', buffer.duration);
 
-          app.socketClient.sendTrackMetadata({
+          app.socketClient.addToQueue({
             name: 'Acoustic WAV',
+            artist: 'Acoustic Sample',
             duration: buffer.duration,
             audioUrl: '/test_music_sample.wav'
           });
         } catch (err) {
-          console.error(err);
           alert('Gagal memuat sample: ' + err.message);
         }
       });
@@ -614,8 +619,9 @@ export class UIManager {
           const buffer = app.audioEngine.generateSyntheticTrack('synthwave');
           this.updateTrackUI(app.audioEngine.currentTrackName, buffer.duration);
 
-          app.socketClient.sendTrackMetadata({
+          app.socketClient.addToQueue({
             name: app.audioEngine.currentTrackName,
+            artist: 'Rync432 Synth',
             duration: buffer.duration,
             isSynthetic: true
           });
@@ -670,10 +676,10 @@ export class UIManager {
         <img class="yt-result-thumb" src="${item.thumbnail}" alt="Thumbnail">
         <div class="yt-result-info">
           <div class="yt-result-title">${item.title}</div>
-          <div class="yt-result-meta">${item.channel} • ${this.formatTime(item.duration)}</div>
+          <div class="yt-result-meta">${item.channel} • ${item.durationText || this.formatTime(item.duration)}</div>
         </div>
         <button class="btn-spotify btn-spotify-primary" style="padding: 4px 10px; font-size: 0.72rem; min-height: 28px;">
-          Play
+          + Queue
         </button>
       `;
 
@@ -681,23 +687,25 @@ export class UIManager {
         if (this.elements.albumArtBox) {
           this.elements.albumArtBox.innerHTML = `<img src="${item.thumbnail}" alt="Artwork">`;
         }
-        this.streamAudioFromUrl(item.url, item.title);
+        this.streamAudioFromUrl(item.url, item.title, item.channel, item.duration, item.thumbnail);
       });
 
       list.appendChild(card);
     });
   }
 
-  async streamAudioFromUrl(url, trackTitle) {
+  async streamAudioFromUrl(url, trackTitle, artist = 'YouTube', duration = 210, thumbnail = '') {
     this.setTrackLoading(`Mengekstrak ${trackTitle}...`);
     try {
       const streamEndpoint = `/api/yt-stream?url=${encodeURIComponent(url)}`;
       const buffer = await this.app.audioEngine.loadAudioFromUrl(streamEndpoint, trackTitle);
       this.updateTrackUI(trackTitle, buffer.duration);
 
-      this.app.socketClient.sendTrackMetadata({
+      this.app.socketClient.addToQueue({
         name: trackTitle,
+        artist,
         duration: buffer.duration,
+        thumbnail,
         audioUrl: streamEndpoint
       });
     } catch (err) {
@@ -705,6 +713,47 @@ export class UIManager {
       alert('Gagal mengekstrak audio: ' + err.message);
       this.setTrackLoading('Pilih trek lagu');
     }
+  }
+
+  renderQueue(queue = []) {
+    this.cachedQueue = queue;
+    const container = this.elements.queueListContainer;
+    if (!container) return;
+
+    if (this.elements.queueCountBadge) {
+      this.elements.queueCountBadge.innerText = `${queue.length} lagu`;
+    }
+
+    if (queue.length === 0) {
+      container.innerHTML = `<div class="queue-empty-msg">Antrean kosong. Tambah lagu dari YouTube, upload file, atau demo.</div>`;
+      return;
+    }
+
+    container.innerHTML = '';
+    queue.forEach((item, index) => {
+      const div = document.createElement('div');
+      div.className = 'queue-item';
+      div.innerHTML = `
+        <div style="font-weight:700; color:var(--text-silver); font-size:0.75rem; width:16px;">${index + 1}</div>
+        <div class="queue-item-info">
+          <div class="queue-item-title">${item.name}</div>
+          <div class="queue-item-meta">${item.artist || 'Artist'} • ${this.formatTime(item.duration)} • Oleh ${item.addedBy || 'Member'}</div>
+        </div>
+        <button class="queue-item-del" title="Hapus dari antrean">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      `;
+
+      div.querySelector('.queue-item-del').addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.app.socketClient.removeFromQueue(item.id);
+      });
+
+      container.appendChild(div);
+    });
   }
 
   openDeviceSettingsModal(peer) {
@@ -797,12 +846,12 @@ export class UIManager {
       const audioBuffer = await app.audioEngine.loadAudioFromArrayBuffer(arrayBuffer, file.name);
       this.updateTrackUI(file.name, audioBuffer.duration);
 
-      app.socketClient.sendTrackMetadata({
+      app.socketClient.addToQueue({
         name: file.name,
+        artist: 'Local File',
         duration: audioBuffer.duration
       });
       app.socketClient.sendBinary(arrayBuffer, file.name);
-      app.socketClient.uploadAudioFile(file, audioBuffer.duration);
     } catch (err) {
       console.error('Audio load error:', err);
       alert('Gagal mendecode audio: ' + (err.message || 'Format tidak didukung'));
@@ -874,8 +923,18 @@ export class UIManager {
     }
   }
 
+  // Single Play/Pause Toggle View State
   setPlayState(isPlaying) {
-    // Both play and pause buttons remain clearly separate
+    this.isPlayingState = isPlaying;
+    if (this.elements.togglePlayIcon && this.elements.togglePauseIcon) {
+      if (isPlaying) {
+        this.elements.togglePlayIcon.style.display = 'none';
+        this.elements.togglePauseIcon.style.display = 'block';
+      } else {
+        this.elements.togglePlayIcon.style.display = 'block';
+        this.elements.togglePauseIcon.style.display = 'none';
+      }
+    }
   }
 
   renderPeerList(peers = []) {
@@ -892,7 +951,6 @@ export class UIManager {
       const div = document.createElement('div');
       div.className = 'device-item';
 
-      const offsetStr = peer.latencyOffset !== undefined ? `${peer.latencyOffset > 0 ? '+' : ''}${peer.latencyOffset}ms` : '0ms';
       const roleStr = peer.role ? peer.role.toUpperCase() : 'STEREO';
 
       div.innerHTML = `

@@ -1,5 +1,5 @@
 // Serverless In-Memory & Edge Room Mesh Relay for Rync432
-// Enables 100% reliable cross-device sync between PCs, iPhones, Androids without third-party auth restrictions.
+// Supports Multi-Device Sync, Democratic Queue/Playlist, and WebRTC Signaling
 
 const rooms = globalThis.__rync_rooms || new Map();
 globalThis.__rync_rooms = rooms;
@@ -47,6 +47,7 @@ export default async function handler(req, res) {
       targetServerTime: 0,
       startOffsetSec: 0,
       updatedAt: now,
+      queue: [],
       peers: {
         [peerId]: {
           id: peerId,
@@ -67,7 +68,6 @@ export default async function handler(req, res) {
   if (action === 'join') {
     let room = rooms.get(roomId);
     if (!room) {
-      // Auto-create room if joining non-existent to prevent 404
       room = {
         roomId,
         hostId: peerId,
@@ -76,6 +76,7 @@ export default async function handler(req, res) {
         targetServerTime: 0,
         startOffsetSec: 0,
         updatedAt: now,
+        queue: [],
         peers: {},
         signals: []
       };
@@ -99,6 +100,7 @@ export default async function handler(req, res) {
         roomId,
         state: room.state,
         track: room.track,
+        queue: room.queue || [],
         peers: Object.values(room.peers)
       }
     });
@@ -111,7 +113,8 @@ export default async function handler(req, res) {
         exists: false,
         peers: [{ id: peerId, deviceName, isHost: true, role: 'stereo', volume: 1.0 }],
         state: 'IDLE',
-        track: null
+        track: null,
+        queue: []
       });
     }
 
@@ -140,15 +143,14 @@ export default async function handler(req, res) {
       }
     }
 
-    // Get signals destined for this peer
     const incomingSignals = (room.signals || []).filter(s => s.to === peerId);
-    // Remove consumed signals
     room.signals = (room.signals || []).filter(s => s.to !== peerId);
 
     return res.status(200).json({
       exists: true,
       state: room.state,
       track: room.track,
+      queue: room.queue || [],
       targetServerTime: room.targetServerTime,
       startOffsetSec: room.startOffsetSec,
       peers: Object.values(room.peers),
@@ -164,8 +166,71 @@ export default async function handler(req, res) {
       if (body.targetServerTime !== undefined) room.targetServerTime = body.targetServerTime;
       if (body.startOffsetSec !== undefined) room.startOffsetSec = body.startOffsetSec;
       if (body.track) room.track = body.track;
+      if (body.queue) room.queue = body.queue;
       room.updatedAt = now;
       return res.status(200).json({ success: true });
+    }
+    return res.status(404).json({ error: 'Room not found' });
+  }
+
+  // Queue actions: Add, Remove, Next
+  if (action === 'add_queue') {
+    const room = rooms.get(roomId);
+    if (room) {
+      if (!room.queue) room.queue = [];
+      const item = {
+        id: 'q_' + Math.random().toString(36).substring(2, 9),
+        name: body.name || 'Untitled',
+        artist: body.artist || 'Artist',
+        duration: body.duration || 0,
+        thumbnail: body.thumbnail || '',
+        audioUrl: body.audioUrl || '',
+        isSynthetic: !!body.isSynthetic,
+        addedBy: deviceName
+      };
+
+      // If nothing is playing, play immediately
+      if (!room.track) {
+        room.track = item;
+        room.state = 'PLAYING';
+        room.targetServerTime = now + 400;
+        room.startOffsetSec = 0;
+      } else {
+        room.queue.push(item);
+      }
+
+      room.updatedAt = now;
+      return res.status(200).json({ success: true, track: room.track, queue: room.queue });
+    }
+    return res.status(404).json({ error: 'Room not found' });
+  }
+
+  if (action === 'remove_queue') {
+    const room = rooms.get(roomId);
+    if (room && room.queue) {
+      const qId = body.queueId;
+      room.queue = room.queue.filter(q => q.id !== qId);
+      room.updatedAt = now;
+      return res.status(200).json({ success: true, queue: room.queue });
+    }
+    return res.status(200).json({ success: false });
+  }
+
+  if (action === 'next_track') {
+    const room = rooms.get(roomId);
+    if (room) {
+      if (room.queue && room.queue.length > 0) {
+        const next = room.queue.shift();
+        room.track = next;
+        room.state = 'PLAYING';
+        room.targetServerTime = now + 400;
+        room.startOffsetSec = 0;
+      } else {
+        room.state = 'PAUSED';
+        room.startOffsetSec = 0;
+      }
+      room.updatedAt = now;
+      return res.status(200).json({ success: true, track: room.track, queue: room.queue });
     }
     return res.status(404).json({ error: 'Room not found' });
   }
