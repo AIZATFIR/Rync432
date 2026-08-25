@@ -1,5 +1,6 @@
 import { firebaseAuth } from '../auth/FirebaseAuth.js';
 import { QRCodeGenerator } from './QRCodeGenerator.js';
+import { QRScanner } from './QRScanner.js';
 
 export class UIManager {
   constructor(app) {
@@ -7,10 +8,10 @@ export class UIManager {
     this.elements = {};
     this.currentUser = null;
     this.cachedPeers = [];
+    this.qrScanner = null;
   }
 
   init() {
-    // Cache DOM Elements
     this.elements = {
       connectionStatus: document.getElementById('connectionStatus'),
       connectionDot: document.getElementById('connectionDot'),
@@ -21,14 +22,13 @@ export class UIManager {
       hostControlsSection: document.getElementById('hostControlsSection'),
       clientNotice: document.getElementById('clientNotice'),
       
-      // Auth & Profile
+      // Profile & Settings Modal
       userAuthBtn: document.getElementById('userAuthBtn'),
       userNameLabel: document.getElementById('userNameLabel'),
       userAvatarContainer: document.getElementById('userAvatarContainer'),
       authModal: document.getElementById('authModal'),
       modalCloseBtn: document.getElementById('modalCloseBtn'),
       googleSignInActionBtn: document.getElementById('googleSignInActionBtn'),
-      guestModeBtn: document.getElementById('guestModeBtn'),
       authLoggedOutView: document.getElementById('authLoggedOutView'),
       authLoggedInView: document.getElementById('authLoggedInView'),
       userModalAvatar: document.getElementById('userModalAvatar'),
@@ -36,15 +36,21 @@ export class UIManager {
       userModalEmail: document.getElementById('userModalEmail'),
       signOutBtn: document.getElementById('signOutBtn'),
 
-      // Inputs & Room Buttons
+      // Hero Room Buttons & Inputs
       createRoomBtn: document.getElementById('createRoomBtn'),
       joinRoomBtn: document.getElementById('joinRoomBtn'),
       roomCodeInput: document.getElementById('roomCodeInput'),
+      scanQrBtn: document.getElementById('scanQrBtn'),
       leaveRoomBtn: document.getElementById('leaveRoomBtn'),
       copyRoomLinkBtn: document.getElementById('copyRoomLinkBtn'),
       connectSpeakersBtn: document.getElementById('connectSpeakersBtn'),
       manageDevicesBtn: document.getElementById('manageDevicesBtn'),
       activeSpeakerCount: document.getElementById('activeSpeakerCount'),
+
+      // QR Scanner Modal
+      qrScannerModal: document.getElementById('qrScannerModal'),
+      qrScannerCloseBtn: document.getElementById('qrScannerCloseBtn'),
+      qrVideo: document.getElementById('qrVideo'),
 
       // Spotify Connect & QR Modal
       devicesModal: document.getElementById('devicesModal'),
@@ -65,7 +71,7 @@ export class UIManager {
       progressFill: document.getElementById('progressFill'),
       volumeSlider: document.getElementById('volumeSlider'),
       
-      // Multi-Source Audio Hub Tabs
+      // Multi-Source Hub Tabs
       tabBtnFile: document.getElementById('tabBtnFile'),
       tabBtnYoutube: document.getElementById('tabBtnYoutube'),
       tabBtnDemo: document.getElementById('tabBtnDemo'),
@@ -75,7 +81,6 @@ export class UIManager {
 
       // Upload & Demo Elements
       dropzone: document.getElementById('audioDropzone'),
-      heroDropzone: document.getElementById('heroDropzone'),
       audioFileInput: document.getElementById('audioFileInput'),
       sampleWavBtn: document.getElementById('sampleWavBtn'),
       demoSynthBtn: document.getElementById('demoSynthBtn'),
@@ -87,17 +92,14 @@ export class UIManager {
       ytSampleLofi: document.getElementById('ytSampleLofi'),
       ytSampleRock: document.getElementById('ytSampleRock'),
 
-      // Spatial Channel Matrix Selector (This Device)
+      // Spatial Channel Matrix Selector
       spatialStereo: document.getElementById('spatialStereo'),
       spatialLeft: document.getElementById('spatialLeft'),
       spatialRight: document.getElementById('spatialRight'),
       spatialCenter: document.getElementById('spatialCenter'),
-      currentSpatialBadge: document.getElementById('currentSpatialBadge'),
 
-      // Feature 1: Metronome
+      // Settings: Metronome & Latency Tuner
       metronomeToggle: document.getElementById('metronomeToggle'),
-
-      // Feature 2: Latency Tuner
       latencySlider: document.getElementById('latencySlider'),
       latencyDisplay: document.getElementById('latencyDisplay'),
       stepMinus1: document.getElementById('stepMinus1'),
@@ -109,9 +111,8 @@ export class UIManager {
       presetWired: document.getElementById('presetWired'),
       presetInternal: document.getElementById('presetInternal'),
       presetBt: document.getElementById('presetBt'),
-      presetAirplay: document.getElementById('presetAirplay'),
 
-      // Mesh Device List
+      // Devices List
       devicesList: document.getElementById('devicesList')
     };
 
@@ -134,24 +135,22 @@ export class UIManager {
   bindEvents() {
     const { elements, app } = this;
 
-    // 1. Firebase Auth Modal
+    // 1. Settings & Auth Modal
     if (elements.userAuthBtn) {
       elements.userAuthBtn.addEventListener('click', () => {
-        elements.authModal.classList.add('active');
+        if (elements.authModal) elements.authModal.classList.add('active');
       });
     }
 
     if (elements.modalCloseBtn) {
       elements.modalCloseBtn.addEventListener('click', () => {
-        elements.authModal.classList.remove('active');
+        if (elements.authModal) elements.authModal.classList.remove('active');
       });
     }
 
     if (elements.authModal) {
       elements.authModal.addEventListener('click', (e) => {
-        if (e.target === elements.authModal) {
-          elements.authModal.classList.remove('active');
-        }
+        if (e.target === elements.authModal) elements.authModal.classList.remove('active');
       });
     }
 
@@ -165,14 +164,8 @@ export class UIManager {
           elements.authModal.classList.remove('active');
         } catch (err) {
           console.warn('Google Sign-In:', err.message);
-          alert(err.message || 'Gagal login dengan Google.');
+          alert(err.message || 'Gagal login Google.');
         }
-      });
-    }
-
-    if (elements.guestModeBtn) {
-      elements.guestModeBtn.addEventListener('click', () => {
-        elements.authModal.classList.remove('active');
       });
     }
 
@@ -181,11 +174,10 @@ export class UIManager {
         await firebaseAuth.signOut();
         this.currentUser = null;
         this.renderUserState();
-        elements.authModal.classList.remove('active');
       });
     }
 
-    // 2. Room Actions
+    // 2. Room Actions (Host & Join)
     if (elements.createRoomBtn) {
       elements.createRoomBtn.addEventListener('click', () => {
         app.audioEngine.ensureContext();
@@ -200,7 +192,7 @@ export class UIManager {
           app.audioEngine.ensureContext();
           app.socketClient.joinRoom(code, this.getDeviceName());
         } else {
-          alert('Masukkan 4 digit Room Code yang valid');
+          alert('Masukkan 4 digit kode room.');
         }
       });
     }
@@ -217,12 +209,46 @@ export class UIManager {
       });
     }
 
+    // Camera QR Scanner Handler
+    if (elements.scanQrBtn) {
+      elements.scanQrBtn.addEventListener('click', async () => {
+        if (elements.qrScannerModal) elements.qrScannerModal.classList.add('active');
+        try {
+          this.qrScanner = new QRScanner(elements.qrVideo, (scannedCode) => {
+            if (elements.roomCodeInput) elements.roomCodeInput.value = scannedCode;
+            if (elements.qrScannerModal) elements.qrScannerModal.classList.remove('active');
+            app.audioEngine.ensureContext();
+            app.socketClient.joinRoom(scannedCode, this.getDeviceName());
+          });
+          await this.qrScanner.start();
+        } catch (err) {
+          alert(err.message || 'Kamera tidak dapat diakses.');
+          if (elements.qrScannerModal) elements.qrScannerModal.classList.remove('active');
+        }
+      });
+    }
+
+    const closeQrScanner = () => {
+      if (this.qrScanner) {
+        this.qrScanner.stop();
+        this.qrScanner = null;
+      }
+      if (elements.qrScannerModal) elements.qrScannerModal.classList.remove('active');
+    };
+
+    if (elements.qrScannerCloseBtn) elements.qrScannerCloseBtn.addEventListener('click', closeQrScanner);
+    if (elements.qrScannerModal) {
+      elements.qrScannerModal.addEventListener('click', (e) => {
+        if (e.target === elements.qrScannerModal) closeQrScanner();
+      });
+    }
+
     // Copy Link Buttons
     const copyLinkHandler = () => {
       const roomId = app.socketClient.roomId || 'DEMO';
       const url = `${window.location.origin}/?room=${roomId}`;
       navigator.clipboard.writeText(url).then(() => {
-        alert(`Link Room disalin: ${url}\nBuka di browser smartphone/laptop lain untuk langsung terhubung!`);
+        alert(`Link Room disalin: ${url}`);
       });
     };
 
@@ -234,7 +260,7 @@ export class UIManager {
       const roomId = app.socketClient.roomId || 'DEMO';
       const roomUrl = `${window.location.origin}/?room=${roomId}`;
       if (elements.roomQrCodeContainer) {
-        elements.roomQrCodeContainer.innerHTML = QRCodeGenerator.generateSVG(roomUrl, 180);
+        elements.roomQrCodeContainer.innerHTML = QRCodeGenerator.generateSVG(roomUrl, 160);
       }
       this.renderDevicesMatrix();
       if (elements.devicesModal) elements.devicesModal.classList.add('active');
@@ -245,15 +271,13 @@ export class UIManager {
 
     if (elements.devicesModalCloseBtn) {
       elements.devicesModalCloseBtn.addEventListener('click', () => {
-        elements.devicesModal.classList.remove('active');
+        if (elements.devicesModal) elements.devicesModal.classList.remove('active');
       });
     }
 
     if (elements.devicesModal) {
       elements.devicesModal.addEventListener('click', (e) => {
-        if (e.target === elements.devicesModal) {
-          elements.devicesModal.classList.remove('active');
-        }
+        if (e.target === elements.devicesModal) elements.devicesModal.classList.remove('active');
       });
     }
 
@@ -314,10 +338,10 @@ export class UIManager {
     if (elements.tabBtnYoutube) elements.tabBtnYoutube.addEventListener('click', () => switchTab('youtube'));
     if (elements.tabBtnDemo) elements.tabBtnDemo.addEventListener('click', () => switchTab('demo'));
 
-    // 5. YouTube Stream Extractor Handler
+    // 5. YouTube Stream Extractor
     const handleYtFetch = async (url) => {
       if (!url) {
-        alert('Masukkan URL YouTube atau YouTube Music');
+        alert('Masukkan link YouTube / YT Music');
         return;
       }
       app.audioEngine.ensureContext();
@@ -325,10 +349,10 @@ export class UIManager {
         app.socketClient.createRoom(this.getDeviceName());
       }
 
-      this.setTrackLoading('Mengekstrak audio stream dari YouTube...');
+      this.setTrackLoading('Mengekstrak YouTube...');
       try {
         const streamEndpoint = `/api/yt-stream?url=${encodeURIComponent(url)}`;
-        const buffer = await app.audioEngine.loadAudioFromUrl(streamEndpoint, 'YouTube Music Stream');
+        const buffer = await app.audioEngine.loadAudioFromUrl(streamEndpoint, 'YouTube Audio');
         this.updateTrackUI(app.audioEngine.currentTrackName, buffer.duration);
 
         if (app.socketClient.isHost) {
@@ -340,14 +364,14 @@ export class UIManager {
         }
       } catch (err) {
         console.error('YouTube extraction error:', err);
-        alert('Gagal mengekstrak YouTube stream: ' + err.message + '\nSilakan gunakan tab Upload File MP3 sebagai alternatif.');
-        this.setTrackLoading('No track loaded');
+        alert('Gagal mengekstrak YouTube: ' + err.message + '\nSilakan gunakan tab Upload File MP3.');
+        this.setTrackLoading('Pilih trek lagu');
       }
     };
 
     if (elements.fetchYtAudioBtn) {
       elements.fetchYtAudioBtn.addEventListener('click', () => {
-        const url = elements.ytUrlInput.value.trim();
+        const url = elements.ytUrlInput?.value.trim() || '';
         handleYtFetch(url);
       });
     }
@@ -358,27 +382,26 @@ export class UIManager {
       });
     }
 
-    // Quick Sample YouTube Links
     if (elements.ytSampleSynth) {
       elements.ytSampleSynth.addEventListener('click', () => {
-        elements.ytUrlInput.value = 'https://www.youtube.com/watch?v=4xDzrJKXOOY';
+        if (elements.ytUrlInput) elements.ytUrlInput.value = 'https://www.youtube.com/watch?v=4xDzrJKXOOY';
         elements.fetchYtAudioBtn.click();
       });
     }
     if (elements.ytSampleLofi) {
       elements.ytSampleLofi.addEventListener('click', () => {
-        elements.ytUrlInput.value = 'https://www.youtube.com/watch?v=jfKfPfyJRdk';
+        if (elements.ytUrlInput) elements.ytUrlInput.value = 'https://www.youtube.com/watch?v=jfKfPfyJRdk';
         elements.fetchYtAudioBtn.click();
       });
     }
     if (elements.ytSampleRock) {
       elements.ytSampleRock.addEventListener('click', () => {
-        elements.ytUrlInput.value = 'https://www.youtube.com/watch?v=kXYiU_JCYtU';
+        if (elements.ytUrlInput) elements.ytUrlInput.value = 'https://www.youtube.com/watch?v=kXYiU_JCYtU';
         elements.fetchYtAudioBtn.click();
       });
     }
 
-    // 6. Spatial Channel Matrix Selector (This Device)
+    // 6. Spatial Channel Matrix Selector
     const selectSpatialChannel = (role) => {
       app.audioEngine.setSpatialChannel(role);
       [elements.spatialStereo, elements.spatialLeft, elements.spatialRight, elements.spatialCenter].forEach(btn => {
@@ -387,10 +410,6 @@ export class UIManager {
           else btn.classList.remove('active');
         }
       });
-      if (elements.currentSpatialBadge) {
-        const labels = { stereo: 'Full Stereo', left: 'Left Channel (L)', right: 'Right Channel (R)', center: 'Center (Mono)' };
-        elements.currentSpatialBadge.innerText = labels[role] || 'Full Stereo';
-      }
     };
 
     if (elements.spatialStereo) elements.spatialStereo.addEventListener('click', () => selectSpatialChannel('stereo'));
@@ -398,7 +417,7 @@ export class UIManager {
     if (elements.spatialRight) elements.spatialRight.addEventListener('click', () => selectSpatialChannel('right'));
     if (elements.spatialCenter) elements.spatialCenter.addEventListener('click', () => selectSpatialChannel('center'));
 
-    // 7. File Upload Triggers
+    // 7. Single File Upload Trigger
     const triggerFileSelect = (e) => {
       if (e) e.stopPropagation();
       app.audioEngine.ensureContext();
@@ -411,34 +430,16 @@ export class UIManager {
     if (elements.dropzone) {
       elements.dropzone.addEventListener('click', triggerFileSelect);
       elements.dropzone.addEventListener('dragover', (e) => {
-        e.preventDefault(); e.stopPropagation(); elements.dropzone.classList.add('dragover');
-      });
-      elements.dropzone.addEventListener('dragleave', (e) => {
-        e.preventDefault(); e.stopPropagation(); elements.dropzone.classList.remove('dragover');
+        e.preventDefault(); e.stopPropagation();
       });
       elements.dropzone.addEventListener('drop', (e) => {
-        e.preventDefault(); e.stopPropagation(); elements.dropzone.classList.remove('dragover');
+        e.preventDefault(); e.stopPropagation();
         const files = e.dataTransfer ? e.dataTransfer.files : null;
         if (files && files.length > 0) this.handleAudioFile(files[0]);
       });
     }
 
-    if (elements.heroDropzone) {
-      elements.heroDropzone.addEventListener('click', triggerFileSelect);
-      elements.heroDropzone.addEventListener('dragover', (e) => {
-        e.preventDefault(); e.stopPropagation(); elements.heroDropzone.classList.add('dragover');
-      });
-      elements.heroDropzone.addEventListener('dragleave', (e) => {
-        e.preventDefault(); e.stopPropagation(); elements.heroDropzone.classList.remove('dragover');
-      });
-      elements.heroDropzone.addEventListener('drop', (e) => {
-        e.preventDefault(); e.stopPropagation(); elements.heroDropzone.classList.remove('dragover');
-        const files = e.dataTransfer ? e.dataTransfer.files : null;
-        if (files && files.length > 0) this.handleAudioFile(files[0]);
-      });
-    }
-
-    // Global Window File Drop
+    // Global Drop
     window.addEventListener('dragover', (e) => e.preventDefault());
     window.addEventListener('drop', (e) => {
       e.preventDefault();
@@ -448,7 +449,6 @@ export class UIManager {
       }
     });
 
-    // File Input Onchange
     if (elements.audioFileInput) {
       elements.audioFileInput.addEventListener('change', (e) => {
         const files = e.target.files;
@@ -465,21 +465,21 @@ export class UIManager {
         if (!app.socketClient.roomId) {
           app.socketClient.createRoom(this.getDeviceName());
         }
-        this.setTrackLoading('Loading Acoustic Harmonics Track...');
+        this.setTrackLoading('Memuat Acoustic WAV...');
         try {
-          const buffer = await app.audioEngine.loadAudioFromUrl('/test_music_sample.wav', 'Acoustic Harmonics (Sample WAV)');
-          this.updateTrackUI('Acoustic Harmonics (Sample WAV)', buffer.duration);
+          const buffer = await app.audioEngine.loadAudioFromUrl('/test_music_sample.wav', 'Acoustic WAV');
+          this.updateTrackUI('Acoustic WAV', buffer.duration);
 
           if (app.socketClient.isHost) {
             app.socketClient.sendTrackMetadata({
-              name: 'Acoustic Harmonics (Sample WAV)',
+              name: 'Acoustic WAV',
               duration: buffer.duration,
               audioUrl: '/test_music_sample.wav'
             });
           }
         } catch (err) {
           console.error(err);
-          alert('Gagal memuat sample audio: ' + err.message);
+          alert('Gagal memuat sample: ' + err.message);
         }
       });
     }
@@ -491,7 +491,7 @@ export class UIManager {
         if (!app.socketClient.roomId) {
           app.socketClient.createRoom(this.getDeviceName());
         }
-        this.setTrackLoading('Generating Neon Groove Synthwave...');
+        this.setTrackLoading('Neon Synth Demo...');
         try {
           const buffer = app.audioEngine.generateSyntheticTrack('synthwave');
           this.updateTrackUI(app.audioEngine.currentTrackName, buffer.duration);
@@ -504,12 +504,12 @@ export class UIManager {
             });
           }
         } catch (err) {
-          alert('Error creating synth audio: ' + err.message);
+          alert('Error: ' + err.message);
         }
       });
     }
 
-    // Feature 1: Metronome
+    // Settings: Metronome
     if (elements.metronomeToggle) {
       elements.metronomeToggle.addEventListener('change', (e) => {
         app.audioEngine.ensureContext();
@@ -521,7 +521,7 @@ export class UIManager {
       });
     }
 
-    // Feature 2: Latency Tuner
+    // Settings: Latency Tuner
     if (elements.stepMinus1) elements.stepMinus1.addEventListener('click', () => this.nudgeLatency(-1));
     if (elements.stepPlus1) elements.stepPlus1.addEventListener('click', () => this.nudgeLatency(1));
 
@@ -540,7 +540,6 @@ export class UIManager {
     if (elements.presetWired) elements.presetWired.addEventListener('click', () => this.applyPreset('wired', 0));
     if (elements.presetInternal) elements.presetInternal.addEventListener('click', () => this.applyPreset('internal', 15));
     if (elements.presetBt) elements.presetBt.addEventListener('click', () => this.applyPreset('bt', 120));
-    if (elements.presetAirplay) elements.presetAirplay.addEventListener('click', () => this.applyPreset('airplay', 250));
   }
 
   renderUserState() {
@@ -551,17 +550,17 @@ export class UIManager {
         if (currentUser.avatar) {
           elements.userAvatarContainer.innerHTML = `<img src="${currentUser.avatar}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;">`;
         } else {
-          elements.userAvatarContainer.innerHTML = `<span style="font-weight:700;color:var(--spotify-green);">${currentUser.name ? currentUser.name.charAt(0) : 'U'}</span>`;
+          elements.userAvatarContainer.innerHTML = `<span style="font-weight:700;color:var(--spotify-green);font-size:0.75rem;">${currentUser.name ? currentUser.name.charAt(0) : 'U'}</span>`;
         }
       }
       
       if (elements.authLoggedOutView) elements.authLoggedOutView.style.display = 'none';
       if (elements.authLoggedInView) elements.authLoggedInView.style.display = 'flex';
       if (elements.userModalAvatar) elements.userModalAvatar.src = currentUser.avatar || 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2250%22 r=%2245%22 fill=%22%231ed760%22/></svg>';
-      if (elements.userModalName) elements.userModalName.innerText = currentUser.name || 'Firebase Google User';
+      if (elements.userModalName) elements.userModalName.innerText = currentUser.name || 'Google User';
       if (elements.userModalEmail) elements.userModalEmail.innerText = currentUser.email || '';
     } else {
-      if (elements.userNameLabel) elements.userNameLabel.innerText = 'Sign in';
+      if (elements.userNameLabel) elements.userNameLabel.innerText = 'Settings';
       if (elements.userAvatarContainer) {
         elements.userAvatarContainer.innerHTML = `
           <svg class="google-g-icon" viewBox="0 0 24 24">
@@ -582,12 +581,11 @@ export class UIManager {
       return `${this.currentUser.name} Speaker`;
     }
     const ua = navigator.userAgent;
-    let name = 'Rync Speaker';
-    if (/iPhone|iPad/i.test(ua)) name = 'iOS Speaker';
-    else if (/Android/i.test(ua)) name = 'Android Speaker';
-    else if (/Macintosh/i.test(ua)) name = 'Mac Speaker';
-    else if (/Windows/i.test(ua)) name = 'Windows Speaker';
-    else if (/Linux/i.test(ua)) name = 'Linux Speaker';
+    let name = 'Speaker';
+    if (/iPhone|iPad/i.test(ua)) name = 'iOS';
+    else if (/Android/i.test(ua)) name = 'Android';
+    else if (/Macintosh/i.test(ua)) name = 'Mac';
+    else if (/Windows/i.test(ua)) name = 'PC';
     return `${name} (${Math.floor(Math.random() * 899 + 100)})`;
   }
 
@@ -601,11 +599,11 @@ export class UIManager {
     }
 
     const fileSizeMb = (file.size / (1024 * 1024)).toFixed(1);
-    this.setTrackLoading(`Membaca ${file.name} (${fileSizeMb} MB)...`);
+    this.setTrackLoading(`Membaca (${fileSizeMb} MB)...`);
 
     try {
       const arrayBuffer = await file.arrayBuffer();
-      this.setTrackLoading(`Mendecode audio ${file.name}...`);
+      this.setTrackLoading(`Decode audio...`);
       const audioBuffer = await app.audioEngine.loadAudioFromArrayBuffer(arrayBuffer, file.name);
       this.updateTrackUI(file.name, audioBuffer.duration);
 
@@ -619,8 +617,8 @@ export class UIManager {
       }
     } catch (err) {
       console.error('Audio load error:', err);
-      alert('Gagal mendecode file audio: ' + (err.message || 'Format tidak didukung'));
-      this.setTrackLoading('No track loaded');
+      alert('Gagal mendecode audio: ' + (err.message || 'Format tidak didukung'));
+      this.setTrackLoading('Pilih trek lagu');
     } finally {
       if (this.elements.audioFileInput) {
         this.elements.audioFileInput.value = '';
@@ -630,12 +628,12 @@ export class UIManager {
 
   setTrackLoading(msg) {
     if (this.elements.trackTitle) this.elements.trackTitle.innerText = msg;
-    if (this.elements.trackSub) this.elements.trackSub.innerText = 'Sinkronisasi audio ke seluruh speaker...';
+    if (this.elements.trackSub) this.elements.trackSub.innerText = 'Sync audio...';
   }
 
   updateTrackUI(title, duration) {
     if (this.elements.trackTitle) this.elements.trackTitle.innerText = title;
-    if (this.elements.trackSub) this.elements.trackSub.innerText = `${this.formatTime(duration)} • Sample-accurate Ready`;
+    if (this.elements.trackSub) this.elements.trackSub.innerText = `${this.formatTime(duration)} • Ready`;
     if (this.elements.totalTimeText) this.elements.totalTimeText.innerText = this.formatTime(duration);
   }
 
@@ -662,10 +660,10 @@ export class UIManager {
 
   setConnected(isConnected) {
     if (isConnected) {
-      if (this.elements.connectionStatus) this.elements.connectionStatus.innerText = 'Connected';
+      if (this.elements.connectionStatus) this.elements.connectionStatus.innerText = 'Online';
       if (this.elements.connectionDot) this.elements.connectionDot.classList.add('connected');
     } else {
-      if (this.elements.connectionStatus) this.elements.connectionStatus.innerText = 'Connecting...';
+      if (this.elements.connectionStatus) this.elements.connectionStatus.innerText = 'Offline';
       if (this.elements.connectionDot) this.elements.connectionDot.classList.remove('connected');
     }
   }
@@ -678,14 +676,14 @@ export class UIManager {
     if (isHost) {
       if (this.elements.userRoleBadge) {
         this.elements.userRoleBadge.className = 'role-pill host';
-        this.elements.userRoleBadge.innerText = 'ROOM MASTER (HOST)';
+        this.elements.userRoleBadge.innerText = 'HOST';
       }
       if (this.elements.hostControlsSection) this.elements.hostControlsSection.style.display = 'flex';
       if (this.elements.clientNotice) this.elements.clientNotice.style.display = 'none';
     } else {
       if (this.elements.userRoleBadge) {
         this.elements.userRoleBadge.className = 'role-pill peer';
-        this.elements.userRoleBadge.innerText = 'SATELLITE SPEAKER';
+        this.elements.userRoleBadge.innerText = 'SATELLITE';
       }
       if (this.elements.hostControlsSection) this.elements.hostControlsSection.style.display = 'none';
       if (this.elements.clientNotice) this.elements.clientNotice.style.display = 'block';
@@ -696,11 +694,9 @@ export class UIManager {
     if (isPlaying) {
       if (this.elements.playIcon) this.elements.playIcon.style.display = 'none';
       if (this.elements.pauseIcon) this.elements.pauseIcon.style.display = 'block';
-      if (this.elements.playBtn) this.elements.playBtn.classList.add('pulse-anim');
     } else {
       if (this.elements.playIcon) this.elements.playIcon.style.display = 'block';
       if (this.elements.pauseIcon) this.elements.pauseIcon.style.display = 'none';
-      if (this.elements.playBtn) this.elements.playBtn.classList.remove('pulse-anim');
     }
   }
 
@@ -719,16 +715,16 @@ export class UIManager {
       div.className = 'device-item';
 
       const offsetStr = peer.latencyOffset !== undefined ? `${peer.latencyOffset > 0 ? '+' : ''}${peer.latencyOffset}ms` : '0ms';
-      const rttStr = peer.rtt ? `${peer.rtt}ms ping` : '<5ms sync';
+      const rttStr = peer.rtt ? `${peer.rtt}ms` : '<5ms';
 
       div.innerHTML = `
         <div class="device-name-group">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--spotify-green)" stroke-width="2">
-            ${peer.isHost ? '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>' : '<rect width="16" height="20" x="4" y="2" rx="2"/><circle cx="12" cy="14" r="4"/><line x1="12" x2="12.01" y1="6" y2="6"/>'}
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--spotify-green)" stroke-width="2">
+            ${peer.isHost ? '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>' : '<rect width="16" height="20" x="4" y="2" rx="2"/><circle cx="12" cy="14" r="4"/>'}
           </svg>
           <div>
-            <div class="device-name">${peer.deviceName || 'Speaker'} ${isSelf ? '<span style="color:var(--spotify-green);font-size:0.75rem;">(You)</span>' : ''}</div>
-            <div class="device-latency-tag">Offset: ${offsetStr} • ${peer.isHost ? 'Master' : 'Satellite'}</div>
+            <div class="device-name">${peer.deviceName || 'Speaker'} ${isSelf ? '<span style="color:var(--spotify-green);font-size:0.7rem;">(You)</span>' : ''}</div>
+            <div class="device-latency-tag">Delay: ${offsetStr} • ${peer.isHost ? 'Host' : 'Satellite'}</div>
           </div>
         </div>
         <span class="ping-badge">${rttStr}</span>
@@ -750,24 +746,23 @@ export class UIManager {
       div.className = 'device-item';
       div.style.flexDirection = 'column';
       div.style.alignItems = 'flex-start';
-      div.style.gap = '8px';
+      div.style.gap = '6px';
 
       div.innerHTML = `
         <div style="display:flex;justify-content:space-between;width:100%;align-items:center;">
           <div class="device-name-group">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--spotify-green)" stroke-width="2">
-              <rect width="16" height="20" x="4" y="2" rx="2"/><circle cx="12" cy="14" r="4"/><line x1="12" x2="12.01" y1="6" y2="6"/>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--spotify-green)" stroke-width="2">
+              <rect width="16" height="20" x="4" y="2" rx="2"/><circle cx="12" cy="14" r="4"/>
             </svg>
-            <div class="device-name">${peer.deviceName || 'Speaker'} ${isSelf ? '<span style="color:var(--spotify-green);font-size:0.75rem;">(You)</span>' : ''}</div>
+            <div class="device-name">${peer.deviceName || 'Speaker'} ${isSelf ? '<span style="color:var(--spotify-green);font-size:0.7rem;">(You)</span>' : ''}</div>
           </div>
           <span class="ping-badge">${peer.isHost ? 'Host' : 'Satellite'}</span>
         </div>
-        <div style="font-size:0.75rem;color:var(--text-silver);">Pilih Channel Suara Speaker Ini:</div>
-        <div style="display:flex;gap:6px;width:100%;">
-          <button class="chip-btn ${this.app.audioEngine.spatialRole === 'stereo' ? 'active' : ''}" style="flex:1;padding:4px 6px;font-size:0.72rem;" onclick="window.__ryncApp.uiManager.setSpatialRole('stereo')">Stereo</button>
-          <button class="chip-btn ${this.app.audioEngine.spatialRole === 'left' ? 'active' : ''}" style="flex:1;padding:4px 6px;font-size:0.72rem;" onclick="window.__ryncApp.uiManager.setSpatialRole('left')">Left (L)</button>
-          <button class="chip-btn ${this.app.audioEngine.spatialRole === 'right' ? 'active' : ''}" style="flex:1;padding:4px 6px;font-size:0.72rem;" onclick="window.__ryncApp.uiManager.setSpatialRole('right')">Right (R)</button>
-          <button class="chip-btn ${this.app.audioEngine.spatialRole === 'center' ? 'active' : ''}" style="flex:1;padding:4px 6px;font-size:0.72rem;" onclick="window.__ryncApp.uiManager.setSpatialRole('center')">Center</button>
+        <div style="display:flex;gap:4px;width:100%;">
+          <button class="chip-btn ${this.app.audioEngine.spatialRole === 'stereo' ? 'active' : ''}" style="flex:1;padding:3px 4px;font-size:0.68rem;" onclick="window.__ryncApp.uiManager.setSpatialRole('stereo')">Stereo</button>
+          <button class="chip-btn ${this.app.audioEngine.spatialRole === 'left' ? 'active' : ''}" style="flex:1;padding:3px 4px;font-size:0.68rem;" onclick="window.__ryncApp.uiManager.setSpatialRole('left')">Left</button>
+          <button class="chip-btn ${this.app.audioEngine.spatialRole === 'right' ? 'active' : ''}" style="flex:1;padding:3px 4px;font-size:0.68rem;" onclick="window.__ryncApp.uiManager.setSpatialRole('right')">Right</button>
+          <button class="chip-btn ${this.app.audioEngine.spatialRole === 'center' ? 'active' : ''}" style="flex:1;padding:3px 4px;font-size:0.68rem;" onclick="window.__ryncApp.uiManager.setSpatialRole('center')">Center</button>
         </div>
       `;
       list.appendChild(div);
@@ -782,10 +777,6 @@ export class UIManager {
         else btn.classList.remove('active');
       }
     });
-    if (this.elements.currentSpatialBadge) {
-      const labels = { stereo: 'Full Stereo', left: 'Left Channel (L)', right: 'Right Channel (R)', center: 'Center (Mono)' };
-      this.elements.currentSpatialBadge.innerText = labels[role] || 'Full Stereo';
-    }
     this.renderDevicesMatrix();
   }
 
