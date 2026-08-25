@@ -54,6 +54,7 @@ export default async function handler(req, res) {
     const audioBase64 = body.audioBase64;
     const trackName = body.trackName || 'Uploaded Track';
     const duration = body.duration || 0;
+    const targetQueueId = body.id || body.queueId;
 
     if (audioBase64 && roomId) {
       const audioId = 'aud_' + Math.random().toString(36).substring(2, 9);
@@ -87,23 +88,35 @@ export default async function handler(req, res) {
       }
 
       const audioUrl = `/api/room?action=get_audio&audioId=${audioId}&roomId=${encodeURIComponent(roomId)}&v=${now}`;
-      const item = {
-        id: 'q_' + Math.random().toString(36).substring(2, 9),
-        audioId,
-        name: trackName,
-        artist: 'File Audio',
-        duration,
-        audioUrl,
-        addedBy: deviceName
-      };
-
+      
       if (!room.queue) room.queue = [];
-      room.queue.push(item);
+      let item = targetQueueId ? room.queue.find(q => q.id === targetQueueId) : null;
+      if (item) {
+        item.audioId = audioId;
+        item.audioUrl = audioUrl;
+      } else {
+        item = {
+          id: targetQueueId || ('q_' + Math.random().toString(36).substring(2, 9)),
+          audioId,
+          name: trackName,
+          artist: 'File Audio',
+          duration,
+          audioUrl,
+          addedBy: deviceName
+        };
+        const exists = room.queue.some(q => q.id === item.id || (q.name === item.name && Math.abs((q.duration || 0) - (item.duration || 0)) < 1));
+        if (!exists) {
+          room.queue.push(item);
+        }
+      }
 
       if (!room.track) {
         room.track = item;
         room.state = 'PAUSED';
         room.startOffsetSec = 0;
+      } else if (room.track.id === item.id) {
+        room.track.audioId = audioId;
+        room.track.audioUrl = audioUrl;
       }
       room.updatedAt = now;
 

@@ -1142,18 +1142,7 @@ export class UIManager {
           app.socketClient.cloudMesh.localAudioBufferCache.set(blobUrl, arrayBuffer);
         }
 
-        // 1. Add to queue immediately for every file uploaded
-        const queueItem = {
-          id: itemId,
-          name: file.name,
-          artist: 'File Audio',
-          duration: duration || 0,
-          audioUrl: blobUrl,
-          addedBy: this.getDeviceName()
-        };
-        await app.socketClient.addToQueue(queueItem);
-
-        // 2. Send Base64 relay to backend if <= 4MB
+        // 1. Send Base64 relay to backend first with stable itemId if <= 4MB
         if (arrayBuffer.byteLength <= 4 * 1024 * 1024) {
           let binary = '';
           const bytes = new Uint8Array(arrayBuffer);
@@ -1179,13 +1168,27 @@ export class UIManager {
               })
             });
             const uploadData = await uploadRes.json();
-            if (uploadData.audioUrl && app.socketClient.cloudMesh) {
-              app.socketClient.cloudMesh.localAudioBufferCache.set(uploadData.audioUrl, arrayBuffer);
+            if (uploadData.audioUrl) {
+              blobUrl = uploadData.audioUrl;
+              if (app.socketClient.cloudMesh) {
+                app.socketClient.cloudMesh.localAudioBufferCache.set(uploadData.audioUrl, arrayBuffer);
+              }
             }
           } catch (e) {
             console.warn('Binary upload fallback notice:', e);
           }
         }
+
+        // 2. Add to queue with stable itemId
+        const queueItem = {
+          id: itemId,
+          name: file.name,
+          artist: 'File Audio',
+          duration: duration || 0,
+          audioUrl: blobUrl,
+          addedBy: this.getDeviceName()
+        };
+        await app.socketClient.addToQueue(queueItem);
 
         // 3. WebRTC binary streaming only for the first active track if empty
         if (isFirstOfEmpty) {
