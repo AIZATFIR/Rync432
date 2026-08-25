@@ -639,6 +639,39 @@ canvas#visualizerCanvas {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.queue-item:hover {
+  background: var(--spotify-mid-surface);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.queue-item.active-track {
+  background: rgba(30, 215, 96, 0.08);
+  border-color: rgba(30, 215, 96, 0.4);
+}
+
+.queue-item.dragging {
+  opacity: 0.5;
+  background: var(--spotify-elevated);
+  border: 2px dashed var(--spotify-green);
+  transform: scale(0.98);
+}
+
+.drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-subdued);
+  cursor: grab;
+  padding: 2px 4px;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
 }
 
 .queue-item-info {

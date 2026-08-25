@@ -278,6 +278,51 @@ export class CloudMesh {
           });
         }
       }
+      if (data.track) {
+        this.lastKnownTrack = data.track;
+        this.onEvent('TRACK_METADATA', data.track);
+      }
+    } catch (e) {}
+  }
+
+  async playQueueItem(queueId) {
+    try {
+      const res = await fetch('/api/room?action=play_queue_item', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId: this.roomId, queueId })
+      });
+      const data = await res.json();
+      if (data.track) {
+        this.lastKnownTrack = data.track;
+        this.onEvent('TRACK_METADATA', data.track);
+        if (data.track.audioUrl) {
+          this.fetchRemoteAudioUrl(data.track.audioUrl, data.track.name);
+        }
+      }
+      if (data.queue) {
+        this.lastKnownQueue = data.queue;
+        this.onEvent('QUEUE_UPDATED', { queue: data.queue });
+      }
+    } catch (e) {}
+  }
+
+  async reorderQueue(newQueue) {
+    this.lastKnownQueue = newQueue;
+    this.onEvent('QUEUE_UPDATED', { queue: newQueue });
+    if (this.broadcastChannel) {
+      this.broadcastChannel.postMessage({
+        type: 'QUEUE_UPDATED',
+        payload: { queue: newQueue }
+      });
+    }
+
+    try {
+      await fetch('/api/room?action=reorder_queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId: this.roomId, queue: newQueue })
+      });
     } catch (e) {}
   }
 
@@ -310,6 +355,9 @@ export class CloudMesh {
       if (data.track) {
         this.lastKnownTrack = data.track;
         this.onEvent('TRACK_METADATA', data.track);
+        if (data.track.audioUrl) {
+          this.fetchRemoteAudioUrl(data.track.audioUrl, data.track.name);
+        }
       }
       if (data.queue) {
         this.lastKnownQueue = data.queue;

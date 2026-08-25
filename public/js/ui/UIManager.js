@@ -750,13 +750,29 @@ export class UIManager {
     }
 
     container.innerHTML = '';
+    const currentTrackName = this.app.audioEngine?.currentTrackName || '';
+
     queue.forEach((item, index) => {
+      const isCurrent = (currentTrackName && item.name === currentTrackName);
       const div = document.createElement('div');
-      div.className = 'queue-item';
+      div.className = `queue-item ${isCurrent ? 'active-track' : ''}`;
+      div.setAttribute('draggable', 'true');
+      div.dataset.index = index;
+      div.dataset.id = item.id;
+
       div.innerHTML = `
-        <div style="font-weight:700; color:var(--text-silver); font-size:0.75rem; width:16px;">${index + 1}</div>
+        <div class="drag-handle" title="Tahan & geser utk ubah urutan">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/>
+            <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
+            <circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/>
+          </svg>
+        </div>
+        <div style="font-weight:700; color:${isCurrent ? 'var(--spotify-green)' : 'var(--text-silver)'}; font-size:0.75rem; width:16px;">
+          ${isCurrent ? '▶' : index + 1}
+        </div>
         <div class="queue-item-info">
-          <div class="queue-item-title">${item.name}</div>
+          <div class="queue-item-title" style="color:${isCurrent ? 'var(--spotify-green)' : 'var(--text-base)'};">${item.name}</div>
           <div class="queue-item-meta">${item.artist || 'Artist'} • ${this.formatTime(item.duration)} • Oleh ${item.addedBy || 'Member'}</div>
         </div>
         <button class="queue-item-del" title="Hapus dari antrean">
@@ -767,9 +783,103 @@ export class UIManager {
         </button>
       `;
 
-      div.querySelector('.queue-item-del').addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.app.socketClient.removeFromQueue(item.id);
+      // Click to play specific track
+      div.addEventListener('click', (e) => {
+        if (e.target.closest('.queue-item-del') || e.target.closest('.drag-handle')) return;
+        this.app.audioEngine.ensureContext();
+        if (item.audioUrl) {
+          this.setTrackLoading(`Memuat ${item.name}...`);
+          this.app.socketClient.playQueueItem(item.id);
+        } else if (item.isSynthetic) {
+          const buffer = this.app.audioEngine.generateSyntheticTrack('synthwave');
+          this.updateTrackUI(item.name, buffer.duration);
+          this.app.socketClient.playQueueItem(item.id);
+        } else {
+          this.app.socketClient.playQueueItem(item.id);
+        }
+      });
+
+      // Delete action
+      const delBtn = div.querySelector('.queue-item-del');
+      if (delBtn) {
+        delBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.app.socketClient.removeFromQueue(item.id);
+        });
+      }
+
+      // Desktop HTML5 Drag and Drop
+      div.addEventListener('dragstart', (e) => {
+        this.draggedIndex = index;
+        div.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+      });
+
+      div.addEventListener('dragend', () => {
+        div.classList.remove('dragging');
+        this.draggedIndex = null;
+      });
+
+      div.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+      });
+
+      div.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const fromIdx = this.draggedIndex;
+        const toIdx = index;
+        if (fromIdx !== null && fromIdx !== undefined && fromIdx !== toIdx) {
+          const newQueue = [...this.cachedQueue];
+          const [movedItem] = newQueue.splice(fromIdx, 1);
+          newQueue.splice(toIdx, 0, movedItem);
+          this.renderQueue(newQueue);
+          this.app.socketClient.reorderQueue(newQueue);
+        }
+      });
+
+      // Mobile Touch Long-Press Drag Sorting
+      let touchTimer = null;
+      let startY = 0;
+      let isDraggingTouch = false;
+
+      div.addEventListener('touchstart', (e) => {
+        startY = e.touches[0].clientY;
+        touchTimer = setTimeout(() => {
+          isDraggingTouch = true;
+          div.classList.add('dragging');
+          if (navigator.vibrate) navigator.vibrate(40);
+        }, 250);
+      }, { passive: true });
+
+      div.addEventListener('touchmove', (e) => {
+        if (!isDraggingTouch) {
+          const moveY = Math.abs(e.touches[0].clientY - startY);
+          if (moveY > 10) clearTimeout(touchTimer);
+          return;
+        }
+        e.preventDefault();
+        const touchY = e.touches[0].clientY;
+        const targetEl = document.elementFromPoint(e.touches[0].clientX, touchY)?.closest('.queue-item');
+        if (targetEl && targetEl !== div && targetEl.dataset.index !== undefined) {
+          const toIndex = parseInt(targetEl.dataset.index, 10);
+          const fromIndex = parseInt(div.dataset.index, 10);
+          if (!isNaN(toIndex) && !isNaN(fromIndex) && fromIndex !== toIndex) {
+            const newQueue = [...this.cachedQueue];
+            const [moved] = newQueue.splice(fromIndex, 1);
+            newQueue.splice(toIndex, 0, moved);
+            this.renderQueue(newQueue);
+            this.app.socketClient.reorderQueue(newQueue);
+          }
+        }
+      }, { passive: false });
+
+      div.addEventListener('touchend', () => {
+        clearTimeout(touchTimer);
+        if (isDraggingTouch) {
+          isDraggingTouch = false;
+          div.classList.remove('dragging');
+        }
       });
 
       container.appendChild(div);

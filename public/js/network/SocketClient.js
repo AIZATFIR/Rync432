@@ -112,6 +112,14 @@ export class SocketClient {
     this.cloudMesh.addToQueue(track);
   }
 
+  playQueueItem(queueId) {
+    this.cloudMesh.playQueueItem(queueId);
+  }
+
+  reorderQueue(newQueue) {
+    this.cloudMesh.reorderQueue(newQueue);
+  }
+
   removeFromQueue(queueId) {
     this.cloudMesh.removeFromQueue(queueId);
   }

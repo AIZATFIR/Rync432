@@ -247,19 +247,46 @@ export default async function handler(req, res) {
         addedBy: deviceName
       };
 
+      room.queue.push(item);
+
       if (!room.track) {
         room.track = item;
         room.state = 'PLAYING';
-        room.targetServerTime = now + 400;
+        room.targetServerTime = now + 600;
         room.startOffsetSec = 0;
-      } else {
-        room.queue.push(item);
       }
 
       room.updatedAt = now;
       return res.status(200).json({ success: true, track: room.track, queue: room.queue });
     }
     return res.status(404).json({ error: 'Room not found' });
+  }
+
+  if (action === 'reorder_queue') {
+    const room = rooms.get(roomId);
+    if (room && Array.isArray(body.queue)) {
+      room.queue = body.queue;
+      room.updatedAt = now;
+      return res.status(200).json({ success: true, queue: room.queue });
+    }
+    return res.status(200).json({ success: false });
+  }
+
+  if (action === 'play_queue_item') {
+    const room = rooms.get(roomId);
+    if (room && room.queue) {
+      const qId = body.queueId;
+      const target = room.queue.find(q => q.id === qId);
+      if (target) {
+        room.track = target;
+        room.state = 'PLAYING';
+        room.targetServerTime = now + 600;
+        room.startOffsetSec = 0;
+        room.updatedAt = now;
+        return res.status(200).json({ success: true, track: room.track, queue: room.queue });
+      }
+    }
+    return res.status(404).json({ error: 'Track not found' });
   }
 
   if (action === 'remove_queue') {
@@ -277,10 +304,13 @@ export default async function handler(req, res) {
     const room = rooms.get(roomId);
     if (room) {
       if (room.queue && room.queue.length > 0) {
-        const next = room.queue.shift();
-        room.track = next;
+        // Find current track index
+        const currentIndex = room.track ? room.queue.findIndex(q => q.id === room.track.id) : -1;
+        const nextIndex = currentIndex >= 0 && currentIndex + 1 < room.queue.length ? currentIndex + 1 : (currentIndex >= 0 ? 0 : 0);
+        
+        room.track = room.queue[nextIndex] || room.queue[0];
         room.state = 'PLAYING';
-        room.targetServerTime = now + 400;
+        room.targetServerTime = now + 600;
         room.startOffsetSec = 0;
       } else {
         room.state = 'PAUSED';
