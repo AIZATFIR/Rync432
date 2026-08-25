@@ -154,6 +154,18 @@ class App {
         uiManager.setPlayState(false);
         break;
 
+      case 'REMOTE_DEVICE_UPDATED':
+        if (payload.role) {
+          uiManager.selectSpatialChannel(payload.role, false);
+        }
+        if (payload.volume !== undefined) {
+          audioEngine.setVolume(payload.volume);
+          if (uiManager.elements.volumeSlider) {
+            uiManager.elements.volumeSlider.value = payload.volume;
+          }
+        }
+        break;
+
       default:
         break;
     }

@@ -176,12 +176,6 @@ export class CloudMesh {
       if (Array.isArray(data.peers)) {
         data.peers.forEach(p => {
           this.localPeersMap.set(p.id, p);
-          if (p.id === this.peerId) {
-            this.onEvent('REMOTE_DEVICE_UPDATED', {
-              role: p.role || 'stereo',
-              volume: p.volume !== undefined ? p.volume : 1.0
-            });
-          }
 
           if (this.isHost && p.id !== this.peerId && !this.peerConnections.has(p.id)) {
             this.initiateWebRTCOffer(p.id);

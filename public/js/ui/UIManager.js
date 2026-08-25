@@ -492,20 +492,10 @@ export class UIManager {
     }
 
     // 6. Spatial Channel Selector (This Device)
-    const selectSpatialChannel = (role) => {
-      app.audioEngine.setSpatialChannel(role);
-      [elements.spatialStereo, elements.spatialLeft, elements.spatialRight, elements.spatialCenter].forEach(btn => {
-        if (btn) {
-          if (btn.dataset.role === role) btn.classList.add('active');
-          else btn.classList.remove('active');
-        }
-      });
-    };
-
-    if (elements.spatialStereo) elements.spatialStereo.addEventListener('click', () => selectSpatialChannel('stereo'));
-    if (elements.spatialLeft) elements.spatialLeft.addEventListener('click', () => selectSpatialChannel('left'));
-    if (elements.spatialRight) elements.spatialRight.addEventListener('click', () => selectSpatialChannel('right'));
-    if (elements.spatialCenter) elements.spatialCenter.addEventListener('click', () => selectSpatialChannel('center'));
+    if (elements.spatialStereo) elements.spatialStereo.addEventListener('click', () => this.selectSpatialChannel('stereo'));
+    if (elements.spatialLeft) elements.spatialLeft.addEventListener('click', () => this.selectSpatialChannel('left'));
+    if (elements.spatialRight) elements.spatialRight.addEventListener('click', () => this.selectSpatialChannel('right'));
+    if (elements.spatialCenter) elements.spatialCenter.addEventListener('click', () => this.selectSpatialChannel('center'));
 
     // 7. Host Device Settings Modal Controls
     let tempRole = 'stereo';
@@ -539,9 +529,8 @@ export class UIManager {
           const targetId = this.selectedDeviceForEdit.id;
           app.socketClient.updateRemotePeerSettings(targetId, tempRole, tempVolume);
           if (targetId === app.socketClient.peerId) {
-            app.audioEngine.setSpatialChannel(tempRole);
+            this.selectSpatialChannel(tempRole, false);
             app.audioEngine.setVolume(tempVolume);
-            selectSpatialChannel(tempRole);
           }
           if (elements.deviceSettingsModal) elements.deviceSettingsModal.classList.remove('active');
         }
@@ -1055,6 +1044,25 @@ export class UIManager {
     const btn = document.getElementById(`preset${presetKey.charAt(0).toUpperCase() + presetKey.slice(1)}`);
     if (btn) btn.classList.add('active');
     this.updateLatencyOffset(offsetMs);
+  }
+
+  selectSpatialChannel(role, broadcast = true) {
+    this.app.audioEngine.setSpatialChannel(role);
+    const { elements } = this;
+    [elements.spatialStereo, elements.spatialLeft, elements.spatialRight, elements.spatialCenter].forEach(btn => {
+      if (btn) {
+        if (btn.dataset.role === role) btn.classList.add('active');
+        else btn.classList.remove('active');
+      }
+    });
+
+    if (broadcast && this.app.socketClient.roomId) {
+      this.app.socketClient.updateRemotePeerSettings(
+        this.app.socketClient.peerId,
+        role,
+        this.app.audioEngine.volume || 1.0
+      );
+    }
   }
 
   setConnected(isConnected) {
