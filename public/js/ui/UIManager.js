@@ -323,7 +323,7 @@ export class UIManager {
           app.socketClient.pausePlayback(currentPos);
         } else {
           const currentPos = app.audioEngine.pauseOffsetSec || 0;
-          app.socketClient.schedulePlay(200, currentPos);
+          app.socketClient.schedulePlay(600, currentPos);
         }
       });
     }
@@ -332,7 +332,7 @@ export class UIManager {
       elements.redoBtn.addEventListener('click', () => {
         app.audioEngine.ensureContext();
         if (app.audioEngine.audioBuffer) {
-          app.socketClient.schedulePlay(200, 0);
+          app.socketClient.schedulePlay(600, 0);
         }
       });
     }
@@ -359,7 +359,7 @@ export class UIManager {
         const clickX = e.clientX - rect.left;
         const pct = Math.max(0, Math.min(1, clickX / rect.width));
         const targetSec = pct * app.audioEngine.currentTrackDuration;
-        app.socketClient.schedulePlay(300, targetSec);
+        app.socketClient.schedulePlay(600, targetSec);
       });
     }
 
