@@ -191,12 +191,16 @@ export class CloudMesh {
         const incomingMap = new Map();
 
         data.peers.forEach(p => {
-          // Lock local peer's own isHost status to this.isHost strictly
+          // Lock local peer's own isHost and local loading state strictly
+          const existing = this.localPeersMap.get(p.id);
           if (p.id === this.peerId) {
             p.isHost = this.isHost;
+            if (existing) {
+              p.isAudioLoading = existing.isAudioLoading;
+              p.loadingStatus = existing.loadingStatus;
+            }
           }
           incomingMap.set(p.id, p);
-          const existing = this.localPeersMap.get(p.id);
           if (!existing || existing.role !== p.role || existing.isAudioLoading !== p.isAudioLoading || existing.volume !== p.volume || existing.isHost !== p.isHost || existing.deviceName !== p.deviceName) {
             peersChanged = true;
           }
@@ -678,16 +682,7 @@ export class CloudMesh {
         const activeBuffer = (targetTrack && (this.localAudioBufferCache.get(targetTrack.id) || this.localAudioBufferCache.get(targetTrack.name)))
           || this.currentAudioArrayBuffer;
         if (activeBuffer && (activeBuffer instanceof ArrayBuffer || activeBuffer.byteLength)) {
-          this.streamAudioToPeer(channel, activeBuffer, targetTrack?.name || 'Uploaded Track');
-        }
-      } else {
-        if (this.lastKnownTrack) {
-          const cached = this.localAudioBufferCache.get(this.lastKnownTrack.id) || this.localAudioBufferCache.get(this.lastKnownTrack.name);
-          if (!cached) {
-            try {
-              channel.send(JSON.stringify({ type: 'REQUEST_AUDIO_BUFFER', trackName: this.lastKnownTrack.name, trackId: this.lastKnownTrack.id }));
-            } catch (e) { }
-          }
+          this.streamAudioToPeer(channel, activeBuffer, targetTrack?.name || 'Uploaded Track', targetTrack?.id || '');
         }
       }
     };
@@ -699,17 +694,20 @@ export class CloudMesh {
           if (msg.type === 'AUDIO_HEADER') {
             this.incomingAudioChunks.set(targetPeerId, {
               name: msg.name,
+              id: msg.id,
               totalBytes: msg.totalBytes,
               totalChunks: msg.totalChunks,
               receivedBytes: 0,
               chunks: []
             });
+            this.updateLoadingState(true, `Menerima ${msg.name}...`);
             this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status: `Menerima ${msg.name} P2P...` });
           } else if (msg.type === 'SCHEDULED_PLAY') {
             this.isPaused = false;
             this.onEvent('SCHEDULED_PLAY', {
               targetServerTime: msg.targetServerTime,
-              startOffsetSec: msg.startOffsetSec || 0
+              startOffsetSec: msg.startOffsetSec || 0,
+              track: msg.track || this.lastKnownTrack
             });
           } else if (msg.type === 'PAUSED') {
             this.isPaused = true;
@@ -722,9 +720,17 @@ export class CloudMesh {
           } else if (msg.type === 'PEER_SETTINGS') {
             this.onEvent('REMOTE_DEVICE_UPDATED', { role: msg.role, volume: msg.volume });
           } else if (msg.type === 'REQUEST_AUDIO_BUFFER') {
-            const cached = this.localAudioBufferCache.get(msg.trackId) || this.localAudioBufferCache.get(msg.trackName);
+            const now = Date.now();
+            if (this.lastSentBufferTime && (now - this.lastSentBufferTime < 1500) && this.lastSentBufferTrack === msg.trackName) {
+              return;
+            }
+            const cached = this.localAudioBufferCache.get(msg.trackId) 
+              || this.localAudioBufferCache.get(msg.trackName)
+              || this.currentAudioArrayBuffer;
             if (cached && (cached instanceof ArrayBuffer || cached.byteLength)) {
-              this.streamAudioToPeer(channel, cached, msg.trackName);
+              this.lastSentBufferTime = now;
+              this.lastSentBufferTrack = msg.trackName;
+              this.streamAudioToPeer(channel, cached, msg.trackName || this.lastKnownTrack?.name || 'Uploaded Track', msg.trackId || this.lastKnownTrack?.id || '');
             }
           }
         } catch (e) { }
@@ -746,9 +752,16 @@ export class CloudMesh {
               completeBuffer.set(new Uint8Array(c), offset);
               offset += c.byteLength;
             }
+            const trackName = stream.name;
+            const trackId = stream.id;
             this.incomingAudioChunks.delete(targetPeerId);
+            this.updateLoadingState(false, 'Siap');
             this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 100, status: 'Audio P2P Siap!' });
-            this.onEvent('BINARY_AUDIO_RECEIVED', completeBuffer.buffer);
+            this.onEvent('BINARY_AUDIO_RECEIVED', {
+              arrayBuffer: completeBuffer.buffer,
+              trackName,
+              trackId
+            });
           }
         }
       }
@@ -820,16 +833,17 @@ export class CloudMesh {
     }
   }
 
-  streamAudioToAllPeers(arrayBuffer, trackName = 'Uploaded Track') {
+  streamAudioToAllPeers(arrayBuffer, trackName = 'Uploaded Track', trackId = '') {
     this.currentAudioArrayBuffer = arrayBuffer;
     this.dataChannels.forEach((channel) => {
       if (channel.readyState === 'open') {
-        this.streamAudioToPeer(channel, arrayBuffer, trackName);
+        this.streamAudioToPeer(channel, arrayBuffer, trackName, trackId);
       }
     });
   }
 
-  streamAudioToPeer(channel, arrayBuffer, trackName = 'Uploaded Track') {
+  streamAudioToPeer(channel, arrayBuffer, trackName = 'Uploaded Track', trackId = '') {
+    if (!channel || channel.readyState !== 'open' || !arrayBuffer) return;
     const chunkSize = 64 * 1024;
     const totalBytes = arrayBuffer.byteLength;
     const totalChunks = Math.ceil(totalBytes / chunkSize);
@@ -838,6 +852,7 @@ export class CloudMesh {
       channel.send(JSON.stringify({
         type: 'AUDIO_HEADER',
         name: trackName,
+        id: trackId,
         totalBytes,
         totalChunks
       }));

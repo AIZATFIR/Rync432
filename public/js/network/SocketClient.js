@@ -162,8 +162,8 @@ export class SocketClient {
     this.cloudMesh.leaveRoom();
   }
 
-  sendBinary(arrayBuffer, trackName) {
-    this.cloudMesh.streamAudioToAllPeers(arrayBuffer, trackName);
+  sendBinary(arrayBuffer, trackName, trackId = '') {
+    this.cloudMesh.streamAudioToAllPeers(arrayBuffer, trackName, trackId);
   }
 
   uploadAudioFile(file, duration) {
