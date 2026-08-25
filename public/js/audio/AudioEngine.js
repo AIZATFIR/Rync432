@@ -7,6 +7,7 @@ export class AudioEngine {
     this.ctx = null;
     this.audioBuffer = null;
     this.currentSource = null;
+    this.pannerNode = null;
     this.gainNode = null;
     this.analyserNode = null;
     this.isPlaying = false;
@@ -16,6 +17,7 @@ export class AudioEngine {
     this.startOffsetSec = 0;
     this.pauseOffsetSec = 0;
     this.onPlaybackEnded = null;
+    this.spatialRole = 'stereo'; // 'stereo' | 'left' | 'right' | 'center'
 
     this.latencyTuner = new LatencyTuner();
     this.metronome = null;
@@ -26,6 +28,14 @@ export class AudioEngine {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       this.ctx = new AudioContextClass({ latencyHint: 'interactive' });
       
+      // Panner Node for Spatial Left/Right/Center/Stereo Matrix
+      if (this.ctx.createStereoPanner) {
+        this.pannerNode = this.ctx.createStereoPanner();
+      } else {
+        // Fallback for Safari if createStereoPanner is not supported
+        this.pannerNode = this.ctx.createGain();
+      }
+
       this.gainNode = this.ctx.createGain();
       this.gainNode.gain.value = 1.0;
 
@@ -33,6 +43,8 @@ export class AudioEngine {
       this.analyserNode.fftSize = 256;
       this.analyserNode.smoothingTimeConstant = 0.8;
 
+      // Routing: panner -> gain -> analyser -> destination
+      this.pannerNode.connect(this.gainNode);
       this.gainNode.connect(this.analyserNode);
       this.analyserNode.connect(this.ctx.destination);
 
@@ -44,6 +56,25 @@ export class AudioEngine {
       } catch (e) {}
     }
     return this.ctx;
+  }
+
+  setSpatialChannel(role = 'stereo') {
+    this.spatialRole = role;
+    if (!this.pannerNode || !this.ctx) return;
+
+    const currentTime = this.ctx.currentTime;
+    if (this.pannerNode.pan) {
+      if (role === 'left') {
+        this.pannerNode.pan.setValueAtTime(-1.0, currentTime);
+      } else if (role === 'right') {
+        this.pannerNode.pan.setValueAtTime(1.0, currentTime);
+      } else if (role === 'center') {
+        this.pannerNode.pan.setValueAtTime(0.0, currentTime);
+      } else {
+        // 'stereo' default
+        this.pannerNode.pan.setValueAtTime(0.0, currentTime);
+      }
+    }
   }
 
   async decodeAudioDataSafe(arrayBuffer) {
@@ -102,6 +133,9 @@ export class AudioEngine {
   async loadAudioFromUrl(url, trackName = 'Remote Track') {
     await this.ensureContext();
     const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
     const arrayBuffer = await response.arrayBuffer();
     return this.loadAudioFromArrayBuffer(arrayBuffer, trackName);
   }
@@ -197,7 +231,7 @@ export class AudioEngine {
 
     this.currentSource = this.ctx.createBufferSource();
     this.currentSource.buffer = this.audioBuffer;
-    this.currentSource.connect(this.gainNode);
+    this.currentSource.connect(this.pannerNode || this.gainNode);
 
     if (scheduledContextTime >= this.ctx.currentTime) {
       this.currentSource.start(scheduledContextTime, startOffsetSec);
