@@ -14,6 +14,8 @@ export class CloudMesh {
     this.lastKnownState = null;
     this.lastKnownTrack = null;
     this.lastKnownQueue = null;
+    this.isPaused = false;
+    this.lastPauseTime = 0;
     
     // WebRTC P2P Connections
     this.peerConnections = new Map();
@@ -78,6 +80,7 @@ export class CloudMesh {
       role: 'stereo',
       volume: 1.0,
       latencyOffset: 0,
+      isAudioLoading: false,
       lastSeen: Date.now()
     });
 
@@ -108,10 +111,13 @@ export class CloudMesh {
           break;
 
         case 'SCHEDULED_PLAY':
+          this.isPaused = false;
           this.onEvent('SCHEDULED_PLAY', msg.payload);
           break;
 
         case 'PAUSED':
+          this.isPaused = true;
+          this.lastPauseTime = Date.now();
           this.onEvent('PAUSED', msg.payload);
           break;
 
@@ -146,7 +152,6 @@ export class CloudMesh {
   startPolling() {
     this.stopPolling();
     this.pollLoop();
-    // 500ms fast pulse for responsive cross-device mesh
     this.pollInterval = setInterval(() => this.pollLoop(), 500);
   }
 
@@ -178,7 +183,6 @@ export class CloudMesh {
             });
           }
 
-          // If I am Host and this is a new satellite peer without WebRTC connection, initiate P2P mesh offer
           if (this.isHost && p.id !== this.peerId && !this.peerConnections.has(p.id)) {
             this.initiateWebRTCOffer(p.id);
           }
@@ -201,15 +205,21 @@ export class CloudMesh {
         }
       }
 
-      // 4. Playback state with sub-millisecond scheduling
-      if (data.state === 'PLAYING' && data.targetServerTime && data.targetServerTime !== this.lastKnownState) {
-        this.lastKnownState = data.targetServerTime;
-        this.onEvent('SCHEDULED_PLAY', {
-          targetServerTime: data.targetServerTime,
-          startOffsetSec: data.startOffsetSec || 0
-        });
+      // 4. Playback state with clean Pause protection
+      if (data.state === 'PLAYING') {
+        const isFreshPlay = data.targetServerTime && (data.targetServerTime > (this.lastPauseTime + 100));
+        if (isFreshPlay && data.targetServerTime !== this.lastKnownState) {
+          this.isPaused = false;
+          this.lastKnownState = data.targetServerTime;
+          this.onEvent('SCHEDULED_PLAY', {
+            targetServerTime: data.targetServerTime,
+            startOffsetSec: data.startOffsetSec || 0
+          });
+        }
       } else if (data.state === 'PAUSED' && this.lastKnownState !== 'PAUSED') {
+        this.isPaused = true;
         this.lastKnownState = 'PAUSED';
+        this.lastPauseTime = Date.now();
         this.onEvent('PAUSED', {
           currentOffsetSec: data.startOffsetSec || 0
         });
@@ -222,6 +232,28 @@ export class CloudMesh {
         }
       }
     } catch (err) {}
+  }
+
+  async updateLoadingState(isLoading, status = '') {
+    const me = this.localPeersMap.get(this.peerId);
+    if (me) {
+      me.isAudioLoading = isLoading;
+      me.loadingStatus = status;
+      this.dispatchLocalPeers();
+    }
+
+    try {
+      await fetch('/api/room?action=update_peer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: this.roomId,
+          peerId: this.peerId,
+          isAudioLoading: isLoading,
+          loadingStatus: status
+        })
+      });
+    } catch (e) {}
   }
 
   async addToQueue(track) {
@@ -302,7 +334,6 @@ export class CloudMesh {
       });
     }
 
-    // Direct WebRTC channel broadcast
     const channel = this.dataChannels.get(targetPeerId);
     if (channel && channel.readyState === 'open') {
       try {
@@ -320,18 +351,22 @@ export class CloudMesh {
   }
 
   async fetchRemoteAudioUrl(url, trackName) {
+    this.updateLoadingState(true, `Mengunduh ${trackName}...`);
     this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 20, status: `Mengunduh ${trackName}...` });
     try {
       const response = await fetch(url);
       const arrayBuffer = await response.arrayBuffer();
+      this.updateLoadingState(false, 'Siap');
       this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 100, status: 'Audio siap!' });
       this.onEvent('BINARY_AUDIO_RECEIVED', arrayBuffer);
     } catch (err) {
+      this.updateLoadingState(false, 'Gagal');
       console.warn('Failed to fetch audio from URL:', err.message);
     }
   }
 
   async broadcastPlay(targetServerTime, startOffsetSec) {
+    this.isPaused = false;
     this.lastKnownState = targetServerTime;
 
     if (this.broadcastChannel) {
@@ -341,7 +376,6 @@ export class CloudMesh {
       });
     }
 
-    // Direct WebRTC broadcast (0ms latency)
     this.dataChannels.forEach(channel => {
       if (channel.readyState === 'open') {
         try {
@@ -365,6 +399,8 @@ export class CloudMesh {
   }
 
   async broadcastPause(currentOffsetSec) {
+    this.isPaused = true;
+    this.lastPauseTime = Date.now();
     this.lastKnownState = 'PAUSED';
 
     if (this.broadcastChannel) {
@@ -374,7 +410,6 @@ export class CloudMesh {
       });
     }
 
-    // Direct WebRTC broadcast
     this.dataChannels.forEach(channel => {
       if (channel.readyState === 'open') {
         try {
@@ -480,11 +515,14 @@ export class CloudMesh {
             });
             this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status: `Menerima ${msg.name} P2P...` });
           } else if (msg.type === 'SCHEDULED_PLAY') {
+            this.isPaused = false;
             this.onEvent('SCHEDULED_PLAY', {
               targetServerTime: msg.targetServerTime,
               startOffsetSec: msg.startOffsetSec || 0
             });
           } else if (msg.type === 'PAUSED') {
+            this.isPaused = true;
+            this.lastPauseTime = Date.now();
             this.onEvent('PAUSED', {
               currentOffsetSec: msg.currentOffsetSec || 0
             });

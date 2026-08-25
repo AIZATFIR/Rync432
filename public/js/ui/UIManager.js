@@ -307,9 +307,18 @@ export class UIManager {
     if (elements.playPauseToggleBtn) {
       elements.playPauseToggleBtn.addEventListener('click', () => {
         app.audioEngine.ensureContext();
+
+        // Check if any peer is still downloading/loading audio
+        const loadingPeers = (this.cachedPeers || []).filter(p => p.isAudioLoading);
+        if (loadingPeers.length > 0) {
+          const names = loadingPeers.map(p => p.deviceName || 'Speaker').join(', ');
+          alert(`Menunggu speaker lain selesai mengunduh audio: ${names}`);
+          return;
+        }
+
         if (!app.audioEngine.audioBuffer) {
           if (app.socketClient.roomId) {
-            app.socketClient.schedulePlay(250, 0);
+            app.socketClient.schedulePlay(600, 0);
           } else if (this.cachedQueue.length > 0) {
             app.socketClient.nextTrack();
           } else {
@@ -320,6 +329,9 @@ export class UIManager {
 
         if (this.isPlayingState) {
           const currentPos = app.audioEngine.getCurrentPlaybackPosition();
+          app.audioEngine.stopLocalPlayback();
+          app.audioEngine.pauseOffsetSec = currentPos;
+          this.setPlayState(false);
           app.socketClient.pausePlayback(currentPos);
         } else {
           const currentPos = app.audioEngine.pauseOffsetSec || 0;
@@ -992,15 +1004,18 @@ export class UIManager {
       div.className = 'device-item';
 
       const roleStr = peer.role ? peer.role.toUpperCase() : 'STEREO';
+      const statusText = peer.isAudioLoading 
+        ? `<span style="color:#fbbf24;font-weight:600;">⏳ ${peer.loadingStatus || 'Mengunduh...'}</span>`
+        : `<span style="color:var(--text-silver);">${roleStr} • ${peer.isHost ? 'Host' : 'Satellite'}</span>`;
 
       div.innerHTML = `
         <div class="device-name-group">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--spotify-green)" stroke-width="2">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${peer.isAudioLoading ? '#fbbf24' : 'var(--spotify-green)'}" stroke-width="2">
             ${peer.isHost ? '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>' : '<rect width="16" height="20" x="4" y="2" rx="2"/><circle cx="12" cy="14" r="4"/>'}
           </svg>
           <div>
             <div class="device-name">${peer.deviceName || 'Speaker'} ${isSelf ? '<span style="color:var(--spotify-green);font-size:0.7rem;">(You)</span>' : ''}</div>
-            <div class="device-latency-tag">${roleStr} • ${peer.isHost ? 'Host' : 'Satellite'}</div>
+            <div class="device-latency-tag">${statusText}</div>
           </div>
         </div>
         <button class="chip-btn" style="padding: 2px 8px; font-size: 0.68rem;">Atur</button>

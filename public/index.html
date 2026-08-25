@@ -69,8 +69,8 @@
     <input type="file" id="audioFileInput" accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac" style="display: none;">
 
     <!-- Landing / Room Select (Hero) -->
-    <section class="spotify-card" id="roomHeroSection">
-      <div class="hero-title-group">
+    <section class="spotify-card hero-centered-card" id="roomHeroSection">
+      <div class="hero-title-group" style="text-align: center;">
         <h2>Sinkron Audio</h2>
         <p>Putar musik serempak di banyak speaker HP, laptop, dan tablet tanpa jeda.</p>
       </div>
@@ -80,7 +80,7 @@
         <div class="action-tile">
           <h3>Host Room</h3>
           <p>Mulai room baru sebagai Master.</p>
-          <button class="btn-spotify btn-spotify-primary" id="createRoomBtn">
+          <button class="btn-spotify btn-spotify-primary" id="createRoomBtn" style="width: 100%;">
             Buat Room
           </button>
         </div>
@@ -211,6 +211,27 @@
                   <button class="channel-chip" id="spatialCenter" data-role="center">Center</button>
                 </div>
               </div>
+
+              <!-- Dedicated Delay Tuner for THIS Device (Independent Tuning) -->
+              <div style="margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--border-subtle);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                  <span style="font-size: 0.76rem; color: var(--text-silver); font-weight: 600;">Kompensasi Delay Speaker Saya:</span>
+                  <span class="current-offset-display" id="latencyDisplay" style="font-size: 0.9rem;">0 ms</span>
+                </div>
+                
+                <div class="preset-chips" style="margin-bottom: 8px;">
+                  <button class="chip-btn active" id="presetWired">Speaker HP (0ms)</button>
+                  <button class="chip-btn" id="presetInternal">Laptop (+15ms)</button>
+                  <button class="chip-btn" id="presetBt">Bluetooth (+120ms)</button>
+                </div>
+
+                <div class="precision-step-group" style="padding: 2px 6px;">
+                  <button class="step-btn" id="stepMinus1" style="width: 24px; height: 24px; font-size: 0.9rem;">−</button>
+                  <input type="range" class="range-slider" id="latencySlider" min="-100" max="300" step="1" value="0" style="margin: 0 8px; flex: 1;">
+                  <button class="step-btn" id="stepPlus1" style="width: 24px; height: 24px; font-size: 0.9rem;">+</button>
+                </div>
+              </div>
+
             </div>
 
           </div>

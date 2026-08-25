@@ -294,10 +294,12 @@ export default async function handler(req, res) {
 
   if (action === 'update_peer') {
     const room = rooms.get(roomId);
-    const targetPeerId = body.targetPeerId;
+    const targetPeerId = body.targetPeerId || peerId;
     if (room && room.peers[targetPeerId]) {
       if (body.role) room.peers[targetPeerId].role = body.role;
       if (body.volume !== undefined) room.peers[targetPeerId].volume = body.volume;
+      if (body.isAudioLoading !== undefined) room.peers[targetPeerId].isAudioLoading = body.isAudioLoading;
+      if (body.loadingStatus !== undefined) room.peers[targetPeerId].loadingStatus = body.loadingStatus;
       room.updatedAt = now;
       return res.status(200).json({ success: true });
     }
