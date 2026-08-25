@@ -247,18 +247,26 @@ export class CloudMesh {
       }
 
       // 3. Track update & Auto-fetch with buffer synchronization
-      if (data.track && (data.track.id !== this.lastKnownTrack?.id || data.track.name !== this.lastKnownTrack?.name)) {
-        this.lastKnownTrack = data.track;
-        this.onEvent('TRACK_METADATA', data.track);
-        this.loadTrackBuffer(data.track);
+      if (data.track) {
+        const isDifferentTrack = this.lastKnownTrack 
+          ? (data.track.name !== this.lastKnownTrack.name && data.track.id !== this.lastKnownTrack.id)
+          : true;
+        if (isDifferentTrack) {
+          this.lastKnownTrack = data.track;
+          this.onEvent('TRACK_METADATA', data.track);
+          this.loadTrackBuffer(data.track);
+        }
       }
 
       // 4. Playback state with clean Pause protection and exact track synchronization
       if (data.state === 'PLAYING') {
         const isFreshPlay = data.targetServerTime && (data.targetServerTime > (this.lastPauseTime + 300));
-        if (isFreshPlay && !this.isPaused && (data.targetServerTime !== this.lastKnownState || data.track?.id !== this.lastKnownTrack?.id)) {
+        if (isFreshPlay && !this.isPaused && (data.targetServerTime !== this.lastKnownState)) {
           this.lastKnownState = data.targetServerTime;
-          if (data.track && (data.track.id !== this.lastKnownTrack?.id || data.track.name !== this.lastKnownTrack?.name)) {
+          const isDifferentTrack = this.lastKnownTrack 
+            ? (data.track && data.track.name !== this.lastKnownTrack.name && data.track.id !== this.lastKnownTrack.id)
+            : !!data.track;
+          if (isDifferentTrack && data.track) {
             this.lastKnownTrack = data.track;
             this.onEvent('TRACK_METADATA', data.track);
             this.loadTrackBuffer(data.track);
@@ -298,10 +306,13 @@ export class CloudMesh {
     const cached = this.localAudioBufferCache.get(track.id) 
       || (track.audioId && this.localAudioBufferCache.get(track.audioId))
       || (track.audioUrl && this.localAudioBufferCache.get(track.audioUrl))
-      || this.localAudioBufferCache.get(track.name);
+      || this.localAudioBufferCache.get(track.name)
+      || (this.currentAudioArrayBuffer && this.lastKnownTrack?.name === track.name ? this.currentAudioArrayBuffer : null);
 
     if (cached) {
       this.pendingTrackBufferRequest = null;
+      if (track.id) this.localAudioBufferCache.set(track.id, cached);
+      if (track.name) this.localAudioBufferCache.set(track.name, cached);
       this.updateLoadingState(false, 'Siap');
       this.onEvent('BINARY_AUDIO_RECEIVED', { arrayBuffer: cached, trackName: track.name, trackId: track.id });
       return;

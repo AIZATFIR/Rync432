@@ -321,11 +321,12 @@ export class UIManager {
       elements.playPauseToggleBtn.addEventListener('click', () => {
         app.audioEngine.ensureContext();
 
-        // Check if any peer is still downloading/loading audio
-        const loadingPeers = (this.cachedPeers || []).filter(p => p.isAudioLoading);
-        if (loadingPeers.length > 0) {
-          const names = loadingPeers.map(p => p.deviceName || 'Speaker').join(', ');
-          alert(`Menunggu speaker lain selesai mengunduh audio: ${names}`);
+        if (this.isPlayingState) {
+          const currentPos = app.audioEngine.getCurrentPlaybackPosition();
+          app.audioEngine.stopLocalPlayback();
+          app.audioEngine.pauseOffsetSec = currentPos;
+          this.setPlayState(false);
+          app.socketClient.pausePlayback(currentPos);
           return;
         }
 
@@ -340,16 +341,8 @@ export class UIManager {
           return;
         }
 
-        if (this.isPlayingState) {
-          const currentPos = app.audioEngine.getCurrentPlaybackPosition();
-          app.audioEngine.stopLocalPlayback();
-          app.audioEngine.pauseOffsetSec = currentPos;
-          this.setPlayState(false);
-          app.socketClient.pausePlayback(currentPos);
-        } else {
-          const currentPos = app.audioEngine.pauseOffsetSec || 0;
-          app.socketClient.schedulePlay(600, currentPos);
-        }
+        const currentPos = app.audioEngine.pauseOffsetSec || 0;
+        app.socketClient.schedulePlay(600, currentPos);
       });
     }
 
