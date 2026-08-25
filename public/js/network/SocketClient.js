@@ -22,7 +22,7 @@ export class SocketClient {
     this.pingInterval = null;
     this.cachedDeviceName = 'Speaker';
 
-    // Serverless CloudMesh (WebRTC + Firebase Firestore) fallback
+    // Serverless CloudMesh (WebRTC + BroadcastChannel + Firebase Firestore)
     this.cloudMesh = new CloudMesh((event, payload) => {
       this.handleCloudMeshEvent(event, payload);
     });
@@ -100,7 +100,7 @@ export class SocketClient {
     }
   }
 
-  // Democratic Room Controls (Host or any Peer can trigger)
+  // Democratic Room Controls
   createRoom(deviceName = 'Master Speaker') {
     this.cachedDeviceName = deviceName;
     this.peerId = 'peer_' + Math.random().toString(36).substring(2, 9);
@@ -137,15 +137,19 @@ export class SocketClient {
     });
   }
 
-  schedulePlay(delayMs = 500, startOffsetSec = 0) {
+  schedulePlay(delayMs = 250, startOffsetSec = 0) {
     const targetServerTime = this.clockSync.getServerTime() + delayMs;
     this.send('SCHEDULE_PLAY', { targetServerTime, startOffsetSec });
     this.cloudMesh.broadcastPlay(targetServerTime, startOffsetSec);
+    // Optimistic local dispatch
+    this.onEvent('SCHEDULED_PLAY', { targetServerTime, startOffsetSec });
   }
 
   pausePlayback(currentOffsetSec = 0) {
     this.send('PAUSE', { currentOffsetSec });
     this.cloudMesh.broadcastPause(currentOffsetSec);
+    // Optimistic local dispatch
+    this.onEvent('PAUSED', { currentOffsetSec });
   }
 
   sendTrackMetadata(metadata) {

@@ -32,7 +32,6 @@ export class AudioEngine {
       if (this.ctx.createStereoPanner) {
         this.pannerNode = this.ctx.createStereoPanner();
       } else {
-        // Fallback for Safari if createStereoPanner is not supported
         this.pannerNode = this.ctx.createGain();
       }
 
@@ -71,7 +70,6 @@ export class AudioEngine {
       } else if (role === 'center') {
         this.pannerNode.pan.setValueAtTime(0.0, currentTime);
       } else {
-        // 'stereo' default
         this.pannerNode.pan.setValueAtTime(0.0, currentTime);
       }
     }
@@ -80,7 +78,6 @@ export class AudioEngine {
   async decodeAudioDataSafe(arrayBuffer) {
     await this.ensureContext();
     return new Promise((resolve, reject) => {
-      // Clone buffer because decodeAudioData detaches the ArrayBuffer
       const bufferCopy = arrayBuffer.slice(0);
       let isResolved = false;
 
@@ -152,7 +149,6 @@ export class AudioEngine {
     const bpm = 124;
     const beatSec = 60 / bpm;
 
-    // Chords: Am7, Fmaj7, Cmaj7, G7
     const chords = [
       [220, 261.63, 329.63, 392.00],
       [174.61, 220, 261.63, 329.63],
@@ -172,7 +168,7 @@ export class AudioEngine {
       const kickEnv = Math.exp(-kickPhase * 8);
       const kick = Math.sin(2 * Math.PI * kickFreq * t) * kickEnv * 0.45;
 
-      // 2. Snare / Clap
+      // 2. Snare
       let snare = 0;
       if (beatInBar >= 1 && beatInBar < 2) {
         const snarePhase = (beatInBar - 1);
@@ -205,7 +201,7 @@ export class AudioEngine {
     }
 
     this.audioBuffer = buffer;
-    this.currentTrackName = 'Neon Groove Demo (Built-in)';
+    this.currentTrackName = 'Neon Groove Synthwave';
     this.currentTrackDuration = duration;
     this.pauseOffsetSec = 0;
     return this.audioBuffer;
@@ -220,9 +216,10 @@ export class AudioEngine {
 
     this.stopLocalPlayback();
 
+    const bestOffset = this.clockSync ? this.clockSync.getBestOffset() : 0;
     const clientEffectiveTimestamp = this.latencyTuner.calculateEffectiveStartTime(
-      serverTargetTime,
-      this.clockSync.getBestOffset()
+      serverTargetTime || Date.now(),
+      bestOffset
     );
 
     const nowLocalMs = Date.now();
@@ -233,17 +230,21 @@ export class AudioEngine {
     this.currentSource.buffer = this.audioBuffer;
     this.currentSource.connect(this.pannerNode || this.gainNode);
 
-    if (scheduledContextTime >= this.ctx.currentTime) {
+    if (scheduledContextTime > this.ctx.currentTime) {
       this.currentSource.start(scheduledContextTime, startOffsetSec);
+      this.startAudioContextTime = scheduledContextTime;
     } else {
       const catchupOffset = Math.abs(deltaMs) / 1000 + startOffsetSec;
       if (catchupOffset < this.audioBuffer.duration) {
         this.currentSource.start(0, catchupOffset);
+        this.startAudioContextTime = this.ctx.currentTime - (Math.abs(deltaMs) / 1000);
+      } else {
+        this.currentSource.start(0, startOffsetSec);
+        this.startAudioContextTime = this.ctx.currentTime;
       }
     }
 
     this.isPlaying = true;
-    this.startAudioContextTime = scheduledContextTime;
     this.startOffsetSec = startOffsetSec;
 
     this.currentSource.onended = () => {

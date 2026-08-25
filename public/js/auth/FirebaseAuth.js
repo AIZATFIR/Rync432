@@ -2,7 +2,6 @@ import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebase
 import { 
   getAuth, 
   signInWithPopup, 
-  signInAnonymously,
   GoogleAuthProvider, 
   signOut, 
   onAuthStateChanged 
@@ -35,21 +34,14 @@ export class FirebaseAuthService {
       this.googleProvider.setCustomParameters({
         prompt: 'select_account'
       });
-      this.ensureAuthenticated();
     } catch (err) {
       console.warn('Firebase initialization:', err.message);
     }
   }
 
   async ensureAuthenticated() {
-    if (!this.auth) return;
-    if (!this.auth.currentUser) {
-      try {
-        await signInAnonymously(this.auth);
-      } catch (e) {
-        console.warn('Anonymous auth init notice:', e.message);
-      }
-    }
+    // Graceful no-op for anonymous users to prevent auth/admin-restricted-operation errors
+    return true;
   }
 
   async signInWithGoogle() {
@@ -84,7 +76,6 @@ export class FirebaseAuthService {
     if (this.auth) {
       try {
         await signOut(this.auth);
-        await signInAnonymously(this.auth);
       } catch (e) {}
     }
     localStorage.removeItem('rync_user');

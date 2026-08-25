@@ -29,6 +29,8 @@ export class CloudMesh {
     this.peerId = null;
     this.isHost = false;
     this.heartbeatInterval = null;
+    this.broadcastChannel = null;
+    this.localPeersMap = new Map();
     
     // WebRTC P2P Connections
     this.peerConnections = new Map();
@@ -42,7 +44,6 @@ export class CloudMesh {
       if (firebaseAuth.app) {
         this.db = getFirestore(firebaseAuth.app);
         this.storage = getStorage(firebaseAuth.app);
-        await firebaseAuth.ensureAuthenticated();
       }
     } catch (e) {
       console.warn('Firestore/Storage init notice:', e.message);
@@ -54,6 +55,8 @@ export class CloudMesh {
     this.peerId = peerId;
     this.isHost = true;
     await this.init();
+
+    this.initBroadcastChannel(roomId, deviceName);
 
     const roomData = {
       roomId,
@@ -68,7 +71,6 @@ export class CloudMesh {
     if (this.db) {
       try {
         await setDoc(doc(this.db, 'rooms', roomId), roomData);
-        // Add Host to peers subcollection
         await setDoc(doc(this.db, 'rooms', roomId, 'peers', peerId), {
           id: peerId,
           deviceName,
@@ -95,6 +97,8 @@ export class CloudMesh {
     this.isHost = false;
     await this.init();
 
+    this.initBroadcastChannel(roomId, deviceName);
+
     if (this.db) {
       try {
         await setDoc(doc(this.db, 'rooms', roomId, 'peers', peerId), {
@@ -114,6 +118,82 @@ export class CloudMesh {
     this.subscribe(roomId);
     this.subscribeSignals(roomId);
     this.startHeartbeat(deviceName);
+  }
+
+  initBroadcastChannel(roomId, deviceName) {
+    if (typeof BroadcastChannel === 'undefined') return;
+    if (this.broadcastChannel) {
+      try { this.broadcastChannel.close(); } catch (e) {}
+    }
+    this.broadcastChannel = new BroadcastChannel('rync432_' + roomId);
+    this.localPeersMap.clear();
+    this.localPeersMap.set(this.peerId, {
+      id: this.peerId,
+      deviceName,
+      isHost: this.isHost,
+      role: 'stereo',
+      volume: 1.0,
+      latencyOffset: 0,
+      lastSeen: Date.now()
+    });
+
+    this.broadcastChannel.onmessage = (event) => {
+      const msg = event.data;
+      if (!msg || !msg.type) return;
+
+      switch (msg.type) {
+        case 'ANNOUNCE_PEER':
+          this.localPeersMap.set(msg.peer.id, msg.peer);
+          this.dispatchLocalPeers();
+          if (this.broadcastChannel) {
+            this.broadcastChannel.postMessage({
+              type: 'PEER_PONG',
+              peer: this.localPeersMap.get(this.peerId)
+            });
+          }
+          break;
+
+        case 'PEER_PONG':
+          this.localPeersMap.set(msg.peer.id, msg.peer);
+          this.dispatchLocalPeers();
+          break;
+
+        case 'PEER_LEFT':
+          this.localPeersMap.delete(msg.peerId);
+          this.dispatchLocalPeers();
+          break;
+
+        case 'SCHEDULED_PLAY':
+          this.onEvent('SCHEDULED_PLAY', msg.payload);
+          break;
+
+        case 'PAUSED':
+          this.onEvent('PAUSED', msg.payload);
+          break;
+
+        case 'TRACK_METADATA':
+          this.onEvent('TRACK_METADATA', msg.payload);
+          break;
+
+        case 'REMOTE_DEVICE_UPDATED':
+          if (msg.targetPeerId === this.peerId) {
+            this.onEvent('REMOTE_DEVICE_UPDATED', msg.payload);
+          }
+          break;
+      }
+    };
+
+    // Announce presence
+    this.broadcastChannel.postMessage({
+      type: 'ANNOUNCE_PEER',
+      peer: this.localPeersMap.get(this.peerId)
+    });
+    this.dispatchLocalPeers();
+  }
+
+  dispatchLocalPeers() {
+    const peers = Array.from(this.localPeersMap.values());
+    this.onEvent('PEER_JOINED', { peers, peerCount: peers.length });
   }
 
   subscribe(roomId) {
@@ -143,7 +223,7 @@ export class CloudMesh {
             currentOffsetSec: data.startOffsetSec || 0
           });
         }
-      });
+      }, (err) => console.warn('Room onSnapshot notice:', err.message));
 
       // 2. Listen to Peers Subcollection (Real-time presence & count)
       this.unsubscribePeers = onSnapshot(collection(this.db, 'rooms', roomId, 'peers'), (querySnapshot) => {
@@ -152,7 +232,9 @@ export class CloudMesh {
           const peer = docSnap.data();
           peersList.push(peer);
 
-          // If Host changed this device's channel or volume
+          // Merge with local map
+          this.localPeersMap.set(peer.id, peer);
+
           if (peer.id === this.peerId) {
             this.onEvent('REMOTE_DEVICE_UPDATED', {
               role: peer.role || 'stereo',
@@ -161,10 +243,7 @@ export class CloudMesh {
           }
         });
 
-        this.onEvent('PEER_JOINED', {
-          peers: peersList,
-          peerCount: peersList.length
-        });
+        this.dispatchLocalPeers();
 
         // If Host, connect WebRTC offer to new peers
         if (this.isHost) {
@@ -174,7 +253,7 @@ export class CloudMesh {
             }
           });
         }
-      });
+      }, (err) => console.warn('Peers onSnapshot notice:', err.message));
 
     } catch (e) {
       console.warn('Firestore subscribe error:', e.message);
@@ -182,15 +261,29 @@ export class CloudMesh {
   }
 
   async updateRemotePeerSettings(targetPeerId, role, volume) {
-    if (!this.db || !this.roomId) return;
-    try {
-      await updateDoc(doc(this.db, 'rooms', this.roomId, 'peers', targetPeerId), {
-        role,
-        volume: volume !== undefined ? volume : 1.0,
-        updatedAt: Date.now()
+    const peer = this.localPeersMap.get(targetPeerId);
+    if (peer) {
+      peer.role = role;
+      peer.volume = volume;
+      this.dispatchLocalPeers();
+    }
+
+    if (this.broadcastChannel) {
+      this.broadcastChannel.postMessage({
+        type: 'REMOTE_DEVICE_UPDATED',
+        targetPeerId,
+        payload: { role, volume }
       });
-    } catch (e) {
-      console.warn('Failed to update remote peer settings:', e.message);
+    }
+
+    if (this.db && this.roomId) {
+      try {
+        await updateDoc(doc(this.db, 'rooms', this.roomId, 'peers', targetPeerId), {
+          role,
+          volume: volume !== undefined ? volume : 1.0,
+          updatedAt: Date.now()
+        });
+      } catch (e) {}
     }
   }
 
@@ -331,7 +424,7 @@ export class CloudMesh {
             }
           }
         });
-      });
+      }, () => {});
     } catch (e) {}
   }
 
@@ -424,63 +517,83 @@ export class CloudMesh {
 
   // Democratic Playback broadcast (Any member can call)
   async broadcastPlay(targetServerTime, startOffsetSec) {
-    if (!this.db || !this.roomId) return;
-    try {
-      await updateDoc(doc(this.db, 'rooms', this.roomId), {
-        state: 'PLAYING',
-        targetServerTime,
-        startOffsetSec,
-        updatedAt: Date.now()
+    if (this.broadcastChannel) {
+      this.broadcastChannel.postMessage({
+        type: 'SCHEDULED_PLAY',
+        payload: { targetServerTime, startOffsetSec }
       });
-    } catch (e) {
-      console.warn('Firestore broadcastPlay notice:', e.message);
+    }
+
+    if (this.db && this.roomId) {
+      try {
+        await updateDoc(doc(this.db, 'rooms', this.roomId), {
+          state: 'PLAYING',
+          targetServerTime,
+          startOffsetSec,
+          updatedAt: Date.now()
+        });
+      } catch (e) {}
     }
   }
 
   async broadcastPause(currentOffsetSec) {
-    if (!this.db || !this.roomId) return;
-    try {
-      await updateDoc(doc(this.db, 'rooms', this.roomId), {
-        state: 'PAUSED',
-        startOffsetSec: currentOffsetSec,
-        updatedAt: Date.now()
+    if (this.broadcastChannel) {
+      this.broadcastChannel.postMessage({
+        type: 'PAUSED',
+        payload: { currentOffsetSec }
       });
-    } catch (e) {
-      console.warn('Firestore broadcastPause notice:', e.message);
+    }
+
+    if (this.db && this.roomId) {
+      try {
+        await updateDoc(doc(this.db, 'rooms', this.roomId), {
+          state: 'PAUSED',
+          startOffsetSec: currentOffsetSec,
+          updatedAt: Date.now()
+        });
+      } catch (e) {}
     }
   }
 
   async broadcastTrack(metadata) {
-    if (!this.db || !this.roomId) return;
-    try {
-      await updateDoc(doc(this.db, 'rooms', this.roomId), {
-        track: metadata,
-        updatedAt: Date.now()
+    if (this.broadcastChannel) {
+      this.broadcastChannel.postMessage({
+        type: 'TRACK_METADATA',
+        payload: metadata
       });
-    } catch (e) {
-      console.warn('Firestore broadcastTrack notice:', e.message);
+    }
+
+    if (this.db && this.roomId) {
+      try {
+        await updateDoc(doc(this.db, 'rooms', this.roomId), {
+          track: metadata,
+          updatedAt: Date.now()
+        });
+      } catch (e) {}
     }
   }
 
   async updateLatencyOffset(offsetMs) {
-    if (!this.db || !this.roomId || !this.peerId) return;
-    try {
-      await updateDoc(doc(this.db, 'rooms', this.roomId, 'peers', this.peerId), {
-        latencyOffset: offsetMs,
-        lastSeen: Date.now()
-      });
-    } catch (e) {}
+    if (this.db && this.roomId && this.peerId) {
+      try {
+        await updateDoc(doc(this.db, 'rooms', this.roomId, 'peers', this.peerId), {
+          latencyOffset: offsetMs,
+          lastSeen: Date.now()
+        });
+      } catch (e) {}
+    }
   }
 
   startHeartbeat(deviceName) {
     this.stopHeartbeat();
     this.heartbeatInterval = setInterval(async () => {
-      if (!this.db || !this.roomId || !this.peerId) return;
-      try {
-        await updateDoc(doc(this.db, 'rooms', this.roomId, 'peers', this.peerId), {
-          lastSeen: Date.now()
-        });
-      } catch (e) {}
+      if (this.db && this.roomId && this.peerId) {
+        try {
+          await updateDoc(doc(this.db, 'rooms', this.roomId, 'peers', this.peerId), {
+            lastSeen: Date.now()
+          });
+        } catch (e) {}
+      }
     }, 10000);
   }
 
@@ -503,6 +616,16 @@ export class CloudMesh {
     if (this.unsubscribeSignals) {
       this.unsubscribeSignals();
       this.unsubscribeSignals = null;
+    }
+    if (this.broadcastChannel) {
+      try {
+        this.broadcastChannel.postMessage({
+          type: 'PEER_LEFT',
+          peerId: this.peerId
+        });
+        this.broadcastChannel.close();
+      } catch (e) {}
+      this.broadcastChannel = null;
     }
     this.stopHeartbeat();
   }
