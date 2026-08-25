@@ -73,10 +73,10 @@ class App {
           } else if (payload.currentTrack.audioUrl) {
             uiManager.setTrackLoading(`Mengunduh ${payload.currentTrack.name}...`);
             audioEngine.loadAudioFromUrl(payload.currentTrack.audioUrl, payload.currentTrack.name).then(buf => {
-              uiManager.updateTrackUI(payload.currentTrack.name, buf.duration);
+              uiManager.updateTrackUI(payload.currentTrack.name, buf.duration, payload.currentTrack.thumbnail || '');
             }).catch(e => console.warn('Load track error:', e));
           }
-          uiManager.updateTrackUI(payload.currentTrack.name, payload.currentTrack.duration);
+          uiManager.updateTrackUI(payload.currentTrack.name, payload.currentTrack.duration, payload.currentTrack.thumbnail || '');
         }
 
         if (payload.playbackState && payload.playbackState.isPlaying) {
@@ -114,10 +114,10 @@ class App {
         } else if (payload.audioUrl && (!audioEngine.audioBuffer || audioEngine.currentTrackName !== payload.name)) {
           uiManager.setTrackLoading(`Mengunduh ${payload.name}...`);
           audioEngine.loadAudioFromUrl(payload.audioUrl, payload.name).then(buf => {
-            uiManager.updateTrackUI(payload.name, buf.duration);
+            uiManager.updateTrackUI(payload.name, buf.duration, payload.thumbnail || '');
           }).catch(e => console.warn('Auto download audio error:', e));
         }
-        uiManager.updateTrackUI(payload.name, payload.duration);
+        uiManager.updateTrackUI(payload.name, payload.duration, payload.thumbnail || '');
         break;
 
       case 'AUDIO_TRANSFER_PROGRESS':
@@ -130,7 +130,7 @@ class App {
         uiManager.setTrackLoading('Memproses buffer audio...');
         try {
           const buffer = await audioEngine.loadAudioFromArrayBuffer(payload, audioEngine.currentTrackName || 'Shared Track');
-          uiManager.updateTrackUI(audioEngine.currentTrackName || 'Shared Track', buffer.duration);
+          uiManager.updateTrackUI(audioEngine.currentTrackName || 'Shared Track', buffer.duration, '');
         } catch (err) {
           console.error('Failed to decode received audio stream:', err);
           uiManager.setTrackLoading('Gagal decode audio.');

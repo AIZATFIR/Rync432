@@ -690,9 +690,6 @@ export class UIManager {
       `;
 
       card.addEventListener('click', () => {
-        if (this.elements.albumArtBox) {
-          this.elements.albumArtBox.innerHTML = `<img src="${item.thumbnail}" alt="Artwork">`;
-        }
         this.streamAudioFromUrl(item.url, item.title, item.channel, item.duration, item.thumbnail);
       });
 
@@ -705,7 +702,7 @@ export class UIManager {
     try {
       const streamEndpoint = `/api/yt-stream?url=${encodeURIComponent(url)}`;
       const buffer = await this.app.audioEngine.loadAudioFromUrl(streamEndpoint, trackTitle);
-      this.updateTrackUI(trackTitle, buffer.duration);
+      this.updateTrackUI(trackTitle, buffer.duration, thumbnail);
 
       this.app.socketClient.addToQueue({
         name: trackTitle,
@@ -716,7 +713,7 @@ export class UIManager {
       });
 
       // Start synchronized room playback immediately
-      this.app.socketClient.schedulePlay(250, 0);
+      this.app.socketClient.schedulePlay(600, 0);
     } catch (err) {
       console.error('Audio stream error:', err);
       alert('Gagal mengekstrak audio: ' + err.message);
@@ -1019,10 +1016,24 @@ export class UIManager {
     if (this.elements.trackSub) this.elements.trackSub.innerText = 'Sync audio...';
   }
 
-  updateTrackUI(title, duration) {
+  updateTrackUI(title, duration, thumbnail = '') {
     if (this.elements.trackTitle) this.elements.trackTitle.innerText = title;
     if (this.elements.trackSub) this.elements.trackSub.innerText = `${this.formatTime(duration)} • Ready`;
     if (this.elements.totalTimeText) this.elements.totalTimeText.innerText = this.formatTime(duration);
+
+    if (this.elements.albumArtBox) {
+      if (thumbnail) {
+        this.elements.albumArtBox.innerHTML = `<img src="${thumbnail}" alt="Artwork" style="width:100%;height:100%;object-fit:cover;">`;
+      } else {
+        this.elements.albumArtBox.innerHTML = `
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9 18V5l12-2v13"></path>
+            <circle cx="6" cy="18" r="3"></circle>
+            <circle cx="18" cy="16" r="3"></circle>
+          </svg>
+        `;
+      }
+    }
   }
 
   updateLatencyOffset(offsetMs) {
