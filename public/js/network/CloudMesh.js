@@ -16,12 +16,13 @@ export class CloudMesh {
     this.lastKnownQueue = null;
     this.isPaused = false;
     this.lastPauseTime = 0;
-    
+
     // WebRTC P2P Connections
     this.peerConnections = new Map();
     this.dataChannels = new Map();
     this.incomingAudioChunks = new Map();
     this.currentAudioArrayBuffer = null;
+    this.localAudioBufferCache = new Map();
   }
 
   async createRoom(roomId, peerId, deviceName) {
@@ -69,7 +70,7 @@ export class CloudMesh {
   initBroadcastChannel(roomId, deviceName) {
     if (typeof BroadcastChannel === 'undefined') return;
     if (this.broadcastChannel) {
-      try { this.broadcastChannel.close(); } catch (e) {}
+      try { this.broadcastChannel.close(); } catch (e) { }
     }
     this.broadcastChannel = new BroadcastChannel('rync432_' + roomId);
     this.localPeersMap.clear();
@@ -166,48 +167,100 @@ export class CloudMesh {
     if (!this.roomId || !this.peerId) return;
 
     try {
-      const url = `/api/room?action=poll&roomId=${encodeURIComponent(this.roomId)}&peerId=${encodeURIComponent(this.peerId)}&deviceName=${encodeURIComponent(this.deviceName)}`;
-      const res = await fetch(url);
+      const res = await fetch('/api/room?action=poll', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: this.roomId,
+          peerId: this.peerId,
+          deviceName: this.deviceName,
+          isHost: this.isHost,
+          hostId: this.isHost ? this.peerId : undefined,
+          queue: this.isHost ? this.lastKnownQueue : undefined,
+          track: this.isHost ? this.lastKnownTrack : undefined,
+          state: this.isPaused ? 'PAUSED' : 'PLAYING'
+        })
+      });
       if (!res.ok) return;
 
       const data = await res.json();
 
       // 1. Peer list & WebRTC Mesh Auto-Connect
-      if (Array.isArray(data.peers)) {
+      if (Array.isArray(data.peers) && data.peers.length > 0) {
+        let peersChanged = false;
+        const incomingMap = new Map();
+
         data.peers.forEach(p => {
+          // Lock local peer's own isHost status to this.isHost strictly
+          if (p.id === this.peerId) {
+            p.isHost = this.isHost;
+          }
+          incomingMap.set(p.id, p);
+          const existing = this.localPeersMap.get(p.id);
+          if (!existing || existing.role !== p.role || existing.isAudioLoading !== p.isAudioLoading || existing.volume !== p.volume || existing.isHost !== p.isHost || existing.deviceName !== p.deviceName) {
+            peersChanged = true;
+          }
           this.localPeersMap.set(p.id, p);
 
           if (this.isHost && p.id !== this.peerId && !this.peerConnections.has(p.id)) {
             this.initiateWebRTCOffer(p.id);
           }
         });
-        this.dispatchLocalPeers();
-      }
 
-      // 2. Queue list
-      if (Array.isArray(data.queue) && JSON.stringify(data.queue) !== JSON.stringify(this.lastKnownQueue)) {
-        this.lastKnownQueue = data.queue;
-        this.onEvent('QUEUE_UPDATED', { queue: data.queue });
-      }
+        // Retain peers stably; only prune if not seen for > 45s
+        for (const [pId, pData] of this.localPeersMap.entries()) {
+          if (!incomingMap.has(pId) && (Date.now() - (pData.lastSeen || 0) > 45000)) {
+            this.localPeersMap.delete(pId);
+            const pc = this.peerConnections.get(pId);
+            if (pc) {
+              try { pc.close(); } catch (e) { }
+              this.peerConnections.delete(pId);
+            }
+            this.dataChannels.delete(pId);
+            peersChanged = true;
+          }
+        }
 
-      // 3. Track update & Auto-fetch
-      if (data.track && JSON.stringify(data.track) !== JSON.stringify(this.lastKnownTrack)) {
-        this.lastKnownTrack = data.track;
-        this.onEvent('TRACK_METADATA', data.track);
-        if (data.track.audioUrl) {
-          this.fetchRemoteAudioUrl(data.track.audioUrl, data.track.name);
+        if (peersChanged || this.lastDispatchedPeersCount !== this.localPeersMap.size) {
+          this.lastDispatchedPeersCount = this.localPeersMap.size;
+          this.dispatchLocalPeers();
         }
       }
 
-      // 4. Playback state with clean Pause protection
+      // 2. Queue list with stability check - never overwrite non-empty local queue with empty remote queue
+      if (Array.isArray(data.queue)) {
+        if (data.queue.length > 0 || (this.lastKnownQueue && this.lastKnownQueue.length === 0)) {
+          const queueStr = JSON.stringify(data.queue);
+          if (queueStr !== this.lastKnownQueueStr) {
+            this.lastKnownQueueStr = queueStr;
+            this.lastKnownQueue = data.queue;
+            this.onEvent('QUEUE_UPDATED', { queue: data.queue });
+          }
+        }
+      }
+
+      // 3. Track update & Auto-fetch with buffer synchronization
+      if (data.track && (data.track.id !== this.lastKnownTrack?.id || data.track.name !== this.lastKnownTrack?.name)) {
+        this.lastKnownTrack = data.track;
+        this.onEvent('TRACK_METADATA', data.track);
+        this.loadTrackBuffer(data.track);
+      }
+
+      // 4. Playback state with clean Pause protection and exact track synchronization
       if (data.state === 'PLAYING') {
         const isFreshPlay = data.targetServerTime && (data.targetServerTime > (this.lastPauseTime + 100));
-        if (isFreshPlay && data.targetServerTime !== this.lastKnownState) {
+        if (isFreshPlay && (data.targetServerTime !== this.lastKnownState || data.track?.id !== this.lastKnownTrack?.id)) {
           this.isPaused = false;
           this.lastKnownState = data.targetServerTime;
+          if (data.track && (data.track.id !== this.lastKnownTrack?.id || data.track.name !== this.lastKnownTrack?.name)) {
+            this.lastKnownTrack = data.track;
+            this.onEvent('TRACK_METADATA', data.track);
+            this.loadTrackBuffer(data.track);
+          }
           this.onEvent('SCHEDULED_PLAY', {
             targetServerTime: data.targetServerTime,
-            startOffsetSec: data.startOffsetSec || 0
+            startOffsetSec: data.startOffsetSec || 0,
+            track: data.track || this.lastKnownTrack
           });
         }
       } else if (data.state === 'PAUSED' && this.lastKnownState !== 'PAUSED') {
@@ -225,7 +278,31 @@ export class CloudMesh {
           await this.handleIncomingSignal(sig.from, sig.data);
         }
       }
-    } catch (err) {}
+    } catch (err) { }
+  }
+
+  async loadTrackBuffer(track) {
+    if (!track) return;
+    if (track.isSynthetic || track.name === 'Neon Groove Synthwave' || (track.name && track.name.toLowerCase().includes('synth'))) {
+      this.updateLoadingState(false, 'Siap');
+      this.onEvent('SYNTHETIC_TRACK_REQUESTED', track);
+      return;
+    }
+
+    const cached = this.localAudioBufferCache.get(track.id) 
+      || (track.audioId && this.localAudioBufferCache.get(track.audioId))
+      || (track.audioUrl && this.localAudioBufferCache.get(track.audioUrl))
+      || this.localAudioBufferCache.get(track.name);
+
+    if (cached) {
+      this.updateLoadingState(false, 'Siap');
+      this.onEvent('BINARY_AUDIO_RECEIVED', { arrayBuffer: cached, trackName: track.name });
+      return;
+    }
+
+    if (track.audioUrl) {
+      this.fetchRemoteAudioUrl(track.audioUrl, track.name, track.id);
+    }
   }
 
   async updateLoadingState(isLoading, status = '') {
@@ -247,23 +324,44 @@ export class CloudMesh {
           loadingStatus: status
         })
       });
-    } catch (e) {}
+    } catch (e) { }
   }
 
   async addToQueue(track) {
+    // Optimistic immediate queue update
+    const currentQ = this.lastKnownQueue || [];
+    const item = {
+      id: track.id || ('q_' + Math.random().toString(36).substring(2, 9)),
+      name: track.name || 'Untitled',
+      artist: track.artist || 'Artist',
+      duration: track.duration || 0,
+      thumbnail: track.thumbnail || '',
+      audioUrl: track.audioUrl || '',
+      isSynthetic: !!track.isSynthetic,
+      addedBy: this.deviceName
+    };
+
+    if (!currentQ.some(q => q.id === item.id)) {
+      this.lastKnownQueue = [...currentQ, item];
+      this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
+      this.onEvent('QUEUE_UPDATED', { queue: this.lastKnownQueue });
+    }
+
     try {
       const res = await fetch('/api/room?action=add_queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           roomId: this.roomId,
+          peerId: this.peerId,
           deviceName: this.deviceName,
-          ...track
+          ...item
         })
       });
       const data = await res.json();
-      if (data.queue) {
+      if (data.queue && data.queue.length > 0) {
         this.lastKnownQueue = data.queue;
+        this.lastKnownQueueStr = JSON.stringify(data.queue);
         this.onEvent('QUEUE_UPDATED', { queue: data.queue });
         if (this.broadcastChannel) {
           this.broadcastChannel.postMessage({
@@ -272,11 +370,11 @@ export class CloudMesh {
           });
         }
       }
-      if (data.track) {
+      if (data.track && (!this.lastKnownTrack || data.track.id !== this.lastKnownTrack.id)) {
         this.lastKnownTrack = data.track;
         this.onEvent('TRACK_METADATA', data.track);
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   async playQueueItem(queueId) {
@@ -290,15 +388,13 @@ export class CloudMesh {
       if (data.track) {
         this.lastKnownTrack = data.track;
         this.onEvent('TRACK_METADATA', data.track);
-        if (data.track.audioUrl) {
-          this.fetchRemoteAudioUrl(data.track.audioUrl, data.track.name);
-        }
+        this.loadTrackBuffer(data.track);
       }
       if (data.queue) {
         this.lastKnownQueue = data.queue;
         this.onEvent('QUEUE_UPDATED', { queue: data.queue });
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   async reorderQueue(newQueue) {
@@ -317,7 +413,7 @@ export class CloudMesh {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roomId: this.roomId, queue: newQueue })
       });
-    } catch (e) {}
+    } catch (e) { }
   }
 
   async removeFromQueue(queueId) {
@@ -335,7 +431,7 @@ export class CloudMesh {
         this.lastKnownQueue = data.queue;
         this.onEvent('QUEUE_UPDATED', { queue: data.queue });
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   async nextTrack() {
@@ -349,15 +445,33 @@ export class CloudMesh {
       if (data.track) {
         this.lastKnownTrack = data.track;
         this.onEvent('TRACK_METADATA', data.track);
-        if (data.track.audioUrl) {
-          this.fetchRemoteAudioUrl(data.track.audioUrl, data.track.name);
-        }
+        this.loadTrackBuffer(data.track);
       }
       if (data.queue) {
         this.lastKnownQueue = data.queue;
         this.onEvent('QUEUE_UPDATED', { queue: data.queue });
       }
-    } catch (e) {}
+    } catch (e) { }
+  }
+
+  async prevTrack() {
+    try {
+      const res = await fetch('/api/room?action=prev_track', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId: this.roomId })
+      });
+      const data = await res.json();
+      if (data.track) {
+        this.lastKnownTrack = data.track;
+        this.onEvent('TRACK_METADATA', data.track);
+        this.loadTrackBuffer(data.track);
+      }
+      if (data.queue) {
+        this.lastKnownQueue = data.queue;
+        this.onEvent('QUEUE_UPDATED', { queue: data.queue });
+      }
+    } catch (e) { }
   }
 
   async updateRemotePeerSettings(targetPeerId, role, volume) {
@@ -380,7 +494,7 @@ export class CloudMesh {
     if (channel && channel.readyState === 'open') {
       try {
         channel.send(JSON.stringify({ type: 'PEER_SETTINGS', role, volume }));
-      } catch (e) {}
+      } catch (e) { }
     }
 
     try {
@@ -389,40 +503,45 @@ export class CloudMesh {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roomId: this.roomId, targetPeerId, role, volume })
       });
-    } catch (e) {}
+    } catch (e) { }
   }
 
-  async fetchRemoteAudioUrl(url, trackName) {
+  async fetchRemoteAudioUrl(url, trackName, trackId) {
     this.updateLoadingState(true, `Mengunduh ${trackName}...`);
     this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 20, status: `Mengunduh ${trackName}...` });
     try {
       const response = await fetch(url);
       const arrayBuffer = await response.arrayBuffer();
+      this.localAudioBufferCache.set(trackName, arrayBuffer);
+      if (trackId) this.localAudioBufferCache.set(trackId, arrayBuffer);
+      this.localAudioBufferCache.set(url, arrayBuffer);
+
       this.updateLoadingState(false, 'Siap');
       this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 100, status: 'Audio siap!' });
-      this.onEvent('BINARY_AUDIO_RECEIVED', arrayBuffer);
+      this.onEvent('BINARY_AUDIO_RECEIVED', { arrayBuffer, trackName });
     } catch (err) {
       this.updateLoadingState(false, 'Gagal');
       console.warn('Failed to fetch audio from URL:', err.message);
     }
   }
 
-  async broadcastPlay(targetServerTime, startOffsetSec) {
+  async broadcastPlay(targetServerTime, startOffsetSec, track) {
     this.isPaused = false;
     this.lastKnownState = targetServerTime;
+    const trackPayload = track || this.lastKnownTrack;
 
     if (this.broadcastChannel) {
       this.broadcastChannel.postMessage({
         type: 'SCHEDULED_PLAY',
-        payload: { targetServerTime, startOffsetSec }
+        payload: { targetServerTime, startOffsetSec, track: trackPayload }
       });
     }
 
     this.dataChannels.forEach(channel => {
       if (channel.readyState === 'open') {
         try {
-          channel.send(JSON.stringify({ type: 'SCHEDULED_PLAY', targetServerTime, startOffsetSec }));
-        } catch (e) {}
+          channel.send(JSON.stringify({ type: 'SCHEDULED_PLAY', targetServerTime, startOffsetSec, track: trackPayload }));
+        } catch (e) { }
       }
     });
 
@@ -434,10 +553,11 @@ export class CloudMesh {
           roomId: this.roomId,
           state: 'PLAYING',
           targetServerTime,
-          startOffsetSec
+          startOffsetSec,
+          track: trackPayload
         })
       });
-    } catch (e) {}
+    } catch (e) { }
   }
 
   async broadcastPause(currentOffsetSec) {
@@ -456,7 +576,7 @@ export class CloudMesh {
       if (channel.readyState === 'open') {
         try {
           channel.send(JSON.stringify({ type: 'PAUSED', currentOffsetSec }));
-        } catch (e) {}
+        } catch (e) { }
       }
     });
 
@@ -470,7 +590,7 @@ export class CloudMesh {
           startOffsetSec: currentOffsetSec
         })
       });
-    } catch (e) {}
+    } catch (e) { }
   }
 
   async broadcastTrack(metadata) {
@@ -487,7 +607,7 @@ export class CloudMesh {
       if (channel.readyState === 'open') {
         try {
           channel.send(JSON.stringify({ type: 'TRACK_METADATA', metadata }));
-        } catch (e) {}
+        } catch (e) { }
       }
     });
 
@@ -500,10 +620,10 @@ export class CloudMesh {
           track: metadata
         })
       });
-    } catch (e) {}
+    } catch (e) { }
   }
 
-  async updateLatencyOffset(offsetMs) {}
+  async updateLatencyOffset(offsetMs) { }
 
   // --- WebRTC P2P DataChannel ---
   createPeerConnection(targetPeerId) {
@@ -573,7 +693,7 @@ export class CloudMesh {
           } else if (msg.type === 'PEER_SETTINGS') {
             this.onEvent('REMOTE_DEVICE_UPDATED', { role: msg.role, volume: msg.volume });
           }
-        } catch (e) {}
+        } catch (e) { }
         return;
       }
 
@@ -634,7 +754,7 @@ export class CloudMesh {
           data: signalData
         })
       });
-    } catch (e) {}
+    } catch (e) { }
   }
 
   async handleIncomingSignal(fromPeerId, signalData) {
@@ -692,10 +812,41 @@ export class CloudMesh {
         const chunk = arrayBuffer.slice(offset, offset + chunkSize);
         channel.send(chunk);
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
-  async uploadAudioFileToStorage(file, duration) {}
+  async removeRemotePeer(targetPeerId) {
+    this.localPeersMap.delete(targetPeerId);
+    this.dispatchLocalPeers();
+
+    const pc = this.peerConnections.get(targetPeerId);
+    if (pc) {
+      try { pc.close(); } catch (e) { }
+      this.peerConnections.delete(targetPeerId);
+    }
+    this.dataChannels.delete(targetPeerId);
+
+    try {
+      await fetch('/api/room?action=remove_peer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId: this.roomId, targetPeerId })
+      });
+    } catch (e) { }
+  }
+
+  leaveRoom() {
+    this.unsubscribe();
+    if (this.roomId && this.peerId) {
+      try {
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon(`/api/room?action=leave_room&roomId=${this.roomId}&peerId=${this.peerId}`);
+        } else {
+          fetch(`/api/room?action=leave_room&roomId=${this.roomId}&peerId=${this.peerId}`, { method: 'POST', keepalive: true });
+        }
+      } catch (e) { }
+    }
+  }
 
   unsubscribe() {
     this.stopPolling();
@@ -706,7 +857,7 @@ export class CloudMesh {
           peerId: this.peerId
         });
         this.broadcastChannel.close();
-      } catch (e) {}
+      } catch (e) { }
       this.broadcastChannel = null;
     }
   }

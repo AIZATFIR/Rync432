@@ -26,6 +26,7 @@ export class AudioEngine {
     this.onPlaybackEnded = null;
     this.spatialRole = 'stereo'; // 'stereo' | 'left' | 'right' | 'center'
     this.currentEqPreset = 'studio';
+    this.pendingScheduledPlay = null;
 
     this.latencyTuner = new LatencyTuner();
     this.metronome = null;
@@ -156,9 +157,20 @@ export class AudioEngine {
   }
 
   async decodeAudioDataSafe(arrayBuffer) {
+    if (!arrayBuffer) throw new Error('Buffer audio kosong');
+    if (arrayBuffer instanceof AudioBuffer) {
+      return arrayBuffer;
+    }
     await this.ensureContext();
     return new Promise((resolve, reject) => {
-      const bufferCopy = arrayBuffer.slice(0);
+      let bufferCopy;
+      if (arrayBuffer instanceof ArrayBuffer) {
+        bufferCopy = arrayBuffer.slice(0);
+      } else if (ArrayBuffer.isView(arrayBuffer)) {
+        bufferCopy = arrayBuffer.buffer.slice(arrayBuffer.byteOffset, arrayBuffer.byteOffset + arrayBuffer.byteLength);
+      } else {
+        bufferCopy = arrayBuffer;
+      }
       let isResolved = false;
 
       const promise = this.ctx.decodeAudioData(
@@ -196,10 +208,22 @@ export class AudioEngine {
   async loadAudioFromArrayBuffer(arrayBuffer, trackName = 'Uploaded Track') {
     await this.ensureContext();
     try {
-      this.audioBuffer = await this.decodeAudioDataSafe(arrayBuffer);
+      this.stopLocalPlayback();
+      if (arrayBuffer instanceof AudioBuffer) {
+        this.audioBuffer = arrayBuffer;
+      } else {
+        this.audioBuffer = await this.decodeAudioDataSafe(arrayBuffer);
+      }
       this.currentTrackName = trackName;
       this.currentTrackDuration = this.audioBuffer.duration;
       this.pauseOffsetSec = 0;
+
+      if (this.pendingScheduledPlay) {
+        const { serverTargetTime, startOffsetSec } = this.pendingScheduledPlay;
+        this.pendingScheduledPlay = null;
+        this.schedulePlayAtServerTime(serverTargetTime, startOffsetSec);
+      }
+
       return this.audioBuffer;
     } catch (e) {
       console.error('Audio decode error:', e);
@@ -289,8 +313,13 @@ export class AudioEngine {
 
   schedulePlayAtServerTime(serverTargetTime, startOffsetSec = 0) {
     this.ensureContext();
+    if (this.ctx && this.ctx.state === 'suspended') {
+      try { this.ctx.resume(); } catch (e) {}
+    }
+
     if (!this.audioBuffer) {
-      console.warn('Cannot play: no audioBuffer loaded');
+      console.warn('Playback queued: audioBuffer still loading...');
+      this.pendingScheduledPlay = { serverTargetTime, startOffsetSec };
       return;
     }
 

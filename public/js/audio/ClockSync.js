@@ -71,15 +71,22 @@ export class ClockSync {
     }
   }
 
-  handlePong({ clientTimestamp, serverReceiveTime, serverTransmitTime }) {
-    const clientReceiveTime = Date.now();
-    const sample = this.calculateSample({
-      t0: clientTimestamp,
-      t1: serverReceiveTime,
-      t2: serverTransmitTime,
-      t3: clientReceiveTime
-    });
-    this.addSample(sample);
+  handlePong(t0OrObj, t1, t2) {
+    const t3 = Date.now();
+    let t0, serverT1, serverT2;
+    if (typeof t0OrObj === 'object' && t0OrObj !== null) {
+      t0 = t0OrObj.clientTimestamp || t0OrObj.t0 || (t3 - 30);
+      serverT1 = t0OrObj.serverReceiveTime || t0OrObj.t1 || t3;
+      serverT2 = t0OrObj.serverTransmitTime || t0OrObj.t2 || t3;
+    } else {
+      t0 = t0OrObj || (t3 - 30);
+      serverT1 = t1 || t3;
+      serverT2 = t2 || t3;
+    }
+    const sample = this.calculateSample({ t0, t1: serverT1, t2: serverT2, t3 });
+    if (!isNaN(sample.offset) && !isNaN(sample.rtt)) {
+      this.addSample(sample);
+    }
   }
 
   startPeriodicSync(intervalMs = 3000) {

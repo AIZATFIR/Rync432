@@ -72,6 +72,7 @@ export class UIManager {
       modalDeviceVolume: document.getElementById('modalDeviceVolume'),
       modalVolumeText: document.getElementById('modalVolumeText'),
       saveDeviceSettingsBtn: document.getElementById('saveDeviceSettingsBtn'),
+      removeDeviceFromRoomBtn: document.getElementById('removeDeviceFromRoomBtn'),
       
       // Single Play/Pause Toggle & Controls
       trackTitle: document.getElementById('trackTitle'),
@@ -141,6 +142,11 @@ export class UIManager {
       eqVocalBtn: document.getElementById('eqVocalBtn'),
       eqFlatBtn: document.getElementById('eqFlatBtn'),
       activeEqNameTag: document.getElementById('activeEqNameTag'),
+
+      // Loading Notice & Sync Button
+      peerLoadingNotice: document.getElementById('peerLoadingNotice'),
+      peerLoadingNoticeText: document.getElementById('peerLoadingNoticeText'),
+      refetchTrackBtn: document.getElementById('refetchTrackBtn'),
 
       // Devices List
       devicesList: document.getElementById('devicesList')
@@ -350,7 +356,12 @@ export class UIManager {
     if (elements.redoBtn) {
       elements.redoBtn.addEventListener('click', () => {
         app.audioEngine.ensureContext();
-        if (app.audioEngine.audioBuffer) {
+        app.audioEngine.stopLocalPlayback();
+        this.setPlayState(false);
+        this.setTrackLoading('Sync audio...');
+        if (this.cachedQueue.length > 1 && app.socketClient.roomId) {
+          app.socketClient.prevTrack();
+        } else if (app.audioEngine.audioBuffer) {
           app.socketClient.schedulePlay(600, 0);
         }
       });
@@ -359,7 +370,10 @@ export class UIManager {
     if (elements.nextBtn) {
       elements.nextBtn.addEventListener('click', () => {
         app.audioEngine.ensureContext();
-        if (this.cachedQueue.length > 0) {
+        app.audioEngine.stopLocalPlayback();
+        this.setPlayState(false);
+        this.setTrackLoading('Sync audio...');
+        if (this.cachedQueue.length > 0 && app.socketClient.roomId) {
           app.socketClient.nextTrack();
         } else {
           // Switch demo track
@@ -367,6 +381,14 @@ export class UIManager {
           if (this.demoTrackIndex === 0) elements.demoSynthBtn?.click();
           else elements.sampleWavBtn?.click();
         }
+      });
+    }
+
+    if (elements.refetchTrackBtn) {
+      elements.refetchTrackBtn.addEventListener('click', () => {
+        app.audioEngine.ensureContext();
+        this.setTrackLoading('Sync audio...');
+        app.socketClient.refetchCurrentTrack();
       });
     }
 
@@ -544,6 +566,19 @@ export class UIManager {
       });
     }
 
+    if (elements.removeDeviceFromRoomBtn) {
+      elements.removeDeviceFromRoomBtn.addEventListener('click', () => {
+        if (this.selectedDeviceForEdit) {
+          const targetId = this.selectedDeviceForEdit.id;
+          const targetName = this.selectedDeviceForEdit.deviceName || 'Speaker';
+          if (confirm(`Hapus ${targetName} dari room?`)) {
+            app.socketClient.removeRemotePeer(targetId);
+            if (elements.deviceSettingsModal) elements.deviceSettingsModal.classList.remove('active');
+          }
+        }
+      });
+    }
+
     if (elements.deviceSettingsCloseBtn) {
       elements.deviceSettingsCloseBtn.addEventListener('click', () => {
         if (elements.deviceSettingsModal) elements.deviceSettingsModal.classList.remove('active');
@@ -556,7 +591,7 @@ export class UIManager {
       });
     }
 
-    // 8. File Upload Trigger
+    // 8. File Upload Trigger (Multi-File Support)
     const triggerFileSelect = (e) => {
       if (e) e.stopPropagation();
       app.audioEngine.ensureContext();
@@ -574,7 +609,7 @@ export class UIManager {
       elements.dropzone.addEventListener('drop', (e) => {
         e.preventDefault(); e.stopPropagation();
         const files = e.dataTransfer ? e.dataTransfer.files : null;
-        if (files && files.length > 0) this.handleAudioFile(files[0]);
+        if (files && files.length > 0) this.handleAudioFiles(files);
       });
     }
 
@@ -582,8 +617,9 @@ export class UIManager {
     window.addEventListener('drop', (e) => {
       e.preventDefault();
       const files = e.dataTransfer ? e.dataTransfer.files : null;
-      if (files && files.length > 0 && (files[0].type.startsWith('audio/') || /\.(mp3|wav|ogg|flac|m4a|aac)$/i.test(files[0].name))) {
-        this.handleAudioFile(files[0]);
+      if (files && files.length > 0) {
+        const audioFiles = Array.from(files).filter(f => f.type.startsWith('audio/') || /\.(mp3|wav|ogg|flac|m4a|aac)$/i.test(f.name));
+        if (audioFiles.length > 0) this.handleAudioFiles(audioFiles);
       }
     });
 
@@ -591,7 +627,7 @@ export class UIManager {
       elements.audioFileInput.addEventListener('change', (e) => {
         const files = e.target.files;
         if (files && files.length > 0) {
-          this.handleAudioFile(files[0]);
+          this.handleAudioFiles(files);
         }
       });
     }
@@ -603,20 +639,31 @@ export class UIManager {
         if (!app.socketClient.roomId) {
           app.socketClient.createRoom(this.getDeviceName());
         }
-        this.setTrackLoading('Memuat Acoustic WAV...');
-        try {
-          const buffer = await app.audioEngine.loadAudioFromUrl('/test_music_sample.wav', 'Acoustic WAV');
-          this.updateTrackUI('Acoustic WAV', buffer.duration);
+        const sampleUrl = `${window.location.origin}/test_music_sample.wav`;
+        const item = {
+          id: 'q_' + Math.random().toString(36).substring(2, 9),
+          name: 'Acoustic WAV',
+          artist: 'Acoustic Sample',
+          duration: 30,
+          audioUrl: sampleUrl
+        };
 
-          app.socketClient.addToQueue({
-            name: 'Acoustic WAV',
-            artist: 'Acoustic Sample',
-            duration: buffer.duration,
-            audioUrl: '/test_music_sample.wav'
-          });
-        } catch (err) {
-          alert('Gagal memuat sample: ' + err.message);
+        if (!app.audioEngine.audioBuffer) {
+          this.setTrackLoading('Memuat Acoustic WAV...');
+          try {
+            const buffer = await app.audioEngine.loadAudioFromUrl(sampleUrl, 'Acoustic WAV');
+            this.updateTrackUI('Acoustic WAV', buffer.duration, '');
+            if (app.socketClient.cloudMesh) {
+              app.socketClient.cloudMesh.localAudioBufferCache.set(item.id, buffer);
+              app.socketClient.cloudMesh.localAudioBufferCache.set(item.name, buffer);
+              app.socketClient.cloudMesh.localAudioBufferCache.set(sampleUrl, buffer);
+            }
+          } catch (err) {
+            console.warn('Sample load notice:', err);
+          }
         }
+
+        app.socketClient.addToQueue(item);
       });
     }
 
@@ -627,20 +674,24 @@ export class UIManager {
         if (!app.socketClient.roomId) {
           app.socketClient.createRoom(this.getDeviceName());
         }
-        this.setTrackLoading('Neon Synth Demo...');
-        try {
-          const buffer = app.audioEngine.generateSyntheticTrack('synthwave');
-          this.updateTrackUI(app.audioEngine.currentTrackName, buffer.duration);
+        const item = {
+          id: 'q_' + Math.random().toString(36).substring(2, 9),
+          name: 'Neon Groove Synthwave',
+          artist: 'Rync432 Synth',
+          duration: 20,
+          isSynthetic: true
+        };
 
-          app.socketClient.addToQueue({
-            name: app.audioEngine.currentTrackName,
-            artist: 'Rync432 Synth',
-            duration: buffer.duration,
-            isSynthetic: true
-          });
-        } catch (err) {
-          alert('Error: ' + err.message);
+        if (!app.audioEngine.audioBuffer) {
+          const buffer = app.audioEngine.generateSyntheticTrack('synthwave');
+          this.updateTrackUI(app.audioEngine.currentTrackName, buffer.duration, '');
+          if (app.socketClient.cloudMesh) {
+            app.socketClient.cloudMesh.localAudioBufferCache.set(item.id, buffer);
+            app.socketClient.cloudMesh.localAudioBufferCache.set(item.name, buffer);
+          }
         }
+
+        app.socketClient.addToQueue(item);
       });
     }
 
@@ -744,27 +795,27 @@ export class UIManager {
   }
 
   async streamAudioFromUrl(url, trackTitle, artist = 'YouTube', duration = 210, thumbnail = '') {
-    this.setTrackLoading(`Mengekstrak ${trackTitle}...`);
-    try {
-      const streamEndpoint = `/api/yt-stream?url=${encodeURIComponent(url)}`;
-      const buffer = await this.app.audioEngine.loadAudioFromUrl(streamEndpoint, trackTitle);
-      this.updateTrackUI(trackTitle, buffer.duration, thumbnail);
+    const streamEndpoint = `/api/yt-stream?url=${encodeURIComponent(url)}`;
+    const item = {
+      id: 'q_' + Math.random().toString(36).substring(2, 9),
+      name: trackTitle,
+      artist,
+      duration,
+      thumbnail,
+      audioUrl: streamEndpoint
+    };
 
-      this.app.socketClient.addToQueue({
-        name: trackTitle,
-        artist,
-        duration: buffer.duration,
-        thumbnail,
-        audioUrl: streamEndpoint
-      });
-
-      // Start synchronized room playback immediately
-      this.app.socketClient.schedulePlay(600, 0);
-    } catch (err) {
-      console.error('Audio stream error:', err);
-      alert('Gagal mengekstrak audio: ' + err.message);
-      this.setTrackLoading('Pilih trek lagu');
+    if (!this.app.audioEngine.audioBuffer) {
+      this.setTrackLoading(`Mengekstrak ${trackTitle}...`);
+      try {
+        const buffer = await this.app.audioEngine.loadAudioFromUrl(streamEndpoint, trackTitle);
+        this.updateTrackUI(trackTitle, buffer.duration, thumbnail);
+      } catch (err) {
+        console.error('Audio stream error:', err);
+      }
     }
+
+    this.app.socketClient.addToQueue(item);
   }
 
   renderQueue(queue = []) {
@@ -783,9 +834,10 @@ export class UIManager {
 
     container.innerHTML = '';
     const currentTrackName = this.app.audioEngine?.currentTrackName || '';
+    const currentTrackId = this.app.socketClient?.cloudMesh?.lastKnownTrack?.id || '';
 
     queue.forEach((item, index) => {
-      const isCurrent = (currentTrackName && item.name === currentTrackName);
+      const isCurrent = currentTrackId ? (item.id === currentTrackId) : (currentTrackName && item.name === currentTrackName);
       const div = document.createElement('div');
       div.className = `queue-item ${isCurrent ? 'active-track' : ''}`;
       div.setAttribute('draggable', 'true');
@@ -807,38 +859,85 @@ export class UIManager {
           <div class="queue-item-title" style="color:${isCurrent ? 'var(--spotify-green)' : 'var(--text-base)'};">${item.name}</div>
           <div class="queue-item-meta">${item.artist || 'Artist'} • ${this.formatTime(item.duration)} • Oleh ${item.addedBy || 'Member'}</div>
         </div>
-        <button class="queue-item-del" title="Hapus dari antrean">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
-        </button>
+        
+        <div class="queue-item-actions">
+          <button class="queue-menu-btn" title="Menu Opsi Lagu">⋮</button>
+          <div class="queue-dropdown-menu">
+            <button class="queue-dropdown-item q-action-play">Putar Sekarang</button>
+            <button class="queue-dropdown-item q-action-playnext">Putar Berikutnya</button>
+            <button class="queue-dropdown-item q-action-download">Unduh Audio</button>
+            <button class="queue-dropdown-item danger q-action-delete">Hapus</button>
+          </div>
+        </div>
       `;
 
-      // Click to play specific track
-      div.addEventListener('click', (e) => {
-        if (e.target.closest('.queue-item-del') || e.target.closest('.drag-handle')) return;
+      const menuBtn = div.querySelector('.queue-menu-btn');
+      const dropdown = div.querySelector('.queue-dropdown-menu');
+
+      if (menuBtn && dropdown) {
+        menuBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          document.querySelectorAll('.queue-dropdown-menu.active').forEach(d => {
+            if (d !== dropdown) d.classList.remove('active');
+          });
+          dropdown.classList.toggle('active');
+        });
+      }
+
+      // 1. Play Now Action
+      div.querySelector('.q-action-play')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dropdown.classList.remove('active');
         this.app.audioEngine.ensureContext();
+        this.app.audioEngine.stopLocalPlayback();
+        this.setPlayState(false);
+        this.setTrackLoading(`Memuat ${item.name}...`);
+        this.app.socketClient.playQueueItem(item.id);
+      });
+
+      // 2. Play Next Action
+      div.querySelector('.q-action-playnext')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dropdown.classList.remove('active');
+        this.app.socketClient.playNext(item.id);
+      });
+
+      // 3. Download Audio File Action
+      div.querySelector('.q-action-download')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dropdown.classList.remove('active');
         if (item.audioUrl) {
-          this.setTrackLoading(`Memuat ${item.name}...`);
-          this.app.socketClient.playQueueItem(item.id);
-        } else if (item.isSynthetic) {
-          const buffer = this.app.audioEngine.generateSyntheticTrack('synthwave');
-          this.updateTrackUI(item.name, buffer.duration);
-          this.app.socketClient.playQueueItem(item.id);
+          const a = document.createElement('a');
+          a.href = item.audioUrl;
+          a.download = `${item.name || 'track'}.mp3`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
         } else {
-          this.app.socketClient.playQueueItem(item.id);
+          alert('Audio stream tidak memiliki URL unduhan langsung.');
         }
       });
 
-      // Delete action
-      const delBtn = div.querySelector('.queue-item-del');
-      if (delBtn) {
-        delBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.app.socketClient.removeFromQueue(item.id);
-        });
-      }
+      // 4. Delete Action
+      div.querySelector('.q-action-delete')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dropdown.classList.remove('active');
+        this.app.socketClient.removeFromQueue(item.id);
+      });
+
+      // Click row to play
+      div.addEventListener('click', (e) => {
+        if (e.target.closest('.queue-item-actions') || e.target.closest('.drag-handle')) return;
+        this.app.audioEngine.ensureContext();
+        this.app.audioEngine.stopLocalPlayback();
+        this.setPlayState(false);
+        this.setTrackLoading(`Memuat ${item.name}...`);
+        if (item.isSynthetic) {
+          const buffer = this.app.audioEngine.generateSyntheticTrack('synthwave');
+          this.updateTrackUI(item.name, buffer.duration);
+        }
+        this.app.socketClient.playQueueItem(item.id);
+      });
 
       // Desktop HTML5 Drag and Drop
       div.addEventListener('dragstart', (e) => {
@@ -916,6 +1015,11 @@ export class UIManager {
 
       container.appendChild(div);
     });
+
+    // Close any open queue dropdown when clicking anywhere else
+    document.addEventListener('click', () => {
+      document.querySelectorAll('.queue-dropdown-menu.active').forEach(d => d.classList.remove('active'));
+    }, { once: true });
   }
 
   openDeviceSettingsModal(peer) {
@@ -923,9 +1027,13 @@ export class UIManager {
     const { elements } = this;
     if (!elements.deviceSettingsModal) return;
 
+    const isSelf = peer.id === this.app.socketClient.peerId;
     if (elements.modalTargetDeviceName) {
-      const isSelf = peer.id === this.app.socketClient.peerId;
       elements.modalTargetDeviceName.innerText = `${peer.deviceName || 'Speaker'} ${isSelf ? '(You)' : ''}`;
+    }
+
+    if (elements.removeDeviceFromRoomBtn) {
+      elements.removeDeviceFromRoomBtn.style.display = (this.app.socketClient.isHost && !isSelf) ? 'block' : 'none';
     }
 
     const currentRole = peer.role || 'stereo';
@@ -990,70 +1098,107 @@ export class UIManager {
     return `${name} (${Math.floor(Math.random() * 899 + 100)})`;
   }
 
-  async handleAudioFile(file) {
-    if (!file) return;
+  async handleAudioFiles(files) {
+    if (!files || files.length === 0) return;
     const app = this.app;
     await app.audioEngine.ensureContext();
 
     if (!app.socketClient.roomId) {
-      app.socketClient.createRoom(this.getDeviceName());
+      await app.socketClient.createRoom(this.getDeviceName());
     }
 
-    const fileSizeMb = (file.size / (1024 * 1024)).toFixed(1);
-    this.setTrackLoading(`Membaca (${fileSizeMb} MB)...`);
+    const fileList = Array.from(files);
+    const totalFiles = fileList.length;
+    const isQueueEmpty = !app.audioEngine.audioBuffer && (!this.cachedQueue || this.cachedQueue.length === 0);
 
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      this.setTrackLoading(`Decode audio...`);
-      const audioBuffer = await app.audioEngine.loadAudioFromArrayBuffer(arrayBuffer, file.name);
-      this.updateTrackUI(file.name, audioBuffer.duration);
+    for (let i = 0; i < totalFiles; i++) {
+      const file = fileList[i];
+      const isFirstOfEmpty = isQueueEmpty && (i === 0);
+      const itemId = 'q_' + Math.random().toString(36).substring(2, 9);
+      const blobUrl = URL.createObjectURL(file);
 
-      // Convert ArrayBuffer to Base64 for universal serverless relay to satellite phones
-      let binary = '';
-      const bytes = new Uint8Array(arrayBuffer);
-      const len = bytes.byteLength;
-      const chunkSize = 32768;
-      for (let i = 0; i < len; i += chunkSize) {
-        binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + chunkSize, len)));
-      }
-      const base64 = btoa(binary);
+      this.setTrackLoading(`Membaca (${i + 1}/${totalFiles}) ${file.name}...`);
 
-      let audioUrl = '';
       try {
-        const uploadRes = await fetch('/api/room?action=upload_audio', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            roomId: app.socketClient.roomId,
-            trackName: file.name,
-            duration: audioBuffer.duration,
-            contentType: file.type || 'audio/mpeg',
-            audioBase64: base64,
-            deviceName: this.getDeviceName()
-          })
-        });
-        const uploadData = await uploadRes.json();
-        audioUrl = uploadData.audioUrl || `/api/room?action=get_audio&roomId=${app.socketClient.roomId}`;
-      } catch (e) {
-        console.warn('Binary upload fallback notice:', e);
-      }
+        const arrayBuffer = await file.arrayBuffer();
+        let duration = 0;
+        try {
+          const decoded = await app.audioEngine.decodeAudioDataSafe(arrayBuffer);
+          duration = decoded.duration;
+          if (isFirstOfEmpty) {
+            app.audioEngine.audioBuffer = decoded;
+            app.audioEngine.currentTrackName = file.name;
+            app.audioEngine.currentTrackDuration = duration;
+            this.updateTrackUI(file.name, duration);
+          }
+        } catch (decErr) {
+          console.warn('Audio decode duration notice:', decErr);
+        }
 
-      app.socketClient.addToQueue({
-        name: file.name,
-        artist: 'Local File',
-        duration: audioBuffer.duration,
-        audioUrl
-      });
+        // Cache locally by itemId, file.name, and blobUrl
+        if (app.socketClient.cloudMesh) {
+          app.socketClient.cloudMesh.localAudioBufferCache.set(itemId, arrayBuffer);
+          app.socketClient.cloudMesh.localAudioBufferCache.set(file.name, arrayBuffer);
+          app.socketClient.cloudMesh.localAudioBufferCache.set(blobUrl, arrayBuffer);
+        }
 
-      app.socketClient.sendBinary(arrayBuffer, file.name);
-    } catch (err) {
-      console.error('Audio load error:', err);
-      alert('Gagal mendecode audio: ' + (err.message || 'Format tidak didukung'));
-      this.setTrackLoading('Pilih trek lagu');
-    } finally {
-      if (this.elements.audioFileInput) {
-        this.elements.audioFileInput.value = '';
+        // 1. Add to queue immediately for every file uploaded
+        const queueItem = {
+          id: itemId,
+          name: file.name,
+          artist: 'File Audio',
+          duration: duration || 0,
+          audioUrl: blobUrl,
+          addedBy: this.getDeviceName()
+        };
+        await app.socketClient.addToQueue(queueItem);
+
+        // 2. Send Base64 relay to backend if <= 4MB
+        if (arrayBuffer.byteLength <= 4 * 1024 * 1024) {
+          let binary = '';
+          const bytes = new Uint8Array(arrayBuffer);
+          const len = bytes.byteLength;
+          const chunkSize = 32768;
+          for (let b = 0; b < len; b += chunkSize) {
+            binary += String.fromCharCode.apply(null, bytes.subarray(b, Math.min(b + chunkSize, len)));
+          }
+          const base64 = btoa(binary);
+
+          try {
+            const uploadRes = await fetch('/api/room?action=upload_audio', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                roomId: app.socketClient.roomId,
+                trackName: file.name,
+                duration: duration || 0,
+                contentType: file.type || 'audio/mpeg',
+                audioBase64: base64,
+                deviceName: this.getDeviceName(),
+                id: itemId
+              })
+            });
+            const uploadData = await uploadRes.json();
+            if (uploadData.audioUrl && app.socketClient.cloudMesh) {
+              app.socketClient.cloudMesh.localAudioBufferCache.set(uploadData.audioUrl, arrayBuffer);
+            }
+          } catch (e) {
+            console.warn('Binary upload fallback notice:', e);
+          }
+        }
+
+        // 3. WebRTC binary streaming
+        app.socketClient.sendBinary(arrayBuffer, file.name);
+      } catch (err) {
+        console.error('Audio load error for', file.name, err);
       }
+    }
+
+    if (this.elements.audioFileInput) {
+      this.elements.audioFileInput.value = '';
+    }
+    if (app.audioEngine.currentTrackName && app.audioEngine.audioBuffer) {
+      this.updateTrackUI(app.audioEngine.currentTrackName, app.audioEngine.currentTrackDuration);
     }
   }
 
@@ -1173,6 +1318,30 @@ export class UIManager {
       this.elements.activeSpeakerCount.innerText = `${peers.length}`;
     }
 
+    // Debounced and non-flickering peer loading notice banner for other devices
+    const loadingPeer = peers.find(p => p.isAudioLoading && p.id !== this.app.socketClient.peerId);
+    if (loadingPeer && this.elements.peerLoadingNotice) {
+      if (this.peerLoadingNoticeTimeout) {
+        clearTimeout(this.peerLoadingNoticeTimeout);
+        this.peerLoadingNoticeTimeout = null;
+      }
+      this.elements.peerLoadingNotice.style.display = 'flex';
+      if (this.elements.peerLoadingNoticeText) {
+        this.elements.peerLoadingNoticeText.innerText = `${loadingPeer.deviceName || 'Speaker'} sedang mengunduh audio...`;
+      }
+    } else if (this.elements.peerLoadingNotice) {
+      if (!this.peerLoadingNoticeTimeout) {
+        this.peerLoadingNoticeTimeout = setTimeout(() => {
+          if (this.elements.peerLoadingNotice) {
+            this.elements.peerLoadingNotice.style.display = 'none';
+          }
+          this.peerLoadingNoticeTimeout = null;
+        }, 1200);
+      }
+    }
+
+    const isUserHost = this.app.socketClient.isHost;
+
     peers.forEach(peer => {
       const isSelf = peer.id === this.app.socketClient.peerId;
       const div = document.createElement('div');
@@ -1180,11 +1349,11 @@ export class UIManager {
 
       const roleStr = peer.role ? peer.role.toUpperCase() : 'STEREO';
       const statusText = peer.isAudioLoading 
-        ? `<span style="color:#fbbf24;font-weight:600;">⏳ ${peer.loadingStatus || 'Mengunduh...'}</span>`
+        ? `<span style="color:#fbbf24;font-weight:600;">${peer.loadingStatus || 'Mengunduh...'}</span>`
         : `<span style="color:var(--text-silver);">${roleStr} • ${peer.isHost ? 'Host' : 'Satellite'}</span>`;
 
       div.innerHTML = `
-        <div class="device-name-group">
+        <div class="device-name-group" style="flex: 1; cursor: pointer;">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${peer.isAudioLoading ? '#fbbf24' : 'var(--spotify-green)'}" stroke-width="2">
             ${peer.isHost ? '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>' : '<rect width="16" height="20" x="4" y="2" rx="2"/><circle cx="12" cy="14" r="4"/>'}
           </svg>
@@ -1193,11 +1362,29 @@ export class UIManager {
             <div class="device-latency-tag">${statusText}</div>
           </div>
         </div>
-        <button class="chip-btn" style="padding: 2px 8px; font-size: 0.68rem;">Atur</button>
+        <div style="display: flex; gap: 6px; align-items: center;">
+          <button class="chip-btn atur-peer-btn" style="padding: 2px 8px; font-size: 0.68rem;">Atur</button>
+          ${isUserHost && !isSelf ? `
+            <button class="chip-btn kick-peer-btn" style="padding: 2px 6px; font-size: 0.68rem; background: rgba(226, 33, 52, 0.15); color: #ff5c6c; border-color: rgba(226, 33, 52, 0.3);" title="Hapus Device">
+              ✕
+            </button>
+          ` : ''}
+        </div>
       `;
 
-      div.addEventListener('click', () => {
+      div.querySelector('.device-name-group')?.addEventListener('click', () => {
         this.openDeviceSettingsModal(peer);
+      });
+
+      div.querySelector('.atur-peer-btn')?.addEventListener('click', () => {
+        this.openDeviceSettingsModal(peer);
+      });
+
+      div.querySelector('.kick-peer-btn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (confirm(`Hapus ${peer.deviceName || 'Speaker'} dari room?`)) {
+          this.app.socketClient.removeRemotePeer(peer.id);
+        }
       });
 
       if (list) list.appendChild(div);
@@ -1211,12 +1398,14 @@ export class UIManager {
     if (!list) return;
     list.innerHTML = '';
 
+    const isUserHost = this.app.socketClient.isHost;
+
     this.cachedPeers.forEach(peer => {
       const isSelf = peer.id === this.app.socketClient.peerId;
       const div = document.createElement('div');
       div.className = 'device-item';
       div.innerHTML = `
-        <div class="device-name-group">
+        <div class="device-name-group" style="flex: 1; cursor: pointer;">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--spotify-green)" stroke-width="2">
             <rect width="16" height="20" x="4" y="2" rx="2"/><circle cx="12" cy="14" r="4"/>
           </svg>
@@ -1225,11 +1414,29 @@ export class UIManager {
             <div class="device-latency-tag">Channel: ${(peer.role || 'stereo').toUpperCase()}</div>
           </div>
         </div>
-        <button class="chip-btn" style="padding: 2px 8px; font-size: 0.68rem;">Pilih Channel</button>
+        <div style="display: flex; gap: 6px; align-items: center;">
+          <button class="chip-btn atur-peer-matrix-btn" style="padding: 2px 8px; font-size: 0.68rem;">Pilih Channel</button>
+          ${isUserHost && !isSelf ? `
+            <button class="chip-btn kick-peer-matrix-btn" style="padding: 2px 6px; font-size: 0.68rem; background: rgba(226, 33, 52, 0.15); color: #ff5c6c; border-color: rgba(226, 33, 52, 0.3);" title="Hapus Device">
+              ✕
+            </button>
+          ` : ''}
+        </div>
       `;
 
-      div.addEventListener('click', () => {
+      div.querySelector('.device-name-group')?.addEventListener('click', () => {
         this.openDeviceSettingsModal(peer);
+      });
+
+      div.querySelector('.atur-peer-matrix-btn')?.addEventListener('click', () => {
+        this.openDeviceSettingsModal(peer);
+      });
+
+      div.querySelector('.kick-peer-matrix-btn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (confirm(`Hapus ${peer.deviceName || 'Speaker'} dari room?`)) {
+          this.app.socketClient.removeRemotePeer(peer.id);
+        }
       });
 
       list.appendChild(div);

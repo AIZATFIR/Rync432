@@ -56,18 +56,40 @@ export default async function handler(req, res) {
     const duration = body.duration || 0;
 
     if (audioBase64 && roomId) {
-      audioStore.set(roomId, {
+      const audioId = 'aud_' + Math.random().toString(36).substring(2, 9);
+      const audioEntry = {
+        audioId,
         base64: audioBase64,
         contentType: body.contentType || 'audio/mpeg',
         trackName,
         duration,
         uploadedAt: now
-      });
+      };
 
-      const room = rooms.get(roomId);
-      const audioUrl = `/api/room?action=get_audio&roomId=${encodeURIComponent(roomId)}&v=${now}`;
+      audioStore.set(audioId, audioEntry);
+      audioStore.set(roomId, audioEntry); // fallback for room
+
+      let room = rooms.get(roomId);
+      if (!room) {
+        room = {
+          roomId,
+          hostId: peerId,
+          state: 'IDLE',
+          track: null,
+          targetServerTime: 0,
+          startOffsetSec: 0,
+          updatedAt: now,
+          queue: [],
+          peers: {},
+          signals: []
+        };
+        rooms.set(roomId, room);
+      }
+
+      const audioUrl = `/api/room?action=get_audio&audioId=${audioId}&roomId=${encodeURIComponent(roomId)}&v=${now}`;
       const item = {
         id: 'q_' + Math.random().toString(36).substring(2, 9),
+        audioId,
         name: trackName,
         artist: 'File Audio',
         duration,
@@ -75,24 +97,29 @@ export default async function handler(req, res) {
         addedBy: deviceName
       };
 
-      if (room) {
-        room.track = item;
-        room.state = 'IDLE';
-        room.startOffsetSec = 0;
-        room.updatedAt = now;
-      }
+      if (!room.queue) room.queue = [];
+      room.queue.push(item);
 
-      return res.status(200).json({ success: true, audioUrl, track: item });
+      if (!room.track) {
+        room.track = item;
+        room.state = 'PAUSED';
+        room.startOffsetSec = 0;
+      }
+      room.updatedAt = now;
+
+      return res.status(200).json({ success: true, audioUrl, track: room.track, queue: room.queue, item });
     }
     return res.status(400).json({ error: 'Missing audioBase64 or roomId' });
   }
 
   if (action === 'get_audio') {
-    const audioData = audioStore.get(roomId);
+    const audioId = query.audioId || body.audioId;
+    const audioData = (audioId && audioStore.get(audioId)) || audioStore.get(roomId);
     if (audioData && audioData.base64) {
       const buffer = Buffer.from(audioData.base64, 'base64');
       res.setHeader('Content-Type', audioData.contentType || 'audio/mpeg');
       res.setHeader('Content-Length', buffer.length);
+      res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(audioData.trackName || 'track')}.mp3"`);
       res.setHeader('X-Track-Title', encodeURIComponent(audioData.trackName));
       return res.status(200).send(buffer);
     }
@@ -168,19 +195,41 @@ export default async function handler(req, res) {
   }
 
   if (action === 'poll') {
-    const room = rooms.get(roomId);
+    let room = rooms.get(roomId);
+    const isThisHost = body.isHost === true || query.isHost === 'true';
+
     if (!room) {
-      return res.status(200).json({
-        exists: false,
-        peers: [{ id: peerId, deviceName, isHost: true, role: 'stereo', volume: 1.0 }],
-        state: 'IDLE',
-        track: null,
-        queue: []
-      });
+      room = {
+        roomId,
+        hostId: isThisHost ? peerId : (body.hostId || null),
+        state: body.state || 'IDLE',
+        track: body.track || null,
+        targetServerTime: body.targetServerTime || 0,
+        startOffsetSec: body.startOffsetSec || 0,
+        updatedAt: now,
+        queue: Array.isArray(body.queue) ? body.queue : [],
+        peers: {},
+        signals: []
+      };
+      rooms.set(roomId, room);
     }
+
+    if (isThisHost) {
+      room.hostId = peerId;
+      if (Array.isArray(body.queue) && body.queue.length >= (room.queue ? room.queue.length : 0)) {
+        room.queue = body.queue;
+      }
+      if (body.track) room.track = body.track;
+    } else if (Array.isArray(body.queue) && body.queue.length > (room.queue ? room.queue.length : 0)) {
+      room.queue = body.queue;
+      if (body.track && !room.track) room.track = body.track;
+    }
+
+    const isHostAssigned = isThisHost || (room.hostId === peerId);
 
     if (peerId && room.peers[peerId]) {
       room.peers[peerId].lastSeen = now;
+      room.peers[peerId].isHost = isHostAssigned;
       if (deviceName && deviceName !== 'Speaker') {
         room.peers[peerId].deviceName = deviceName;
       }
@@ -188,18 +237,12 @@ export default async function handler(req, res) {
       room.peers[peerId] = {
         id: peerId,
         deviceName,
-        isHost: room.hostId === peerId,
+        isHost: isHostAssigned,
         role: 'stereo',
         volume: 1.0,
         latencyOffset: 0,
         lastSeen: now
       };
-    }
-
-    for (const [pId, peer] of Object.entries(room.peers)) {
-      if (pId !== peerId && now - (peer.lastSeen || 0) > 25000) {
-        delete room.peers[pId];
-      }
     }
 
     const incomingSignals = (room.signals || []).filter(s => s.to === peerId);
@@ -219,47 +262,75 @@ export default async function handler(req, res) {
   }
 
   if (action === 'update_playback') {
-    const room = rooms.get(roomId);
-    if (room) {
-      if (body.state) room.state = body.state;
-      if (body.targetServerTime !== undefined) room.targetServerTime = body.targetServerTime;
-      if (body.startOffsetSec !== undefined) room.startOffsetSec = body.startOffsetSec;
-      if (body.track) room.track = body.track;
-      if (body.queue) room.queue = body.queue;
-      room.updatedAt = now;
-      return res.status(200).json({ success: true });
+    let room = rooms.get(roomId);
+    if (!room) {
+      room = {
+        roomId,
+        hostId: peerId,
+        state: body.state || 'IDLE',
+        track: body.track || null,
+        targetServerTime: body.targetServerTime || 0,
+        startOffsetSec: body.startOffsetSec || 0,
+        updatedAt: now,
+        queue: Array.isArray(body.queue) ? body.queue : [],
+        peers: {},
+        signals: []
+      };
+      rooms.set(roomId, room);
     }
-    return res.status(404).json({ error: 'Room not found' });
+    if (body.state) room.state = body.state;
+    if (body.targetServerTime !== undefined) room.targetServerTime = body.targetServerTime;
+    if (body.startOffsetSec !== undefined) room.startOffsetSec = body.startOffsetSec;
+    if (body.track) room.track = body.track;
+    if (body.queue) room.queue = body.queue;
+    room.updatedAt = now;
+    return res.status(200).json({ success: true });
   }
 
   if (action === 'add_queue') {
-    const room = rooms.get(roomId);
-    if (room) {
-      if (!room.queue) room.queue = [];
-      const item = {
-        id: 'q_' + Math.random().toString(36).substring(2, 9),
-        name: body.name || 'Untitled',
-        artist: body.artist || 'Artist',
-        duration: body.duration || 0,
-        thumbnail: body.thumbnail || '',
-        audioUrl: body.audioUrl || '',
-        isSynthetic: !!body.isSynthetic,
-        addedBy: deviceName
+    let room = rooms.get(roomId);
+    if (!room) {
+      room = {
+        roomId,
+        hostId: peerId,
+        state: 'IDLE',
+        track: null,
+        targetServerTime: 0,
+        startOffsetSec: 0,
+        updatedAt: now,
+        queue: [],
+        peers: {},
+        signals: []
       };
-
-      room.queue.push(item);
-
-      if (!room.track) {
-        room.track = item;
-        room.state = 'PLAYING';
-        room.targetServerTime = now + 600;
-        room.startOffsetSec = 0;
-      }
-
-      room.updatedAt = now;
-      return res.status(200).json({ success: true, track: room.track, queue: room.queue });
+      rooms.set(roomId, room);
     }
-    return res.status(404).json({ error: 'Room not found' });
+
+    if (!room.queue) room.queue = [];
+    const item = {
+      id: body.id || ('q_' + Math.random().toString(36).substring(2, 9)),
+      name: body.name || 'Untitled',
+      artist: body.artist || 'Artist',
+      duration: body.duration || 0,
+      thumbnail: body.thumbnail || '',
+      audioUrl: body.audioUrl || '',
+      isSynthetic: !!body.isSynthetic,
+      addedBy: deviceName
+    };
+
+    const exists = room.queue.some(q => q.id === item.id);
+    if (!exists) {
+      room.queue.push(item);
+    }
+
+    if (!room.track) {
+      room.track = item;
+      room.state = 'PAUSED';
+      room.targetServerTime = 0;
+      room.startOffsetSec = 0;
+    }
+
+    room.updatedAt = now;
+    return res.status(200).json({ success: true, track: room.track, queue: room.queue, item });
   }
 
   if (action === 'reorder_queue') {
@@ -270,6 +341,23 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, queue: room.queue });
     }
     return res.status(200).json({ success: false });
+  }
+
+  if (action === 'play_next') {
+    const room = rooms.get(roomId);
+    if (room && room.queue) {
+      const qId = body.queueId;
+      const targetIdx = room.queue.findIndex(q => q.id === qId);
+      if (targetIdx !== -1) {
+        const [item] = room.queue.splice(targetIdx, 1);
+        const currentIdx = room.track ? room.queue.findIndex(q => q.id === room.track.id) : -1;
+        const insertIdx = currentIdx >= 0 ? currentIdx + 1 : 0;
+        room.queue.splice(insertIdx, 0, item);
+        room.updatedAt = now;
+        return res.status(200).json({ success: true, queue: room.queue });
+      }
+    }
+    return res.status(404).json({ error: 'Track not found' });
   }
 
   if (action === 'play_queue_item') {
@@ -304,9 +392,8 @@ export default async function handler(req, res) {
     const room = rooms.get(roomId);
     if (room) {
       if (room.queue && room.queue.length > 0) {
-        // Find current track index
         const currentIndex = room.track ? room.queue.findIndex(q => q.id === room.track.id) : -1;
-        const nextIndex = currentIndex >= 0 && currentIndex + 1 < room.queue.length ? currentIndex + 1 : (currentIndex >= 0 ? 0 : 0);
+        const nextIndex = currentIndex >= 0 && currentIndex + 1 < room.queue.length ? currentIndex + 1 : 0;
         
         room.track = room.queue[nextIndex] || room.queue[0];
         room.state = 'PLAYING';
@@ -320,6 +407,48 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, track: room.track, queue: room.queue });
     }
     return res.status(404).json({ error: 'Room not found' });
+  }
+
+  if (action === 'prev_track') {
+    const room = rooms.get(roomId);
+    if (room) {
+      if (room.queue && room.queue.length > 0) {
+        const currentIndex = room.track ? room.queue.findIndex(q => q.id === room.track.id) : 0;
+        const prevIndex = (currentIndex > 0) ? currentIndex - 1 : room.queue.length - 1;
+        
+        room.track = room.queue[prevIndex] || room.queue[0];
+        room.state = 'PLAYING';
+        room.targetServerTime = now + 600;
+        room.startOffsetSec = 0;
+      } else {
+        room.state = 'PAUSED';
+        room.startOffsetSec = 0;
+      }
+      room.updatedAt = now;
+      return res.status(200).json({ success: true, track: room.track, queue: room.queue });
+    }
+    return res.status(404).json({ error: 'Room not found' });
+  }
+
+  if (action === 'leave_room') {
+    const room = rooms.get(roomId);
+    if (room && room.peers[peerId]) {
+      delete room.peers[peerId];
+      room.updatedAt = now;
+      return res.status(200).json({ success: true });
+    }
+    return res.status(200).json({ success: true });
+  }
+
+  if (action === 'remove_peer') {
+    const room = rooms.get(roomId);
+    const targetPeerId = body.targetPeerId || query.targetPeerId;
+    if (room && targetPeerId && room.peers[targetPeerId]) {
+      delete room.peers[targetPeerId];
+      room.updatedAt = now;
+      return res.status(200).json({ success: true, peers: Object.values(room.peers) });
+    }
+    return res.status(200).json({ success: true });
   }
 
   if (action === 'update_peer') {

@@ -39,4 +39,20 @@ describe('ClockSync (NTP Algorithm)', () => {
     const clientTime = clockSync.toClientLocalTime(serverTime);
     expect(clientTime).toBe(4900);
   });
+
+  it('handles handlePong with both positional arguments and object parameter', () => {
+    const t0 = Date.now() - 30;
+    const t1 = Date.now() - 10;
+    const t2 = Date.now() - 9;
+
+    // Positional call
+    clockSync.handlePong(t0, t1, t2);
+    expect(clockSync.samples.length).toBe(1);
+    expect(isNaN(clockSync.samples[0].offset)).toBe(false);
+
+    // Object call
+    clockSync.handlePong({ clientTimestamp: t0, serverReceiveTime: t1, serverTransmitTime: t2 });
+    expect(clockSync.samples.length).toBe(2);
+    expect(isNaN(clockSync.samples[1].offset)).toBe(false);
+  });
 });

@@ -116,6 +116,14 @@ export class SocketClient {
     this.cloudMesh.playQueueItem(queueId);
   }
 
+  playNext(queueId) {
+    this.cloudMesh.playNext(queueId);
+  }
+
+  refetchCurrentTrack() {
+    this.cloudMesh.refetchCurrentTrack();
+  }
+
   reorderQueue(newQueue) {
     this.cloudMesh.reorderQueue(newQueue);
   }
@@ -128,12 +136,24 @@ export class SocketClient {
     this.cloudMesh.nextTrack();
   }
 
+  prevTrack() {
+    this.cloudMesh.prevTrack();
+  }
+
   updateLatencyOffset(offsetMs) {
     this.cloudMesh.updateLatencyOffset(offsetMs);
   }
 
   updateRemotePeerSettings(targetPeerId, role, volume) {
     this.cloudMesh.updateRemotePeerSettings(targetPeerId, role, volume);
+  }
+
+  removeRemotePeer(targetPeerId) {
+    this.cloudMesh.removeRemotePeer(targetPeerId);
+  }
+
+  leaveRoom() {
+    this.cloudMesh.leaveRoom();
   }
 
   sendBinary(arrayBuffer, trackName) {

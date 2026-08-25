@@ -26,6 +26,14 @@ class App {
 
     this.socketClient.connect();
 
+    // Prevent accidental page reload / navigate away while in active room
+    window.addEventListener('beforeunload', (e) => {
+      if (this.socketClient && this.socketClient.roomId) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    });
+
     const urlParams = new URLSearchParams(window.location.search);
     const roomParam = urlParams.get('room');
     if (roomParam && roomParam.length === 4) {
@@ -111,13 +119,17 @@ class App {
       case 'TRACK_LOADED':
         if (payload.isSynthetic) {
           audioEngine.generateSyntheticTrack();
-        } else if (payload.audioUrl && (!audioEngine.audioBuffer || audioEngine.currentTrackName !== payload.name)) {
-          uiManager.setTrackLoading(`Mengunduh ${payload.name}...`);
-          audioEngine.loadAudioFromUrl(payload.audioUrl, payload.name).then(buf => {
-            uiManager.updateTrackUI(payload.name, buf.duration, payload.thumbnail || '');
-          }).catch(e => console.warn('Auto download audio error:', e));
+          uiManager.updateTrackUI(payload.name || 'Neon Groove Synthwave', 20, payload.thumbnail || '');
+        } else {
+          uiManager.updateTrackUI(payload.name || 'Pilih trek lagu', payload.duration || 0, payload.thumbnail || '');
         }
-        uiManager.updateTrackUI(payload.name, payload.duration, payload.thumbnail || '');
+        uiManager.renderQueue(uiManager.cachedQueue);
+        break;
+
+      case 'SYNTHETIC_TRACK_REQUESTED':
+        audioEngine.generateSyntheticTrack();
+        uiManager.updateTrackUI(payload.name || 'Neon Groove Synthwave', 20, payload.thumbnail || '');
+        uiManager.renderQueue(uiManager.cachedQueue);
         break;
 
       case 'AUDIO_TRANSFER_PROGRESS':
@@ -127,18 +139,46 @@ class App {
         break;
 
       case 'BINARY_AUDIO_RECEIVED':
-        uiManager.setTrackLoading('Memproses buffer audio...');
         try {
-          const buffer = await audioEngine.loadAudioFromArrayBuffer(payload, audioEngine.currentTrackName || 'Shared Track');
-          uiManager.updateTrackUI(audioEngine.currentTrackName || 'Shared Track', buffer.duration, '');
+          const rawBuffer = payload?.arrayBuffer || payload;
+          const trackTitle = payload?.trackName || payload?.name || 'Shared Track';
+          
+          if (this.socketClient && this.socketClient.cloudMesh) {
+            this.socketClient.cloudMesh.localAudioBufferCache.set(trackTitle, rawBuffer);
+            if (payload?.trackId) {
+              this.socketClient.cloudMesh.localAudioBufferCache.set(payload.trackId, rawBuffer);
+            }
+          }
+
+          const currentTrack = this.socketClient?.cloudMesh?.lastKnownTrack;
+          // Hanya decode & pasang ke player aktif jika cocok dengan lagu yang sedang aktif
+          const isCurrent = !currentTrack || currentTrack.name === trackTitle || currentTrack.id === payload?.trackId;
+
+          if (isCurrent) {
+            const buffer = await audioEngine.loadAudioFromArrayBuffer(rawBuffer, trackTitle);
+            uiManager.updateTrackUI(trackTitle, buffer.duration, currentTrack?.thumbnail || '');
+            uiManager.renderQueue(uiManager.cachedQueue);
+          }
         } catch (err) {
           console.error('Failed to decode received audio stream:', err);
-          uiManager.setTrackLoading('Gagal decode audio.');
         }
         break;
 
       case 'SCHEDULED_PLAY':
       case 'PLAYBACK_SCHEDULED':
+        if (payload.track) {
+          const currentT = this.socketClient?.cloudMesh?.lastKnownTrack;
+          if (!currentT || currentT.id !== payload.track.id || currentT.name !== payload.track.name) {
+            if (this.socketClient?.cloudMesh) {
+              this.socketClient.cloudMesh.lastKnownTrack = payload.track;
+            }
+            uiManager.updateTrackUI(payload.track.name || 'Shared Track', payload.track.duration || 0, payload.track.thumbnail || '');
+            uiManager.renderQueue(uiManager.cachedQueue);
+            if (this.socketClient?.cloudMesh) {
+              await this.socketClient.cloudMesh.loadTrackBuffer(payload.track);
+            }
+          }
+        }
         audioEngine.schedulePlayAtServerTime(
           payload.targetServerTime || payload.scheduledServerTime,
           payload.startOffsetSec || 0

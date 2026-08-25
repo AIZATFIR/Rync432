@@ -65,8 +65,8 @@
       </div>
     </div>
 
-    <!-- Hidden Global File Input -->
-    <input type="file" id="audioFileInput" accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac" style="display: none;">
+    <!-- Hidden File Input for Batch Music Audio Selection -->
+    <input type="file" id="audioFileInput" accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac" multiple style="display: none;">
 
     <!-- Landing / Room Select (Hero) -->
     <section class="spotify-card hero-centered-card" id="roomHeroSection">
@@ -127,6 +127,12 @@
       </div>
 
       <!-- Main Player Stage -->
+      <!-- Notice Banner if Any Satellite Speaker is Downloading/Loading Audio -->
+      <div id="peerLoadingNotice" class="peer-loading-banner" style="display: none;">
+        <span class="loading-spinner-mini"></span>
+        <span id="peerLoadingNoticeText">Speaker lain sedang mengunduh audio...</span>
+      </div>
+
       <div class="main-grid">
         
         <!-- Left: Audio Player -->
@@ -145,6 +151,12 @@
                 <div class="track-title" id="trackTitle">Pilih trek lagu</div>
                 <div class="track-sub" id="trackSub">Upload file, YouTube search, atau demo</div>
               </div>
+              <button class="btn-sync-mini" id="refetchTrackBtn" title="Sync Audio">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+                </svg>
+                <span>Sync</span>
+              </button>
             </div>
 
             <!-- Visualizer -->
@@ -201,51 +213,13 @@
                 <input type="range" class="range-slider" id="volumeSlider" min="0" max="1" step="0.01" value="1">
               </div>
 
-              <!-- Channel Selector (This Phone) -->
-              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
-                <span style="font-size: 0.76rem; color: var(--text-silver); font-weight: 600;">Channel Saya:</span>
-                <div class="segmented-channel-chips">
-                  <button class="channel-chip active" id="spatialStereo" data-role="stereo">Stereo</button>
-                  <button class="channel-chip" id="spatialLeft" data-role="left">Left (L)</button>
-                  <button class="channel-chip" id="spatialRight" data-role="right">Right (R)</button>
-                  <button class="channel-chip" id="spatialCenter" data-role="center">Center</button>
-                </div>
+              <!-- Spatial Channel Selector (This Device) -->
+              <div class="segmented-channel-chips" style="width: 100%;">
+                <button class="channel-chip active" id="spatialStereo" data-role="stereo">Stereo</button>
+                <button class="channel-chip" id="spatialLeft" data-role="left">Left (L)</button>
+                <button class="channel-chip" id="spatialRight" data-role="right">Right (R)</button>
+                <button class="channel-chip" id="spatialCenter" data-role="center">Center</button>
               </div>
-
-              <!-- Dedicated Delay Tuner for THIS Device (Independent Tuning) -->
-              <div style="margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--border-subtle);">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                  <span style="font-size: 0.76rem; color: var(--text-silver); font-weight: 600;">Kompensasi Delay Speaker Saya:</span>
-                  <span class="current-offset-display" id="latencyDisplay" style="font-size: 0.9rem;">0 ms</span>
-                </div>
-                
-                <div class="preset-chips" style="margin-bottom: 8px;">
-                  <button class="chip-btn active" id="presetWired">Speaker HP (0ms)</button>
-                  <button class="chip-btn" id="presetInternal">Laptop (+15ms)</button>
-                  <button class="chip-btn" id="presetBt">Bluetooth (+120ms)</button>
-                </div>
-
-                <div class="precision-step-group" style="padding: 2px 6px;">
-                  <button class="step-btn" id="stepMinus1" style="width: 24px; height: 24px; font-size: 0.9rem;">−</button>
-                  <input type="range" class="range-slider" id="latencySlider" min="-100" max="300" step="1" value="0" style="margin: 0 8px; flex: 1;">
-                  <button class="step-btn" id="stepPlus1" style="width: 24px; height: 24px; font-size: 0.9rem;">+</button>
-                </div>
-              </div>
-
-              <!-- Studio DSP Mastering & Equalizer Presets -->
-              <div style="margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--border-subtle);">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                  <span style="font-size: 0.76rem; color: var(--text-silver); font-weight: 600;">Sound Mastering (DSP):</span>
-                  <span id="activeEqNameTag" style="font-size: 0.72rem; color: var(--spotify-green); font-weight: 700;">Studio Master</span>
-                </div>
-                <div class="preset-chips">
-                  <button class="chip-btn active" id="eqStudioBtn" data-eq="studio">🌟 Studio Master</button>
-                  <button class="chip-btn" id="eqBassBtn" data-eq="bassboost">🔊 Bass Boost</button>
-                  <button class="chip-btn" id="eqVocalBtn" data-eq="vocal">🎙️ Vocal / Clear</button>
-                  <button class="chip-btn" id="eqFlatBtn" data-eq="flat">🎚️ Flat (Raw)</button>
-                </div>
-              </div>
-
             </div>
 
           </div>
@@ -313,13 +287,52 @@
             </div>
           </div>
 
+          <!-- Bottom Audio Tuning & DSP Mastering Card -->
+          <div class="spotify-card" style="padding: 14px 16px;">
+            <div style="font-weight: 700; font-size: 0.88rem; color: #fff; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between;">
+              <span>Penyetelan Audio & DSP</span>
+              <span id="activeEqNameTag" style="font-size: 0.72rem; color: var(--spotify-green); font-weight: 700;">Studio Master</span>
+            </div>
+
+            <!-- Studio DSP Mastering & Equalizer Presets -->
+            <div style="margin-bottom: 14px;">
+              <div style="font-size: 0.74rem; color: var(--text-silver); font-weight: 600; margin-bottom: 6px;">Sound Mastering:</div>
+              <div class="preset-chips">
+                <button class="chip-btn active" id="eqStudioBtn" data-eq="studio">Studio Master</button>
+                <button class="chip-btn" id="eqBassBtn" data-eq="bassboost">Bass Boost</button>
+                <button class="chip-btn" id="eqVocalBtn" data-eq="vocal">Vocal / Clear</button>
+                <button class="chip-btn" id="eqFlatBtn" data-eq="flat">Flat (Raw)</button>
+              </div>
+            </div>
+
+            <!-- Dedicated Delay Tuner for THIS Device (Independent Tuning) -->
+            <div style="padding-top: 10px; border-top: 1px solid var(--border-subtle);">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <span style="font-size: 0.74rem; color: var(--text-silver); font-weight: 600;">Kompensasi Delay Speaker:</span>
+                <span class="current-offset-display" id="latencyDisplay" style="font-size: 0.85rem;">0 ms</span>
+              </div>
+              
+              <div class="preset-chips" style="margin-bottom: 8px;">
+                <button class="chip-btn active" id="presetWired">Speaker HP (0ms)</button>
+                <button class="chip-btn" id="presetInternal">Laptop (+15ms)</button>
+                <button class="chip-btn" id="presetBt">Bluetooth (+120ms)</button>
+              </div>
+
+              <div class="precision-step-group" style="padding: 2px 6px;">
+                <button class="step-btn" id="stepMinus1" style="width: 24px; height: 24px; font-size: 0.9rem;">−</button>
+                <input type="range" class="range-slider" id="latencySlider" min="-100" max="300" step="1" value="0" style="margin: 0 8px; flex: 1;">
+                <button class="step-btn" id="stepPlus1" style="width: 24px; height: 24px; font-size: 0.9rem;">+</button>
+              </div>
+            </div>
+          </div>
+
         </div>
 
         <!-- Right: Connected Devices List -->
         <div class="devices-stage">
           <div class="spotify-card">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-              <div style="font-weight: 700; font-size: 0.95rem; color: #fff;">Speaker Aktif (Klik utk Atur)</div>
+              <div style="font-weight: 700; font-size: 0.95rem; color: #fff;">Device</div>
               <button class="btn-spotify btn-spotify-outline" id="manageDevicesBtn" style="padding: 4px 10px; font-size: 0.72rem; min-height: 28px;">
                 QR Code
               </button>
@@ -389,9 +402,14 @@
         <input type="range" class="range-slider" id="modalDeviceVolume" min="0" max="1" step="0.05" value="1">
       </div>
 
-      <button class="btn-spotify btn-spotify-primary" id="saveDeviceSettingsBtn" style="width: 100%;">
-        Terapkan ke Speaker
-      </button>
+      <div style="display: flex; gap: 8px; margin-top: 10px;">
+        <button class="btn-spotify btn-spotify-danger" id="removeDeviceFromRoomBtn" style="padding: 6px 12px; font-size: 0.78rem;">
+          Hapus Device
+        </button>
+        <button class="btn-spotify btn-spotify-primary" id="saveDeviceSettingsBtn" style="flex: 1;">
+          Terapkan
+        </button>
+      </div>
     </div>
   </div>
 
@@ -414,7 +432,7 @@
       </button>
 
       <div style="margin-top: 8px;">
-        <div style="font-weight: 700; font-size: 0.85rem; color: #fff; margin-bottom: 6px;">Speaker di Room (Klik utk Atur):</div>
+        <div style="font-weight: 700; font-size: 0.85rem; color: #fff; margin-bottom: 6px;">Device di Room (Klik utk Atur):</div>
         <div class="devices-list" id="devicesMatrixList"></div>
       </div>
     </div>
