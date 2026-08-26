@@ -391,10 +391,17 @@ export default async function handler(req, res) {
       if (target) {
         room.track = target;
         room.state = 'PLAYING';
-        room.targetServerTime = now + 600;
+        room.targetServerTime = now + 800;
         room.startOffsetSec = 0;
         room.updatedAt = now;
-        return res.status(200).json({ success: true, track: room.track, queue: room.queue });
+        return res.status(200).json({
+          success: true,
+          track: room.track,
+          queue: room.queue,
+          state: room.state,
+          targetServerTime: room.targetServerTime,
+          startOffsetSec: room.startOffsetSec
+        });
       }
     }
     return res.status(404).json({ error: 'Track not found' });
@@ -420,14 +427,21 @@ export default async function handler(req, res) {
         
         room.track = room.queue[nextIndex] || room.queue[0];
         room.state = 'PLAYING';
-        room.targetServerTime = now + 600;
+        room.targetServerTime = now + 800;
         room.startOffsetSec = 0;
       } else {
         room.state = 'PAUSED';
         room.startOffsetSec = 0;
       }
       room.updatedAt = now;
-      return res.status(200).json({ success: true, track: room.track, queue: room.queue });
+      return res.status(200).json({
+        success: true,
+        track: room.track,
+        queue: room.queue,
+        state: room.state,
+        targetServerTime: room.targetServerTime,
+        startOffsetSec: room.startOffsetSec
+      });
     }
     return res.status(404).json({ error: 'Room not found' });
   }
@@ -441,14 +455,21 @@ export default async function handler(req, res) {
         
         room.track = room.queue[prevIndex] || room.queue[0];
         room.state = 'PLAYING';
-        room.targetServerTime = now + 600;
+        room.targetServerTime = now + 800;
         room.startOffsetSec = 0;
       } else {
         room.state = 'PAUSED';
         room.startOffsetSec = 0;
       }
       room.updatedAt = now;
-      return res.status(200).json({ success: true, track: room.track, queue: room.queue });
+      return res.status(200).json({
+        success: true,
+        track: room.track,
+        queue: room.queue,
+        state: room.state,
+        targetServerTime: room.targetServerTime,
+        startOffsetSec: room.startOffsetSec
+      });
     }
     return res.status(404).json({ error: 'Room not found' });
   }

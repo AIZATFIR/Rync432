@@ -240,8 +240,8 @@ export class CloudMesh {
         }
       }
 
-      // 2. Queue list with stability check - never overwrite non-empty local queue with empty remote queue
-      if (Array.isArray(data.queue)) {
+      // 2. Queue list with stability check - protected against in-flight race condition when dragging/reordering
+      if (Array.isArray(data.queue) && (Date.now() - (this.lastQueueReorderTime || 0) > 2000)) {
         if (data.queue.length > 0 || (this.lastKnownQueue && this.lastKnownQueue.length === 0)) {
           const queueStr = JSON.stringify(data.queue);
           if (queueStr !== this.lastKnownQueueStr) {
@@ -446,18 +446,28 @@ export class CloudMesh {
       const data = await res.json();
       if (data.track) {
         this.lastKnownTrack = data.track;
+        this.isPaused = false;
+        this.lastKnownState = data.targetServerTime;
         this.onEvent('TRACK_METADATA', data.track);
         this.loadTrackBuffer(data.track);
+        this.onEvent('SCHEDULED_PLAY', {
+          targetServerTime: data.targetServerTime || (Date.now() + 800),
+          startOffsetSec: data.startOffsetSec || 0,
+          track: data.track
+        });
       }
       if (data.queue) {
         this.lastKnownQueue = data.queue;
+        this.lastKnownQueueStr = JSON.stringify(data.queue);
         this.onEvent('QUEUE_UPDATED', { queue: data.queue });
       }
     } catch (e) { }
   }
 
   async reorderQueue(newQueue) {
+    this.lastQueueReorderTime = Date.now();
     this.lastKnownQueue = newQueue;
+    this.lastKnownQueueStr = JSON.stringify(newQueue);
     this.onEvent('QUEUE_UPDATED', { queue: newQueue });
     if (this.broadcastChannel) {
       this.broadcastChannel.postMessage({
@@ -467,11 +477,16 @@ export class CloudMesh {
     }
 
     try {
-      await fetch('/api/room?action=reorder_queue', {
+      const res = await fetch('/api/room?action=reorder_queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roomId: this.roomId, queue: newQueue })
       });
+      const data = await res.json();
+      if (data.queue) {
+        this.lastKnownQueue = data.queue;
+        this.lastKnownQueueStr = JSON.stringify(data.queue);
+      }
     } catch (e) { }
   }
 
@@ -488,6 +503,7 @@ export class CloudMesh {
       const data = await res.json();
       if (data.queue) {
         this.lastKnownQueue = data.queue;
+        this.lastKnownQueueStr = JSON.stringify(data.queue);
         this.onEvent('QUEUE_UPDATED', { queue: data.queue });
       }
     } catch (e) { }
@@ -503,11 +519,21 @@ export class CloudMesh {
       const data = await res.json();
       if (data.track) {
         this.lastKnownTrack = data.track;
+        this.isPaused = (data.state === 'PAUSED');
+        this.lastKnownState = data.targetServerTime;
         this.onEvent('TRACK_METADATA', data.track);
         this.loadTrackBuffer(data.track);
+        if (data.state === 'PLAYING') {
+          this.onEvent('SCHEDULED_PLAY', {
+            targetServerTime: data.targetServerTime || (Date.now() + 800),
+            startOffsetSec: data.startOffsetSec || 0,
+            track: data.track
+          });
+        }
       }
       if (data.queue) {
         this.lastKnownQueue = data.queue;
+        this.lastKnownQueueStr = JSON.stringify(data.queue);
         this.onEvent('QUEUE_UPDATED', { queue: data.queue });
       }
     } catch (e) { }
@@ -523,11 +549,21 @@ export class CloudMesh {
       const data = await res.json();
       if (data.track) {
         this.lastKnownTrack = data.track;
+        this.isPaused = (data.state === 'PAUSED');
+        this.lastKnownState = data.targetServerTime;
         this.onEvent('TRACK_METADATA', data.track);
         this.loadTrackBuffer(data.track);
+        if (data.state === 'PLAYING') {
+          this.onEvent('SCHEDULED_PLAY', {
+            targetServerTime: data.targetServerTime || (Date.now() + 800),
+            startOffsetSec: data.startOffsetSec || 0,
+            track: data.track
+          });
+        }
       }
       if (data.queue) {
         this.lastKnownQueue = data.queue;
+        this.lastKnownQueueStr = JSON.stringify(data.queue);
         this.onEvent('QUEUE_UPDATED', { queue: data.queue });
       }
     } catch (e) { }
