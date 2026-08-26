@@ -76,15 +76,24 @@ export class AudioEngine {
       this.analyserNode.fftSize = 256;
       this.analyserNode.smoothingTimeConstant = 0.8;
 
+      // 4. Master Brickwall Limiter to prevent Left/Right speaker distortion
+      this.limiterNode = this.ctx.createDynamicsCompressor();
+      this.limiterNode.threshold.value = -1.0;
+      this.limiterNode.knee.value = 0.0;
+      this.limiterNode.ratio.value = 20.0;
+      this.limiterNode.attack.value = 0.001;
+      this.limiterNode.release.value = 0.050;
+
       // Master Pipeline Routing:
-      // Source -> bassFilter -> warmthFilter -> trebleFilter -> compressor -> panner -> gain -> analyser -> destination
+      // Source -> bassFilter -> warmthFilter -> trebleFilter -> compressor -> panner -> gain -> analyser -> limiter -> destination
       this.bassFilter.connect(this.warmthFilter);
       this.warmthFilter.connect(this.trebleFilter);
       this.trebleFilter.connect(this.compressorNode);
       this.compressorNode.connect(this.pannerNode);
       this.pannerNode.connect(this.gainNode);
       this.gainNode.connect(this.analyserNode);
-      this.analyserNode.connect(this.ctx.destination);
+      this.analyserNode.connect(this.limiterNode);
+      this.limiterNode.connect(this.ctx.destination);
 
       this.metronome = new Metronome(this.ctx);
     }
@@ -143,15 +152,21 @@ export class AudioEngine {
     if (!this.pannerNode || !this.ctx) return;
 
     const currentTime = this.ctx.currentTime;
+    const spatialGain = 0.85;
+
     if (this.pannerNode.pan) {
       if (role === 'left') {
         this.pannerNode.pan.setValueAtTime(-1.0, currentTime);
+        if (this.gainNode) this.gainNode.gain.setValueAtTime(spatialGain, currentTime);
       } else if (role === 'right') {
         this.pannerNode.pan.setValueAtTime(1.0, currentTime);
+        if (this.gainNode) this.gainNode.gain.setValueAtTime(spatialGain, currentTime);
       } else if (role === 'center') {
         this.pannerNode.pan.setValueAtTime(0.0, currentTime);
+        if (this.gainNode) this.gainNode.gain.setValueAtTime(1.0, currentTime);
       } else {
         this.pannerNode.pan.setValueAtTime(0.0, currentTime);
+        if (this.gainNode) this.gainNode.gain.setValueAtTime(1.0, currentTime);
       }
     }
   }

@@ -1183,10 +1183,8 @@ export class UIManager {
         };
         await app.socketClient.addToQueue(queueItem);
 
-        // 3. WebRTC binary streaming only for the first active track if empty
-        if (isFirstOfEmpty) {
-          app.socketClient.sendBinary(arrayBuffer, file.name, itemId);
-        }
+        // 3. WebRTC binary streaming for uploaded audio
+        app.socketClient.sendBinary(arrayBuffer, file.name, itemId);
       } catch (err) {
         console.error('Audio load error for', file.name, err);
       }
