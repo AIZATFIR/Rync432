@@ -183,6 +183,8 @@ export class CloudMesh {
       });
       if (!res.ok) return;
 
+      const data = await res.json();
+
       if (data.kicked && !this.isHost) {
         this.unsubscribe();
         this.onEvent('ROOM_LEFT');
