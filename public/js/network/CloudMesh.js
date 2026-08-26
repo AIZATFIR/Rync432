@@ -269,9 +269,12 @@ export class CloudMesh {
 
       // 4. Playback state with clean Pause protection and exact track synchronization
       if (data.state === 'PLAYING') {
-        const shouldPlay = (data.targetServerTime && data.targetServerTime !== this.lastKnownState) 
-          || this.isPaused 
-          || trackChanged;
+        const isFreshPlay = !this.lastPauseTime || (data.targetServerTime && (data.targetServerTime > (this.lastPauseTime + 300)));
+        const shouldPlay = isFreshPlay && (
+          (data.targetServerTime && data.targetServerTime !== this.lastKnownState) 
+          || (this.isPaused && Date.now() - (this.lastPauseTime || 0) > 2000) 
+          || trackChanged
+        );
 
         if (shouldPlay) {
           this.isPaused = false;

@@ -377,15 +377,19 @@ export class AudioEngine {
       }
     }
 
-    this.isPlaying = true;
-    this.startOffsetSec = startOffsetSec;
-
-    this.currentSource.onended = () => {
-      if (this.currentSource) {
+    const activeSource = this.currentSource;
+    activeSource.onended = () => {
+      if (this.currentSource === activeSource) {
         this.isPlaying = false;
-        this.pauseOffsetSec = 0;
-        if (this.onPlaybackEnded) {
-          this.onPlaybackEnded();
+        const pos = this.getCurrentPlaybackPosition();
+        const isTrackFullyFinished = this.currentTrackDuration > 2 && pos >= (this.currentTrackDuration - 1.5);
+        
+        if (isTrackFullyFinished) {
+          this.pauseOffsetSec = 0;
+          this.currentServerTargetTime = null;
+          if (this.onPlaybackEnded) {
+            this.onPlaybackEnded();
+          }
         }
       }
     };
@@ -394,11 +398,12 @@ export class AudioEngine {
   stopLocalPlayback() {
     if (this.currentSource) {
       try {
-        this.currentSource.onended = null;
-        this.currentSource.stop();
-        this.currentSource.disconnect();
+        const src = this.currentSource;
+        this.currentSource = null;
+        src.onended = null;
+        src.stop();
+        src.disconnect();
       } catch (e) {}
-      this.currentSource = null;
     }
     this.isPlaying = false;
   }
