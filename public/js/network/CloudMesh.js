@@ -255,7 +255,7 @@ export class CloudMesh {
       // 3. Track update & Auto-fetch with buffer synchronization
       if (data.track) {
         const isDifferentTrack = this.lastKnownTrack 
-          ? (data.track.name !== this.lastKnownTrack.name && data.track.id !== this.lastKnownTrack.id)
+          ? (data.track.id !== this.lastKnownTrack.id || data.track.name !== this.lastKnownTrack.name)
           : true;
         if (isDifferentTrack) {
           this.lastKnownTrack = data.track;
@@ -271,7 +271,7 @@ export class CloudMesh {
           this.isPaused = false;
           this.lastKnownState = data.targetServerTime;
           const isDifferentTrack = this.lastKnownTrack 
-            ? (data.track && data.track.name !== this.lastKnownTrack.name && data.track.id !== this.lastKnownTrack.id)
+            ? (data.track && (data.track.id !== this.lastKnownTrack.id || data.track.name !== this.lastKnownTrack.name))
             : !!data.track;
           if (isDifferentTrack && data.track) {
             this.lastKnownTrack = data.track;

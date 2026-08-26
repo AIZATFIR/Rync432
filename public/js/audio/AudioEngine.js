@@ -231,6 +231,7 @@ export class AudioEngine {
       }
       this.currentTrackName = trackName;
       this.currentTrackDuration = this.audioBuffer.duration;
+      this.currentServerTargetTime = null;
       this.pauseOffsetSec = 0;
 
       if (this.pendingScheduledPlay) {

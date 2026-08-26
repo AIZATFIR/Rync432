@@ -168,6 +168,13 @@ class App {
             uiManager.updateTrackUI(trackTitle, buffer.duration, currentTrack?.thumbnail || '');
             uiManager.renderQueue(uiManager.cachedQueue);
             uiManager.clearTrackLoading();
+
+            if (audioEngine.pendingScheduledPlay) {
+              const { serverTargetTime, startOffsetSec } = audioEngine.pendingScheduledPlay;
+              audioEngine.pendingScheduledPlay = null;
+              audioEngine.schedulePlayAtServerTime(serverTargetTime, startOffsetSec);
+              uiManager.setPlayState(true);
+            }
           }
         } catch (err) {
           console.error('Failed to decode received audio stream:', err);
@@ -183,10 +190,26 @@ class App {
           uiManager.updateTrackUI(payload.track.name || 'Shared Track', payload.track.duration || 0, payload.track.thumbnail || '');
           uiManager.renderQueue(uiManager.cachedQueue);
           
-          if (!audioEngine.audioBuffer || (payload.track.name && audioEngine.currentTrackName !== payload.track.name)) {
-            if (this.socketClient?.cloudMesh) {
+          const isTrackDifferent = !audioEngine.audioBuffer || (payload.track.name && audioEngine.currentTrackName !== payload.track.name);
+          if (isTrackDifferent) {
+            // STOP previous song immediately so old track doesn't keep playing!
+            audioEngine.stopLocalPlayback();
+            audioEngine.audioBuffer = null;
+            audioEngine.currentTrackName = payload.track.name;
+            audioEngine.currentServerTargetTime = null;
+            audioEngine.pendingScheduledPlay = {
+              serverTargetTime: payload.targetServerTime || payload.scheduledServerTime,
+              startOffsetSec: payload.startOffsetSec || 0
+            };
+
+            if (payload.track.isSynthetic) {
+              audioEngine.generateSyntheticTrack();
+              audioEngine.schedulePlayAtServerTime(payload.targetServerTime || payload.scheduledServerTime, payload.startOffsetSec || 0);
+              uiManager.setPlayState(true);
+            } else if (this.socketClient?.cloudMesh) {
               await this.socketClient.cloudMesh.loadTrackBuffer(payload.track);
             }
+            return;
           }
         }
         audioEngine.schedulePlayAtServerTime(
