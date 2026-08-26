@@ -1135,55 +1135,54 @@ export class UIManager {
           app.socketClient.cloudMesh.localAudioBufferCache.set(blobUrl, arrayBuffer);
         }
 
-        // 1. Send Base64 relay to backend first with stable itemId if <= 4MB
-        if (arrayBuffer.byteLength <= 4 * 1024 * 1024) {
-          let binary = '';
-          const bytes = new Uint8Array(arrayBuffer);
-          const len = bytes.byteLength;
-          const chunkSize = 32768;
-          for (let b = 0; b < len; b += chunkSize) {
-            binary += String.fromCharCode.apply(null, bytes.subarray(b, Math.min(b + chunkSize, len)));
-          }
-          const base64 = btoa(binary);
+        // 1. Upload to Cloud CDN Storage (/api/upload-audio)
+        this.setTrackLoading(`Mengunggah ${file.name}...`);
+        let binary = '';
+        const bytes = new Uint8Array(arrayBuffer);
+        const len = bytes.byteLength;
+        const chunkSize = 32768;
+        for (let b = 0; b < len; b += chunkSize) {
+          binary += String.fromCharCode.apply(null, bytes.subarray(b, Math.min(b + chunkSize, len)));
+        }
+        const base64 = btoa(binary);
 
-          try {
-            const uploadRes = await fetch('/api/room?action=upload_audio', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                roomId: app.socketClient.roomId,
-                trackName: file.name,
-                duration: duration || 0,
-                contentType: file.type || 'audio/mpeg',
-                audioBase64: base64,
-                deviceName: this.getDeviceName(),
-                id: itemId
-              })
-            });
-            const uploadData = await uploadRes.json();
-            if (uploadData.audioUrl) {
-              blobUrl = uploadData.audioUrl;
-              if (app.socketClient.cloudMesh) {
-                app.socketClient.cloudMesh.localAudioBufferCache.set(uploadData.audioUrl, arrayBuffer);
-              }
+        let cloudAudioUrl = blobUrl;
+        try {
+          const uploadRes = await fetch('/api/upload-audio', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fileName: file.name,
+              contentType: file.type || 'audio/mpeg',
+              audioBase64: base64
+            })
+          });
+          const uploadData = await uploadRes.json();
+          if (uploadData.audioUrl) {
+            cloudAudioUrl = uploadData.audioUrl;
+            if (app.socketClient.cloudMesh) {
+              app.socketClient.cloudMesh.localAudioBufferCache.set(cloudAudioUrl, arrayBuffer);
+              app.socketClient.cloudMesh.localAudioBufferCache.set(itemId, arrayBuffer);
+              app.socketClient.cloudMesh.localAudioBufferCache.set(file.name, arrayBuffer);
             }
-          } catch (e) {
-            console.warn('Binary upload fallback notice:', e);
           }
+        } catch (e) {
+          console.warn('Cloud upload notice:', e);
         }
 
-        // 2. Add to queue with stable itemId
+        // 2. Add to queue with public cloudAudioUrl
         const queueItem = {
           id: itemId,
           name: file.name,
           artist: 'File Audio',
           duration: duration || 0,
-          audioUrl: blobUrl,
+          audioUrl: cloudAudioUrl,
           addedBy: this.getDeviceName()
         };
         await app.socketClient.addToQueue(queueItem);
+        this.clearTrackLoading();
 
-        // 3. WebRTC binary streaming for uploaded audio
+        // 3. WebRTC binary streaming as local fast fallback
         app.socketClient.sendBinary(arrayBuffer, file.name, itemId);
       } catch (err) {
         console.error('Audio load error for', file.name, err);
