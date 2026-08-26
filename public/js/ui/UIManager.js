@@ -1198,13 +1198,17 @@ export class UIManager {
   }
 
   setTrackLoading(msg) {
-    if (this.elements.trackTitle) this.elements.trackTitle.innerText = msg;
-    if (this.elements.trackSub) this.elements.trackSub.innerText = 'Sync audio...';
+    if (this.elements.trackTitle) {
+      this.elements.trackTitle.innerText = msg;
+    }
+    if (this.elements.trackSub) {
+      this.elements.trackSub.innerText = msg.includes('%') ? msg : 'Sync audio...';
+    }
   }
 
   clearTrackLoading() {
-    if (this.elements.trackSub && this.elements.trackSub.innerText.includes('Sync audio')) {
-      const dur = this.app.audioEngine?.currentTrackDuration || 0;
+    const dur = this.app.audioEngine?.currentTrackDuration || 0;
+    if (this.elements.trackSub) {
       this.elements.trackSub.innerText = `${this.formatTime(dur)} • Ready`;
     }
   }

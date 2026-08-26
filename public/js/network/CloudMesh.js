@@ -261,7 +261,8 @@ export class CloudMesh {
       // 4. Playback state with clean Pause protection and exact track synchronization
       if (data.state === 'PLAYING') {
         const isFreshPlay = data.targetServerTime && (data.targetServerTime > (this.lastPauseTime + 300));
-        if (isFreshPlay && !this.isPaused && (data.targetServerTime !== this.lastKnownState)) {
+        if (isFreshPlay && (data.targetServerTime !== this.lastKnownState || this.isPaused)) {
+          this.isPaused = false;
           this.lastKnownState = data.targetServerTime;
           const isDifferentTrack = this.lastKnownTrack 
             ? (data.track && data.track.name !== this.lastKnownTrack.name && data.track.id !== this.lastKnownTrack.id)
@@ -549,13 +550,43 @@ export class CloudMesh {
 
   async fetchRemoteAudioUrl(url, trackName, trackId) {
     if (!this.incomingAudioChunks.size) {
-      this.updateLoadingState(true, `Mengunduh ${trackName}...`);
-      this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 20, status: `Mengunduh ${trackName}...` });
+      this.updateLoadingState(true, `Mengunduh ${trackName} (0%)...`);
+      this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status: `Mengunduh ${trackName} (0%)...` });
     }
     try {
       const response = await fetch(url);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const arrayBuffer = await response.arrayBuffer();
+
+      const contentLength = response.headers.get('content-length');
+      const totalBytes = contentLength ? parseInt(contentLength, 10) : 0;
+
+      let arrayBuffer;
+      if (response.body && totalBytes > 0) {
+        const reader = response.body.getReader();
+        const chunks = [];
+        let receivedBytes = 0;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          receivedBytes += value.length;
+          const pct = Math.min(99, Math.round((receivedBytes / totalBytes) * 100));
+          this.updateLoadingState(true, `Mengunduh ${pct}%`);
+          this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct, status: `Mengunduh (${pct}%)...` });
+        }
+
+        const complete = new Uint8Array(receivedBytes);
+        let offset = 0;
+        for (const c of chunks) {
+          complete.set(c, offset);
+          offset += c.length;
+        }
+        arrayBuffer = complete.buffer;
+      } else {
+        arrayBuffer = await response.arrayBuffer();
+      }
+
       this.localAudioBufferCache.set(trackName, arrayBuffer);
       if (trackId) this.localAudioBufferCache.set(trackId, arrayBuffer);
       this.localAudioBufferCache.set(url, arrayBuffer);
@@ -567,8 +598,8 @@ export class CloudMesh {
     } catch (err) {
       console.warn('Remote fetch notice, awaiting WebRTC stream:', err.message);
       if (!this.incomingAudioChunks.size) {
-        this.updateLoadingState(true, 'Menunggu audio P2P...');
-        this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status: 'Menunggu audio P2P...' });
+        this.updateLoadingState(true, 'Menunggu audio...');
+        this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status: 'Menunggu audio...' });
       }
       this.requestTrackBufferFromPeers(trackName, trackId);
     }
