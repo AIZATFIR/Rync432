@@ -605,11 +605,13 @@ export class CloudMesh {
       if (trackId) this.localAudioBufferCache.set(trackId, arrayBuffer);
       this.localAudioBufferCache.set(url, arrayBuffer);
 
+      this.currentFetchingTrackKey = null;
       this.pendingTrackBufferRequest = null;
       this.updateLoadingState(false, 'Siap');
       this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 100, status: 'Audio siap!' });
       this.onEvent('BINARY_AUDIO_RECEIVED', { arrayBuffer, trackName, trackId });
     } catch (err) {
+      this.currentFetchingTrackKey = null;
       console.warn('Remote fetch notice, awaiting WebRTC stream:', err.message);
       if (!this.incomingAudioChunks.size) {
         this.updateLoadingState(true, 'Menunggu audio...');

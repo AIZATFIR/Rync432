@@ -1135,39 +1135,39 @@ export class UIManager {
           app.socketClient.cloudMesh.localAudioBufferCache.set(blobUrl, arrayBuffer);
         }
 
-        // 1. Upload to Cloud CDN Storage (/api/upload-audio)
+        // 1. Direct High-Speed Cloud CDN Upload (No file size limit, fast 72h public link)
         this.setTrackLoading(`Mengunggah ${file.name}...`);
-        let binary = '';
-        const bytes = new Uint8Array(arrayBuffer);
-        const len = bytes.byteLength;
-        const chunkSize = 32768;
-        for (let b = 0; b < len; b += chunkSize) {
-          binary += String.fromCharCode.apply(null, bytes.subarray(b, Math.min(b + chunkSize, len)));
-        }
-        const base64 = btoa(binary);
-
-        let cloudAudioUrl = blobUrl;
+        let cloudAudioUrl = '';
         try {
-          const uploadRes = await fetch('/api/upload-audio', {
+          const formData = new FormData();
+          formData.append('reqtype', 'fileupload');
+          formData.append('time', '72h');
+          formData.append('fileToUpload', file, file.name);
+
+          const uploadRes = await fetch('https://litterbox.catbox.moe/resources/internals/api.php', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              fileName: file.name,
-              contentType: file.type || 'audio/mpeg',
-              audioBase64: base64
-            })
+            body: formData
           });
-          const uploadData = await uploadRes.json();
-          if (uploadData.audioUrl) {
-            cloudAudioUrl = uploadData.audioUrl;
-            if (app.socketClient.cloudMesh) {
-              app.socketClient.cloudMesh.localAudioBufferCache.set(cloudAudioUrl, arrayBuffer);
-              app.socketClient.cloudMesh.localAudioBufferCache.set(itemId, arrayBuffer);
-              app.socketClient.cloudMesh.localAudioBufferCache.set(file.name, arrayBuffer);
+          if (uploadRes.ok) {
+            const returnedUrl = (await uploadRes.text()).trim();
+            if (returnedUrl.startsWith('http')) {
+              cloudAudioUrl = returnedUrl;
             }
           }
         } catch (e) {
-          console.warn('Cloud upload notice:', e);
+          console.warn('Direct upload notice:', e);
+        }
+
+        if (!cloudAudioUrl) {
+          cloudAudioUrl = blobUrl;
+        }
+
+        // Cache locally for instant local playback
+        if (app.socketClient.cloudMesh) {
+          if (cloudAudioUrl) app.socketClient.cloudMesh.localAudioBufferCache.set(cloudAudioUrl, arrayBuffer);
+          app.socketClient.cloudMesh.localAudioBufferCache.set(itemId, arrayBuffer);
+          app.socketClient.cloudMesh.localAudioBufferCache.set(file.name, arrayBuffer);
+          app.socketClient.cloudMesh.localAudioBufferCache.set(blobUrl, arrayBuffer);
         }
 
         // 2. Add to queue with public cloudAudioUrl
