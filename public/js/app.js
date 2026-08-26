@@ -174,6 +174,10 @@ class App {
               audioEngine.pendingScheduledPlay = null;
               audioEngine.schedulePlayAtServerTime(serverTargetTime, startOffsetSec);
               uiManager.setPlayState(true);
+            } else if (this.socketClient?.cloudMesh && !this.socketClient.cloudMesh.isPaused && this.socketClient.cloudMesh.lastKnownState !== 'PAUSED') {
+              const serverTargetTime = typeof this.socketClient.cloudMesh.lastKnownState === 'number' ? this.socketClient.cloudMesh.lastKnownState : (Date.now() + 200);
+              audioEngine.schedulePlayAtServerTime(serverTargetTime, 0);
+              uiManager.setPlayState(true);
             }
           }
         } catch (err) {

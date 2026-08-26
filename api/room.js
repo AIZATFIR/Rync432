@@ -229,13 +229,6 @@ export default async function handler(req, res) {
 
     if (isThisHost) {
       room.hostId = peerId;
-      if (Array.isArray(body.queue) && body.queue.length >= (room.queue ? room.queue.length : 0)) {
-        room.queue = body.queue;
-      }
-      if (body.track) room.track = body.track;
-    } else if (Array.isArray(body.queue) && body.queue.length > (room.queue ? room.queue.length : 0)) {
-      room.queue = body.queue;
-      if (body.track && !room.track) room.track = body.track;
     }
 
     const isHostAssigned = isThisHost || (room.hostId === peerId);

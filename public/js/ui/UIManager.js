@@ -156,10 +156,12 @@ export class UIManager {
     this.bindEvents();
     this.startPlaybackTicker();
 
-    // Auto next track when current finishes
+    // Auto next track when current finishes (Only host advances to prevent race condition)
     this.app.audioEngine.onPlaybackEnded = () => {
       this.setPlayState(false);
-      this.app.socketClient.nextTrack();
+      if (this.app.socketClient?.isHost) {
+        this.app.socketClient.nextTrack();
+      }
     };
   }
 

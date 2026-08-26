@@ -253,11 +253,14 @@ export class CloudMesh {
       }
 
       // 3. Track update & Auto-fetch with buffer synchronization
+      let trackChanged = false;
       if (data.track) {
-        const isDifferentTrack = this.lastKnownTrack 
-          ? (data.track.id !== this.lastKnownTrack.id || data.track.name !== this.lastKnownTrack.name)
-          : true;
-        if (isDifferentTrack) {
+        const isDifferent = !this.lastKnownTrack 
+          || (data.track.id && this.lastKnownTrack.id && data.track.id !== this.lastKnownTrack.id)
+          || (data.track.name !== this.lastKnownTrack.name);
+        
+        if (isDifferent) {
+          trackChanged = true;
           this.lastKnownTrack = data.track;
           this.onEvent('TRACK_METADATA', data.track);
           this.loadTrackBuffer(data.track);
@@ -266,31 +269,28 @@ export class CloudMesh {
 
       // 4. Playback state with clean Pause protection and exact track synchronization
       if (data.state === 'PLAYING') {
-        const isFreshPlay = data.targetServerTime && (data.targetServerTime > (this.lastPauseTime + 300));
-        if (isFreshPlay && (data.targetServerTime !== this.lastKnownState || this.isPaused)) {
+        const shouldPlay = (data.targetServerTime && data.targetServerTime !== this.lastKnownState) 
+          || this.isPaused 
+          || trackChanged;
+
+        if (shouldPlay) {
           this.isPaused = false;
-          this.lastKnownState = data.targetServerTime;
-          const isDifferentTrack = this.lastKnownTrack 
-            ? (data.track && (data.track.id !== this.lastKnownTrack.id || data.track.name !== this.lastKnownTrack.name))
-            : !!data.track;
-          if (isDifferentTrack && data.track) {
-            this.lastKnownTrack = data.track;
-            this.onEvent('TRACK_METADATA', data.track);
-            this.loadTrackBuffer(data.track);
-          }
+          if (data.targetServerTime) this.lastKnownState = data.targetServerTime;
           this.onEvent('SCHEDULED_PLAY', {
-            targetServerTime: data.targetServerTime,
+            targetServerTime: data.targetServerTime || (Date.now() + 600),
             startOffsetSec: data.startOffsetSec || 0,
             track: data.track || this.lastKnownTrack
           });
         }
-      } else if (data.state === 'PAUSED' && (this.lastKnownState !== 'PAUSED' || !this.isPaused)) {
-        this.isPaused = true;
-        this.lastKnownState = 'PAUSED';
-        this.lastPauseTime = Date.now();
-        this.onEvent('PAUSED', {
-          currentOffsetSec: data.startOffsetSec || 0
-        });
+      } else if (data.state === 'PAUSED') {
+        if (this.lastKnownState !== 'PAUSED' || !this.isPaused) {
+          this.isPaused = true;
+          this.lastKnownState = 'PAUSED';
+          this.lastPauseTime = Date.now();
+          this.onEvent('PAUSED', {
+            currentOffsetSec: data.startOffsetSec || 0
+          });
+        }
       }
 
       // 5. WebRTC Signals
