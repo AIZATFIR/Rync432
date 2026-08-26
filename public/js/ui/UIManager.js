@@ -332,7 +332,7 @@ export class UIManager {
 
         if (!app.audioEngine.audioBuffer) {
           if (app.socketClient.roomId) {
-            app.socketClient.schedulePlay(600, 0);
+            app.socketClient.schedulePlay(800, 0);
           } else if (this.cachedQueue.length > 0) {
             app.socketClient.nextTrack();
           } else {
@@ -342,7 +342,7 @@ export class UIManager {
         }
 
         const currentPos = app.audioEngine.pauseOffsetSec || 0;
-        app.socketClient.schedulePlay(600, currentPos);
+        app.socketClient.schedulePlay(800, currentPos);
       });
     }
 
@@ -355,7 +355,7 @@ export class UIManager {
         if (this.cachedQueue.length > 1 && app.socketClient.roomId) {
           app.socketClient.prevTrack();
         } else if (app.audioEngine.audioBuffer) {
-          app.socketClient.schedulePlay(600, 0);
+          app.socketClient.schedulePlay(800, 0);
         }
       });
     }
@@ -393,7 +393,7 @@ export class UIManager {
         const clickX = e.clientX - rect.left;
         const pct = Math.max(0, Math.min(1, clickX / rect.width));
         const targetSec = pct * app.audioEngine.currentTrackDuration;
-        app.socketClient.schedulePlay(600, targetSec);
+        app.socketClient.schedulePlay(800, targetSec);
       });
     }
 

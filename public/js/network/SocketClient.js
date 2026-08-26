@@ -93,7 +93,7 @@ export class SocketClient {
     });
   }
 
-  schedulePlay(delayMs = 600, startOffsetSec = 0) {
+  schedulePlay(delayMs = 800, startOffsetSec = 0) {
     const targetServerTime = this.clockSync.getServerTime() + delayMs;
     this.cloudMesh.broadcastPlay(targetServerTime, startOffsetSec);
     this.onEvent('SCHEDULED_PLAY', { targetServerTime, startOffsetSec });

@@ -338,6 +338,12 @@ export class AudioEngine {
       return;
     }
 
+    // Prevent redundant playback restarts and audio stutter if already playing
+    if (this.isPlaying && this.currentServerTargetTime === serverTargetTime && this.audioBuffer) {
+      return;
+    }
+    this.currentServerTargetTime = serverTargetTime;
+
     this.stopLocalPlayback();
 
     const bestOffset = this.clockSync ? this.clockSync.getBestOffset() : 0;

@@ -240,6 +240,23 @@ export default async function handler(req, res) {
 
     const isHostAssigned = isThisHost || (room.hostId === peerId);
 
+    // Prune stale / disconnected peers (> 10s without poll)
+    for (const [pId, p] of Object.entries(room.peers || {})) {
+      if (pId !== room.hostId && (now - (p.lastSeen || 0) > 10000)) {
+        delete room.peers[pId];
+      }
+    }
+
+    // Check if this peer was removed / kicked by host
+    if (room.kickedPeers && room.kickedPeers.includes(peerId)) {
+      return res.status(200).json({
+        exists: true,
+        kicked: true,
+        peers: Object.values(room.peers || {}),
+        serverTime: now
+      });
+    }
+
     if (peerId && room.peers[peerId]) {
       room.peers[peerId].lastSeen = now;
       room.peers[peerId].isHost = isHostAssigned;
@@ -456,10 +473,16 @@ export default async function handler(req, res) {
   if (action === 'remove_peer') {
     const room = rooms.get(roomId);
     const targetPeerId = body.targetPeerId || query.targetPeerId;
-    if (room && targetPeerId && room.peers[targetPeerId]) {
-      delete room.peers[targetPeerId];
+    if (room && targetPeerId) {
+      if (!room.kickedPeers) room.kickedPeers = [];
+      if (!room.kickedPeers.includes(targetPeerId)) {
+        room.kickedPeers.push(targetPeerId);
+      }
+      if (room.peers && room.peers[targetPeerId]) {
+        delete room.peers[targetPeerId];
+      }
       room.updatedAt = now;
-      return res.status(200).json({ success: true, peers: Object.values(room.peers) });
+      return res.status(200).json({ success: true, peers: Object.values(room.peers || {}) });
     }
     return res.status(200).json({ success: true });
   }

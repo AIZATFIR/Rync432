@@ -183,15 +183,20 @@ export class CloudMesh {
       });
       if (!res.ok) return;
 
-      const data = await res.json();
+      if (data.kicked && !this.isHost) {
+        this.unsubscribe();
+        this.onEvent('ROOM_LEFT');
+        alert('Device Anda telah dikeluarkan dari room oleh Host.');
+        window.location.href = '/';
+        return;
+      }
 
-      // 1. Peer list & WebRTC Mesh Auto-Connect
-      if (Array.isArray(data.peers) && data.peers.length > 0) {
+      // 1. Peer list & WebRTC Mesh Auto-Connect with strict duplicate pruning
+      if (Array.isArray(data.peers)) {
         let peersChanged = false;
-        const incomingMap = new Map();
+        const incomingIds = new Set(data.peers.map(p => p.id));
 
         data.peers.forEach(p => {
-          // Lock local peer's own isHost and local loading state strictly
           const existing = this.localPeersMap.get(p.id);
           if (p.id === this.peerId) {
             p.isHost = this.isHost;
@@ -200,7 +205,6 @@ export class CloudMesh {
               p.loadingStatus = existing.loadingStatus;
             }
           }
-          incomingMap.set(p.id, p);
           if (!existing || existing.role !== p.role || existing.isAudioLoading !== p.isAudioLoading || existing.volume !== p.volume || existing.isHost !== p.isHost || existing.deviceName !== p.deviceName) {
             peersChanged = true;
           }
@@ -214,9 +218,9 @@ export class CloudMesh {
           }
         });
 
-        // Retain peers stably; only prune if not seen for > 45s
-        for (const [pId, pData] of this.localPeersMap.entries()) {
-          if (!incomingMap.has(pId) && (Date.now() - (pData.lastSeen || 0) > 45000)) {
+        // Strictly prune removed or disconnected peers immediately
+        for (const pId of Array.from(this.localPeersMap.keys())) {
+          if (!incomingIds.has(pId) && pId !== this.peerId) {
             this.localPeersMap.delete(pId);
             const pc = this.peerConnections.get(pId);
             if (pc) {
@@ -299,11 +303,13 @@ export class CloudMesh {
   async loadTrackBuffer(track) {
     if (!track) return;
     if (track.isSynthetic || track.name === 'Neon Groove Synthwave' || (track.name && track.name.toLowerCase().includes('synth'))) {
+      this.currentFetchingTrackKey = null;
       this.updateLoadingState(false, 'Siap');
       this.onEvent('SYNTHETIC_TRACK_REQUESTED', track);
       return;
     }
 
+    const trackKey = track.id || track.audioId || track.name;
     const cached = this.localAudioBufferCache.get(track.id) 
       || (track.audioId && this.localAudioBufferCache.get(track.audioId))
       || (track.audioUrl && this.localAudioBufferCache.get(track.audioUrl))
@@ -311,6 +317,7 @@ export class CloudMesh {
       || (this.currentAudioArrayBuffer && this.lastKnownTrack?.name === track.name ? this.currentAudioArrayBuffer : null);
 
     if (cached) {
+      this.currentFetchingTrackKey = null;
       this.pendingTrackBufferRequest = null;
       if (track.id) this.localAudioBufferCache.set(track.id, cached);
       if (track.name) this.localAudioBufferCache.set(track.name, cached);
@@ -319,6 +326,11 @@ export class CloudMesh {
       return;
     }
 
+    // Single-flight guard: prevent blinking loops if fetch is already in flight for this track
+    if (this.currentFetchingTrackKey === trackKey && this.pendingTrackBufferRequest) {
+      return;
+    }
+    this.currentFetchingTrackKey = trackKey;
     this.pendingTrackBufferRequest = track;
 
     let fetchUrl = track.audioUrl;
