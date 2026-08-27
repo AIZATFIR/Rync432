@@ -17,13 +17,11 @@ export class CloudMesh {
     this.isPaused = false;
     this.lastPauseTime = 0;
 
-    // WebRTC P2P Connections
-    this.peerConnections = new Map();
-    this.dataChannels = new Map();
-    this.incomingAudioChunks = new Map();
-    this.currentAudioArrayBuffer = null;
-    this.localAudioBufferCache = new Map();
-    this.deletedQueueIds = new Set();
+    // Real-Time Pub/Sub Cloud Bus (EMQX / MQTT over WebSockets)
+    this.mqttClient = null;
+    this.isMqttConnected = false;
+    this.roomTopic = null;
+    this.peerTopic = null;
   }
 
   async createRoom(roomId, peerId, deviceName) {
@@ -33,16 +31,15 @@ export class CloudMesh {
     this.isHost = true;
 
     this.initBroadcastChannel(roomId, deviceName);
+    this.initMqttBus(roomId, deviceName);
 
     try {
-      await fetch('/api/room?action=create', {
+      fetch('/api/room?action=create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roomId, peerId, deviceName })
-      });
-    } catch (e) {
-      console.warn('API create notice:', e.message);
-    }
+      }).catch(() => {});
+    } catch (e) {}
 
     this.startPolling();
   }
@@ -54,18 +51,200 @@ export class CloudMesh {
     this.isHost = false;
 
     this.initBroadcastChannel(roomId, deviceName);
+    this.initMqttBus(roomId, deviceName);
 
     try {
-      await fetch('/api/room?action=join', {
+      fetch('/api/room?action=join', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roomId, peerId, deviceName })
-      });
-    } catch (e) {
-      console.warn('API join notice:', e.message);
-    }
+      }).catch(() => {});
+    } catch (e) {}
 
     this.startPolling();
+  }
+
+  initMqttBus(roomId, deviceName) {
+    if (typeof mqtt === 'undefined') {
+      console.warn('MQTT client script not loaded, running HTTP fallback mesh');
+      return;
+    }
+
+    try {
+      if (this.mqttClient) {
+        try { this.mqttClient.end(true); } catch (e) {}
+      }
+
+      this.roomTopic = `rync432/v1/room/${roomId}`;
+      this.peerTopic = `rync432/v1/peer/${this.peerId}`;
+
+      const brokerUrl = 'wss://broker.emqx.io:8084/mqtt';
+      this.mqttClient = mqtt.connect(brokerUrl, {
+        clientId: 'rync_' + this.peerId + '_' + Math.random().toString(36).substring(2, 6),
+        clean: true,
+        connectTimeout: 4000,
+        reconnectPeriod: 2000
+      });
+
+      this.mqttClient.on('connect', () => {
+        this.isMqttConnected = true;
+        this.stopPolling(); // Zero Vercel polling when Real-Time Bus is connected!
+
+        this.mqttClient.subscribe([this.roomTopic, this.peerTopic], (err) => {
+          if (!err) {
+            this.publishMqtt(this.roomTopic, {
+              type: 'ANNOUNCE_PEER',
+              peer: {
+                id: this.peerId,
+                deviceName: this.deviceName,
+                isHost: this.isHost,
+                role: 'stereo',
+                volume: 1.0,
+                latencyOffset: 0,
+                isAudioLoading: false,
+                lastSeen: Date.now()
+              }
+            });
+          }
+        });
+      });
+
+      this.mqttClient.on('message', (topic, message) => {
+        try {
+          const msg = JSON.parse(message.toString());
+          if (!msg || !msg.type) return;
+          if (msg.fromPeerId === this.peerId) return; // Skip self
+
+          switch (msg.type) {
+            case 'ANNOUNCE_PEER':
+              if (msg.peer && msg.peer.id !== this.peerId) {
+                this.localPeersMap.set(msg.peer.id, msg.peer);
+                this.dispatchLocalPeers();
+
+                if (this.isHost) {
+                  this.publishMqtt(`rync432/v1/peer/${msg.peer.id}`, {
+                    type: 'ROOM_SNAPSHOT',
+                    hostId: this.peerId,
+                    track: this.lastKnownTrack,
+                    queue: this.lastKnownQueue || [],
+                    state: this.isPaused ? 'PAUSED' : 'PLAYING',
+                    targetServerTime: this.lastKnownState,
+                    peers: Array.from(this.localPeersMap.values())
+                  });
+
+                  const pc = this.peerConnections.get(msg.peer.id);
+                  if (!pc || pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
+                    this.initiateWebRTCOffer(msg.peer.id);
+                  }
+                }
+              }
+              break;
+
+            case 'ROOM_SNAPSHOT':
+              if (!this.isHost) {
+                if (Array.isArray(msg.peers)) {
+                  msg.peers.forEach(p => {
+                    if (p.id !== this.peerId) this.localPeersMap.set(p.id, p);
+                  });
+                  this.dispatchLocalPeers();
+                }
+                if (Array.isArray(msg.queue)) {
+                  this.lastKnownQueue = msg.queue;
+                  this.lastKnownQueueStr = JSON.stringify(msg.queue);
+                  this.onEvent('QUEUE_UPDATED', { queue: msg.queue });
+                }
+                if (msg.track) {
+                  this.lastKnownTrack = msg.track;
+                  this.onEvent('TRACK_METADATA', msg.track);
+                  this.loadTrackBuffer(msg.track);
+                }
+                if (msg.state === 'PLAYING' && msg.targetServerTime) {
+                  this.isPaused = false;
+                  this.lastKnownState = msg.targetServerTime;
+                  this.onEvent('SCHEDULED_PLAY', {
+                    targetServerTime: msg.targetServerTime,
+                    startOffsetSec: 0,
+                    track: msg.track || this.lastKnownTrack
+                  });
+                }
+              }
+              break;
+
+            case 'SCHEDULED_PLAY':
+              this.isPaused = false;
+              this.lastKnownState = msg.payload?.targetServerTime || msg.targetServerTime;
+              if (msg.payload?.track || msg.track) {
+                this.lastKnownTrack = msg.payload?.track || msg.track;
+              }
+              this.onEvent('SCHEDULED_PLAY', msg.payload || msg);
+              break;
+
+            case 'PAUSED':
+              this.isPaused = true;
+              this.lastPauseTime = Date.now();
+              this.lastKnownState = 'PAUSED';
+              this.onEvent('PAUSED', msg.payload || msg);
+              break;
+
+            case 'TRACK_METADATA':
+              this.lastKnownTrack = msg.payload || msg.metadata;
+              this.onEvent('TRACK_METADATA', this.lastKnownTrack);
+              this.loadTrackBuffer(this.lastKnownTrack);
+              break;
+
+            case 'QUEUE_UPDATED':
+              if (Array.isArray(msg.queue || msg.payload?.queue)) {
+                const q = msg.queue || msg.payload?.queue;
+                this.lastKnownQueue = q;
+                this.lastKnownQueueStr = JSON.stringify(q);
+                this.onEvent('QUEUE_UPDATED', { queue: q });
+              }
+              break;
+
+            case 'SIGNAL':
+              if (msg.from && msg.data) {
+                this.handleIncomingSignal(msg.from, msg.data);
+              }
+              break;
+
+            case 'REMOTE_DEVICE_UPDATED':
+              if (msg.targetPeerId === this.peerId) {
+                this.onEvent('REMOTE_DEVICE_UPDATED', msg.payload);
+              }
+              break;
+
+            case 'PEER_LEFT':
+              if (msg.peerId) {
+                this.localPeersMap.delete(msg.peerId);
+                this.dispatchLocalPeers();
+              }
+              break;
+          }
+        } catch (e) {}
+      });
+
+      this.mqttClient.on('error', (err) => {
+        console.warn('MQTT bus notice, fallback active:', err.message);
+        if (!this.isMqttConnected) this.startPolling();
+      });
+
+      this.mqttClient.on('close', () => {
+        this.isMqttConnected = false;
+        this.startPolling();
+      });
+    } catch (err) {
+      console.warn('MQTT bus initialization notice:', err.message);
+      this.startPolling();
+    }
+  }
+
+  publishMqtt(topic, payload) {
+    if (this.mqttClient && this.isMqttConnected) {
+      try {
+        const fullPayload = { ...payload, fromPeerId: this.peerId };
+        this.mqttClient.publish(topic, JSON.stringify(fullPayload));
+      } catch (e) {}
+    }
   }
 
   initBroadcastChannel(roomId, deviceName) {
@@ -469,6 +648,7 @@ export class CloudMesh {
         this.lastKnownQueue = data.queue;
         this.lastKnownQueueStr = JSON.stringify(data.queue);
         this.onEvent('QUEUE_UPDATED', { queue: data.queue });
+        this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: data.queue });
         this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: data.queue });
         if (this.broadcastChannel) {
           this.broadcastChannel.postMessage({
@@ -480,6 +660,7 @@ export class CloudMesh {
       if (data.track && (!this.lastKnownTrack || data.track.id !== this.lastKnownTrack.id)) {
         this.lastKnownTrack = data.track;
         this.onEvent('TRACK_METADATA', data.track);
+        this.publishMqtt(this.roomTopic, { type: 'TRACK_METADATA', metadata: data.track });
       }
     } catch (e) { }
   }
@@ -503,11 +684,20 @@ export class CloudMesh {
           startOffsetSec: data.startOffsetSec || 0,
           track: data.track
         });
+        this.publishMqtt(this.roomTopic, {
+          type: 'SCHEDULED_PLAY',
+          payload: {
+            targetServerTime: data.targetServerTime || (Date.now() + 800),
+            startOffsetSec: data.startOffsetSec || 0,
+            track: data.track
+          }
+        });
       }
       if (data.queue) {
         this.lastKnownQueue = data.queue;
         this.lastKnownQueueStr = JSON.stringify(data.queue);
         this.onEvent('QUEUE_UPDATED', { queue: data.queue });
+        this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: data.queue });
         this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: data.queue });
       }
     } catch (e) { }
@@ -518,6 +708,7 @@ export class CloudMesh {
     this.lastKnownQueue = newQueue;
     this.lastKnownQueueStr = JSON.stringify(newQueue);
     this.onEvent('QUEUE_UPDATED', { queue: newQueue });
+    this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: newQueue });
     this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: newQueue });
     if (this.broadcastChannel) {
       this.broadcastChannel.postMessage({
@@ -546,6 +737,7 @@ export class CloudMesh {
       this.lastKnownQueue = (this.lastKnownQueue || []).filter(q => q.id !== queueId);
       this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
       this.onEvent('QUEUE_UPDATED', { queue: this.lastKnownQueue });
+      this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
       this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
     }
 
@@ -582,17 +774,20 @@ export class CloudMesh {
         this.onEvent('TRACK_METADATA', data.track);
         this.loadTrackBuffer(data.track);
         if (data.state === 'PLAYING') {
-          this.onEvent('SCHEDULED_PLAY', {
+          const payload = {
             targetServerTime: data.targetServerTime || (Date.now() + 800),
             startOffsetSec: data.startOffsetSec || 0,
             track: data.track
-          });
+          };
+          this.onEvent('SCHEDULED_PLAY', payload);
+          this.publishMqtt(this.roomTopic, { type: 'SCHEDULED_PLAY', payload });
         }
       }
       if (data.queue) {
         this.lastKnownQueue = data.queue;
         this.lastKnownQueueStr = JSON.stringify(data.queue);
         this.onEvent('QUEUE_UPDATED', { queue: data.queue });
+        this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: data.queue });
       }
     } catch (e) { }
   }
@@ -612,17 +807,20 @@ export class CloudMesh {
         this.onEvent('TRACK_METADATA', data.track);
         this.loadTrackBuffer(data.track);
         if (data.state === 'PLAYING') {
-          this.onEvent('SCHEDULED_PLAY', {
+          const payload = {
             targetServerTime: data.targetServerTime || (Date.now() + 800),
             startOffsetSec: data.startOffsetSec || 0,
             track: data.track
-          });
+          };
+          this.onEvent('SCHEDULED_PLAY', payload);
+          this.publishMqtt(this.roomTopic, { type: 'SCHEDULED_PLAY', payload });
         }
       }
       if (data.queue) {
         this.lastKnownQueue = data.queue;
         this.lastKnownQueueStr = JSON.stringify(data.queue);
         this.onEvent('QUEUE_UPDATED', { queue: data.queue });
+        this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: data.queue });
       }
     } catch (e) { }
   }
@@ -723,6 +921,11 @@ export class CloudMesh {
     this.lastKnownState = targetServerTime;
     const trackPayload = track || this.lastKnownTrack;
 
+    this.publishMqtt(this.roomTopic, {
+      type: 'SCHEDULED_PLAY',
+      payload: { targetServerTime, startOffsetSec, track: trackPayload }
+    });
+
     if (this.broadcastChannel) {
       this.broadcastChannel.postMessage({
         type: 'SCHEDULED_PLAY',
@@ -739,7 +942,7 @@ export class CloudMesh {
     });
 
     try {
-      await fetch('/api/room?action=update_playback', {
+      fetch('/api/room?action=update_playback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -749,7 +952,7 @@ export class CloudMesh {
           startOffsetSec,
           track: trackPayload
         })
-      });
+      }).catch(() => {});
     } catch (e) { }
   }
 
@@ -757,6 +960,11 @@ export class CloudMesh {
     this.isPaused = true;
     this.lastPauseTime = Date.now();
     this.lastKnownState = 'PAUSED';
+
+    this.publishMqtt(this.roomTopic, {
+      type: 'PAUSED',
+      payload: { currentOffsetSec }
+    });
 
     if (this.broadcastChannel) {
       this.broadcastChannel.postMessage({
@@ -774,7 +982,7 @@ export class CloudMesh {
     });
 
     try {
-      await fetch('/api/room?action=update_playback', {
+      fetch('/api/room?action=update_playback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -782,12 +990,17 @@ export class CloudMesh {
           state: 'PAUSED',
           startOffsetSec: currentOffsetSec
         })
-      });
+      }).catch(() => {});
     } catch (e) { }
   }
 
   async broadcastTrack(metadata) {
     this.lastKnownTrack = metadata;
+
+    this.publishMqtt(this.roomTopic, {
+      type: 'TRACK_METADATA',
+      payload: metadata
+    });
 
     if (this.broadcastChannel) {
       this.broadcastChannel.postMessage({
@@ -805,14 +1018,14 @@ export class CloudMesh {
     });
 
     try {
-      await fetch('/api/room?action=update_playback', {
+      fetch('/api/room?action=update_playback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           roomId: this.roomId,
           track: metadata
         })
-      });
+      }).catch(() => {});
     } catch (e) { }
   }
 
@@ -993,8 +1206,14 @@ export class CloudMesh {
   }
 
   async sendSignal(targetPeerId, signalData) {
+    this.publishMqtt(`rync432/v1/peer/${targetPeerId}`, {
+      type: 'SIGNAL',
+      from: this.peerId,
+      data: signalData
+    });
+
     try {
-      await fetch('/api/room?action=signal', {
+      fetch('/api/room?action=signal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1003,7 +1222,7 @@ export class CloudMesh {
           to: targetPeerId,
           data: signalData
         })
-      });
+      }).catch(() => {});
     } catch (e) { }
   }
 
@@ -1079,22 +1298,28 @@ export class CloudMesh {
     this.dataChannels.delete(targetPeerId);
 
     try {
-      await fetch('/api/room?action=remove_peer', {
+      fetch('/api/room?action=remove_peer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roomId: this.roomId, targetPeerId })
-      });
+      }).catch(() => {});
     } catch (e) { }
   }
 
   leaveRoom() {
     this.unsubscribe();
+    if (this.roomTopic) {
+      this.publishMqtt(this.roomTopic, {
+        type: 'PEER_LEFT',
+        peerId: this.peerId
+      });
+    }
     if (this.roomId && this.peerId) {
       try {
         if (navigator.sendBeacon) {
           navigator.sendBeacon(`/api/room?action=leave_room&roomId=${this.roomId}&peerId=${this.peerId}`);
         } else {
-          fetch(`/api/room?action=leave_room&roomId=${this.roomId}&peerId=${this.peerId}`, { method: 'POST', keepalive: true });
+          fetch(`/api/room?action=leave_room&roomId=${this.roomId}&peerId=${this.peerId}`, { method: 'POST', keepalive: true }).catch(() => {});
         }
       } catch (e) { }
     }
@@ -1102,6 +1327,11 @@ export class CloudMesh {
 
   unsubscribe() {
     this.stopPolling();
+    if (this.mqttClient) {
+      try { this.mqttClient.end(true); } catch (e) {}
+      this.mqttClient = null;
+      this.isMqttConnected = false;
+    }
     if (this.broadcastChannel) {
       try {
         this.broadcastChannel.postMessage({
