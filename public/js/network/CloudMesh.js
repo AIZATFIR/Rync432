@@ -17,6 +17,14 @@ export class CloudMesh {
     this.isPaused = false;
     this.lastPauseTime = 0;
 
+    // WebRTC P2P Connections
+    this.peerConnections = new Map();
+    this.dataChannels = new Map();
+    this.incomingAudioChunks = new Map();
+    this.currentAudioArrayBuffer = null;
+    this.localAudioBufferCache = new Map();
+    this.deletedQueueIds = new Set();
+
     // Real-Time Pub/Sub Cloud Bus (EMQX / MQTT over WebSockets)
     this.mqttClient = null;
     this.isMqttConnected = false;
@@ -360,9 +368,10 @@ export class CloudMesh {
   }
 
   broadcastDataChannelMessage(msg) {
+    if (!this.dataChannels) return;
     const payload = typeof msg === 'string' ? msg : JSON.stringify(msg);
     this.dataChannels.forEach(channel => {
-      if (channel.readyState === 'open') {
+      if (channel && channel.readyState === 'open') {
         try {
           channel.send(payload);
         } catch (e) {}
