@@ -32,11 +32,44 @@ export class CloudMesh {
     this.peerTopic = null;
   }
 
+  saveLocalQueue(queue) {
+    if (!Array.isArray(queue)) return;
+    try {
+      if (typeof localStorage !== 'undefined') {
+        if (this.roomId) localStorage.setItem('rync_queue_' + this.roomId, JSON.stringify(queue));
+        localStorage.setItem('rync_last_queue', JSON.stringify(queue));
+      }
+    } catch (e) {}
+  }
+
+  loadLocalQueue(roomId) {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const saved = (roomId ? localStorage.getItem('rync_queue_' + roomId) : null) || localStorage.getItem('rync_last_queue');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed;
+          }
+        }
+      }
+    } catch (e) {}
+    return null;
+  }
+
   async createRoom(roomId, peerId, deviceName) {
     this.roomId = roomId;
     this.peerId = peerId;
     this.deviceName = deviceName;
     this.isHost = true;
+
+    // Restore cached queue from localStorage if available
+    const savedQueue = this.loadLocalQueue(roomId);
+    if (savedQueue && (!this.lastKnownQueue || this.lastKnownQueue.length === 0)) {
+      this.lastKnownQueue = savedQueue;
+      this.lastKnownQueueStr = JSON.stringify(savedQueue);
+      this.onEvent('QUEUE_UPDATED', { queue: savedQueue });
+    }
 
     this.initBroadcastChannel(roomId, deviceName);
     this.initMqttBus(roomId, deviceName);
@@ -45,7 +78,12 @@ export class CloudMesh {
       fetch('/api/room?action=create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId, peerId, deviceName })
+        body: JSON.stringify({
+          roomId,
+          peerId,
+          deviceName,
+          queue: this.lastKnownQueue || []
+        })
       }).catch(() => {});
     } catch (e) {}
 
@@ -57,6 +95,14 @@ export class CloudMesh {
     this.peerId = peerId;
     this.deviceName = deviceName;
     this.isHost = false;
+
+    // Restore cached queue from localStorage if available
+    const savedQueue = this.loadLocalQueue(roomId);
+    if (savedQueue && (!this.lastKnownQueue || this.lastKnownQueue.length === 0)) {
+      this.lastKnownQueue = savedQueue;
+      this.lastKnownQueueStr = JSON.stringify(savedQueue);
+      this.onEvent('QUEUE_UPDATED', { queue: savedQueue });
+    }
 
     this.initBroadcastChannel(roomId, deviceName);
     this.initMqttBus(roomId, deviceName);
@@ -158,6 +204,7 @@ export class CloudMesh {
                 if (Array.isArray(msg.queue)) {
                   this.lastKnownQueue = msg.queue;
                   this.lastKnownQueueStr = JSON.stringify(msg.queue);
+                  this.saveLocalQueue(msg.queue);
                   this.onEvent('QUEUE_UPDATED', { queue: msg.queue });
                 }
                 if (msg.track) {
@@ -204,6 +251,7 @@ export class CloudMesh {
                 const q = msg.queue || msg.payload?.queue;
                 this.lastKnownQueue = q;
                 this.lastKnownQueueStr = JSON.stringify(q);
+                this.saveLocalQueue(q);
                 this.onEvent('QUEUE_UPDATED', { queue: q });
               }
               break;
@@ -637,6 +685,7 @@ export class CloudMesh {
     if (!currentQ.some(q => q.id === item.id)) {
       this.lastKnownQueue = [...currentQ, item];
       this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
+      this.saveLocalQueue(this.lastKnownQueue);
       this.onEvent('QUEUE_UPDATED', { queue: this.lastKnownQueue });
       this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
       this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
@@ -664,6 +713,7 @@ export class CloudMesh {
       if (data.queue && data.queue.length > 0) {
         this.lastKnownQueue = data.queue;
         this.lastKnownQueueStr = JSON.stringify(data.queue);
+        this.saveLocalQueue(data.queue);
         this.onEvent('QUEUE_UPDATED', { queue: data.queue });
         this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: data.queue });
         this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: data.queue });
@@ -717,6 +767,7 @@ export class CloudMesh {
       if (data.queue) {
         this.lastKnownQueue = data.queue;
         this.lastKnownQueueStr = JSON.stringify(data.queue);
+        this.saveLocalQueue(data.queue);
         this.onEvent('QUEUE_UPDATED', { queue: data.queue });
         this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: data.queue });
         this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: data.queue });
@@ -728,6 +779,7 @@ export class CloudMesh {
     this.lastQueueReorderTime = Date.now();
     this.lastKnownQueue = newQueue;
     this.lastKnownQueueStr = JSON.stringify(newQueue);
+    this.saveLocalQueue(newQueue);
     this.onEvent('QUEUE_UPDATED', { queue: newQueue });
     this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: newQueue });
     this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: newQueue });
@@ -748,6 +800,7 @@ export class CloudMesh {
       if (data.queue) {
         this.lastKnownQueue = data.queue;
         this.lastKnownQueueStr = JSON.stringify(data.queue);
+        this.saveLocalQueue(data.queue);
       }
     } catch (e) { }
   }
@@ -757,6 +810,7 @@ export class CloudMesh {
       this.deletedQueueIds.add(queueId);
       this.lastKnownQueue = (this.lastKnownQueue || []).filter(q => q.id !== queueId);
       this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
+      this.saveLocalQueue(this.lastKnownQueue);
       this.onEvent('QUEUE_UPDATED', { queue: this.lastKnownQueue });
       this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
       this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
