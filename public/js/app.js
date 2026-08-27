@@ -132,6 +132,11 @@ class App {
           uiManager.updateTrackUI(payload.name || 'Neon Groove Synthwave', 20, payload.thumbnail || '');
         } else {
           uiManager.updateTrackUI(payload.name || 'Pilih trek lagu', payload.duration || 0, payload.thumbnail || '');
+          if (payload.name && audioEngine.currentTrackName && audioEngine.currentTrackName !== payload.name) {
+            audioEngine.stopLocalPlayback();
+            audioEngine.audioBuffer = null;
+            audioEngine.currentTrackName = payload.name;
+          }
         }
         uiManager.renderQueue(uiManager.cachedQueue);
         break;

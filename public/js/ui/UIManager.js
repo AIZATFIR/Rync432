@@ -1137,8 +1137,8 @@ export class UIManager {
           app.socketClient.cloudMesh.localAudioBufferCache.set(blobUrl, arrayBuffer);
         }
 
-        // 1. Direct High-Speed Cloud CDN Upload (No file size limit, fast 72h public link)
-        this.setTrackLoading(`Mengunggah ${file.name}...`);
+        // 1. Direct High-Speed Cloud CDN Upload
+        this.setTrackLoading(`Mengunggah (${i + 1}/${totalFiles}) ${file.name}...`);
         let cloudAudioUrl = '';
         try {
           const formData = new FormData();

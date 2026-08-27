@@ -229,6 +229,22 @@ export default async function handler(req, res) {
 
     if (isThisHost) {
       room.hostId = peerId;
+      if (body.track) room.track = body.track;
+      if (body.state) room.state = body.state;
+      if (body.targetServerTime) room.targetServerTime = body.targetServerTime;
+    }
+
+    // Merge incoming queue from client with server queue to avoid serverless fragmentation
+    if (Array.isArray(body.queue) && body.queue.length > 0) {
+      const map = new Map();
+      (room.queue || []).forEach(item => { if (item && item.id) map.set(item.id, item); });
+      body.queue.forEach(item => { if (item && item.id) map.set(item.id, item); });
+      room.queue = Array.from(map.values());
+    }
+
+    if (Array.isArray(body.deletedQueueIds) && body.deletedQueueIds.length > 0) {
+      const delSet = new Set(body.deletedQueueIds);
+      room.queue = (room.queue || []).filter(item => !delSet.has(item.id));
     }
 
     const isHostAssigned = isThisHost || (room.hostId === peerId);
@@ -305,9 +321,9 @@ export default async function handler(req, res) {
     if (body.targetServerTime !== undefined) room.targetServerTime = body.targetServerTime;
     if (body.startOffsetSec !== undefined) room.startOffsetSec = body.startOffsetSec;
     if (body.track) room.track = body.track;
-    if (body.queue) room.queue = body.queue;
+    if (Array.isArray(body.queue)) room.queue = body.queue;
     room.updatedAt = now;
-    return res.status(200).json({ success: true });
+    return res.status(200).json({ success: true, track: room.track, queue: room.queue });
   }
 
   if (action === 'add_queue') {
@@ -329,31 +345,46 @@ export default async function handler(req, res) {
     }
 
     if (!room.queue) room.queue = [];
-    const item = {
-      id: body.id || ('q_' + Math.random().toString(36).substring(2, 9)),
-      name: body.name || 'Untitled',
-      artist: body.artist || 'Artist',
-      duration: body.duration || 0,
-      thumbnail: body.thumbnail || '',
-      audioUrl: body.audioUrl || '',
-      isSynthetic: !!body.isSynthetic,
-      addedBy: deviceName
-    };
 
-    const exists = room.queue.some(q => q.id === item.id);
-    if (!exists) {
-      room.queue.push(item);
+    if (Array.isArray(body.items)) {
+      body.items.forEach(it => {
+        if (it && it.id && !room.queue.some(q => q.id === it.id)) {
+          room.queue.push(it);
+        }
+      });
+    } else {
+      const item = {
+        id: body.id || ('q_' + Math.random().toString(36).substring(2, 9)),
+        name: body.name || 'Untitled',
+        artist: body.artist || 'Artist',
+        duration: body.duration || 0,
+        thumbnail: body.thumbnail || '',
+        audioUrl: body.audioUrl || '',
+        isSynthetic: !!body.isSynthetic,
+        addedBy: deviceName
+      };
+
+      const exists = room.queue.some(q => q.id === item.id);
+      if (!exists) {
+        room.queue.push(item);
+      }
     }
 
-    if (!room.track) {
-      room.track = item;
+    if (!room.track && room.queue.length > 0) {
+      room.track = room.queue[0];
       room.state = 'PAUSED';
       room.targetServerTime = 0;
       room.startOffsetSec = 0;
     }
 
     room.updatedAt = now;
-    return res.status(200).json({ success: true, track: room.track, queue: room.queue, item });
+    return res.status(200).json({
+      success: true,
+      track: room.track,
+      queue: room.queue,
+      state: room.state,
+      targetServerTime: room.targetServerTime
+    });
   }
 
   if (action === 'reorder_queue') {
