@@ -153,15 +153,43 @@ export class CloudMesh {
 
   startPolling() {
     this.stopPolling();
-    this.pollLoop();
-    this.pollInterval = setInterval(() => this.pollLoop(), 500);
+    this.isPollingActive = true;
+    this.scheduleNextPoll(100);
   }
 
   stopPolling() {
-    if (this.pollInterval) {
-      clearInterval(this.pollInterval);
-      this.pollInterval = null;
+    this.isPollingActive = false;
+    if (this.pollTimeout) {
+      clearTimeout(this.pollTimeout);
+      this.pollTimeout = null;
     }
+  }
+
+  getOptimalPollInterval() {
+    // 1. If tab is in background, save Vercel CPU and invocations
+    if (typeof document !== 'undefined' && document.hidden) {
+      return 3000;
+    }
+
+    // 2. If WebRTC mesh is established with peers, communication is P2P (0 server cost)
+    const hasOpenDataChannels = Array.from(this.dataChannels.values()).some(ch => ch && ch.readyState === 'open');
+    if (hasOpenDataChannels) {
+      return 2000;
+    }
+
+    // 3. Normal active room heartbeat
+    return 1000;
+  }
+
+  scheduleNextPoll(delayMs) {
+    if (!this.isPollingActive) return;
+    if (this.pollTimeout) clearTimeout(this.pollTimeout);
+    this.pollTimeout = setTimeout(async () => {
+      if (!this.isPollingActive) return;
+      await this.pollLoop();
+      const nextDelay = this.getOptimalPollInterval();
+      this.scheduleNextPoll(nextDelay);
+    }, delayMs !== undefined ? delayMs : this.getOptimalPollInterval());
   }
 
   async pollLoop() {
