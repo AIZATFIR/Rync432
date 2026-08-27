@@ -421,8 +421,8 @@ export default async function handler(req, res) {
       const target = room.queue.find(q => q.id === qId);
       if (target) {
         room.track = target;
-        room.state = 'PLAYING';
-        room.targetServerTime = now + 800;
+        room.state = 'PAUSED';
+        room.targetServerTime = null;
         room.startOffsetSec = 0;
         room.updatedAt = now;
         return res.status(200).json({
@@ -430,8 +430,8 @@ export default async function handler(req, res) {
           track: room.track,
           queue: room.queue,
           state: room.state,
-          targetServerTime: room.targetServerTime,
-          startOffsetSec: room.startOffsetSec
+          targetServerTime: null,
+          startOffsetSec: 0
         });
       }
     }

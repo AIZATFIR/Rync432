@@ -879,7 +879,7 @@ export class UIManager {
         });
       }
 
-      // 1. Play Now Action
+      // 1. Play Now Action (Load track ready for Play)
       div.querySelector('.q-action-play')?.addEventListener('click', (e) => {
         e.stopPropagation();
         dropdown.classList.remove('active');
@@ -887,7 +887,7 @@ export class UIManager {
         this.app.audioEngine.stopLocalPlayback();
         this.setPlayState(false);
         this.setTrackLoading(`Memuat ${item.name}...`);
-        this.app.socketClient.playQueueItem(item.id);
+        this.app.socketClient.playQueueItem(item.id, false);
       });
 
       // 2. Play Next Action
@@ -920,7 +920,7 @@ export class UIManager {
         this.app.socketClient.removeFromQueue(item.id);
       });
 
-      // Click row to play
+      // Click row to select/load track (without autoplay)
       div.addEventListener('click', (e) => {
         if (e.target.closest('.queue-item-actions') || e.target.closest('.drag-handle')) return;
         this.app.audioEngine.ensureContext();
@@ -931,7 +931,7 @@ export class UIManager {
           const buffer = this.app.audioEngine.generateSyntheticTrack('synthwave');
           this.updateTrackUI(item.name, buffer.duration);
         }
-        this.app.socketClient.playQueueItem(item.id);
+        this.app.socketClient.playQueueItem(item.id, false);
       });
 
       // Desktop HTML5 Drag and Drop
@@ -1219,6 +1219,9 @@ export class UIManager {
   }
 
   updateTrackUI(title, duration, thumbnail = '') {
+    if (duration > 0 && this.app?.audioEngine) {
+      this.app.audioEngine.currentTrackDuration = duration;
+    }
     if (this.elements.trackTitle) this.elements.trackTitle.innerText = title;
     if (this.elements.trackSub) this.elements.trackSub.innerText = `${this.formatTime(duration)} • Ready`;
     if (this.elements.totalTimeText) this.elements.totalTimeText.innerText = this.formatTime(duration);

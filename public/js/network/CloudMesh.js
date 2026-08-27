@@ -682,7 +682,7 @@ export class CloudMesh {
     } catch (e) { }
   }
 
-  async playQueueItem(queueId) {
+  async playQueueItem(queueId, autoplay = false) {
     try {
       const res = await fetch('/api/room?action=play_queue_item', {
         method: 'POST',
@@ -692,23 +692,27 @@ export class CloudMesh {
       const data = await res.json();
       if (data.track) {
         this.lastKnownTrack = data.track;
-        this.isPaused = false;
-        this.lastKnownState = data.targetServerTime;
+        this.isPaused = !autoplay;
+        this.lastKnownState = autoplay ? data.targetServerTime : 'PAUSED';
         this.onEvent('TRACK_METADATA', data.track);
         this.loadTrackBuffer(data.track);
-        this.onEvent('SCHEDULED_PLAY', {
-          targetServerTime: data.targetServerTime || (Date.now() + 800),
-          startOffsetSec: data.startOffsetSec || 0,
-          track: data.track
-        });
-        this.publishMqtt(this.roomTopic, {
-          type: 'SCHEDULED_PLAY',
-          payload: {
+        this.publishMqtt(this.roomTopic, { type: 'TRACK_METADATA', metadata: data.track });
+        this.broadcastDataChannelMessage({ type: 'TRACK_METADATA', metadata: data.track });
+
+        if (autoplay) {
+          const payload = {
             targetServerTime: data.targetServerTime || (Date.now() + 800),
             startOffsetSec: data.startOffsetSec || 0,
             track: data.track
-          }
-        });
+          };
+          this.onEvent('SCHEDULED_PLAY', payload);
+          this.publishMqtt(this.roomTopic, { type: 'SCHEDULED_PLAY', payload });
+          this.broadcastDataChannelMessage({ type: 'SCHEDULED_PLAY', ...payload });
+        } else {
+          this.onEvent('PAUSED', { currentOffsetSec: 0 });
+          this.publishMqtt(this.roomTopic, { type: 'PAUSED', payload: { currentOffsetSec: 0 } });
+          this.broadcastDataChannelMessage({ type: 'PAUSED', currentOffsetSec: 0 });
+        }
       }
       if (data.queue) {
         this.lastKnownQueue = data.queue;
