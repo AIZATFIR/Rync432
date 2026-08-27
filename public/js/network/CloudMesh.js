@@ -166,19 +166,30 @@ export class CloudMesh {
   }
 
   getOptimalPollInterval() {
-    // 1. If tab is in background, save Vercel CPU and invocations
+    // 1. If tab is in background / minimized, throttle aggressively to save Vercel quota
     if (typeof document !== 'undefined' && document.hidden) {
-      return 3000;
+      return 6000;
     }
 
-    // 2. If WebRTC mesh is established with peers, communication is P2P (0 server cost)
+    // 2. If WebRTC mesh is established with peers, communication is 100% P2P (0 server cost)
     const hasOpenDataChannels = Array.from(this.dataChannels.values()).some(ch => ch && ch.readyState === 'open');
     if (hasOpenDataChannels) {
-      return 2000;
+      return 5000;
     }
 
-    // 3. Normal active room heartbeat
-    return 1000;
+    // 3. During initial peer discovery / signaling phase
+    return 1500;
+  }
+
+  broadcastDataChannelMessage(msg) {
+    const payload = typeof msg === 'string' ? msg : JSON.stringify(msg);
+    this.dataChannels.forEach(channel => {
+      if (channel.readyState === 'open') {
+        try {
+          channel.send(payload);
+        } catch (e) {}
+      }
+    });
   }
 
   scheduleNextPoll(delayMs) {
@@ -458,6 +469,7 @@ export class CloudMesh {
         this.lastKnownQueue = data.queue;
         this.lastKnownQueueStr = JSON.stringify(data.queue);
         this.onEvent('QUEUE_UPDATED', { queue: data.queue });
+        this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: data.queue });
         if (this.broadcastChannel) {
           this.broadcastChannel.postMessage({
             type: 'QUEUE_UPDATED',
@@ -496,6 +508,7 @@ export class CloudMesh {
         this.lastKnownQueue = data.queue;
         this.lastKnownQueueStr = JSON.stringify(data.queue);
         this.onEvent('QUEUE_UPDATED', { queue: data.queue });
+        this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: data.queue });
       }
     } catch (e) { }
   }
@@ -505,6 +518,7 @@ export class CloudMesh {
     this.lastKnownQueue = newQueue;
     this.lastKnownQueueStr = JSON.stringify(newQueue);
     this.onEvent('QUEUE_UPDATED', { queue: newQueue });
+    this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: newQueue });
     if (this.broadcastChannel) {
       this.broadcastChannel.postMessage({
         type: 'QUEUE_UPDATED',
@@ -532,6 +546,7 @@ export class CloudMesh {
       this.lastKnownQueue = (this.lastKnownQueue || []).filter(q => q.id !== queueId);
       this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
       this.onEvent('QUEUE_UPDATED', { queue: this.lastKnownQueue });
+      this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
     }
 
     try {
@@ -897,6 +912,12 @@ export class CloudMesh {
             this.onEvent('PAUSED', {
               currentOffsetSec: msg.currentOffsetSec || 0
             });
+          } else if (msg.type === 'QUEUE_UPDATED') {
+            if (Array.isArray(msg.queue)) {
+              this.lastKnownQueue = msg.queue;
+              this.lastKnownQueueStr = JSON.stringify(msg.queue);
+              this.onEvent('QUEUE_UPDATED', { queue: msg.queue });
+            }
           } else if (msg.type === 'TRACK_METADATA') {
             this.onEvent('TRACK_METADATA', msg.metadata);
           } else if (msg.type === 'PEER_SETTINGS') {
