@@ -109,7 +109,7 @@ export class SocketClient {
   }
 
   addToQueue(track) {
-    this.cloudMesh.addToQueue(track);
+    return this.cloudMesh.addToQueue(track);
   }
 
   playQueueItem(queueId) {

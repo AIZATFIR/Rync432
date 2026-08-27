@@ -1182,6 +1182,9 @@ export class UIManager {
           addedBy: this.getDeviceName()
         };
         await app.socketClient.addToQueue(queueItem);
+        if (isFirstOfEmpty) {
+          app.socketClient.sendTrackMetadata(queueItem);
+        }
         this.clearTrackLoading();
 
         // 3. WebRTC binary streaming as local fast fallback

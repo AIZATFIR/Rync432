@@ -88,7 +88,6 @@ export class CloudMesh {
 
       this.mqttClient.on('connect', () => {
         this.isMqttConnected = true;
-        this.stopPolling(); // Zero Vercel polling when Real-Time Bus is connected!
 
         this.mqttClient.subscribe([this.roomTopic, this.peerTopic], (err) => {
           if (!err) {
@@ -623,13 +622,22 @@ export class CloudMesh {
       thumbnail: track.thumbnail || '',
       audioUrl: track.audioUrl || '',
       isSynthetic: !!track.isSynthetic,
-      addedBy: this.deviceName
+      addedBy: track.addedBy || this.deviceName
     };
 
     if (!currentQ.some(q => q.id === item.id)) {
       this.lastKnownQueue = [...currentQ, item];
       this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
       this.onEvent('QUEUE_UPDATED', { queue: this.lastKnownQueue });
+      this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
+      this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
+    }
+
+    if (!this.lastKnownTrack) {
+      this.lastKnownTrack = item;
+      this.onEvent('TRACK_METADATA', item);
+      this.publishMqtt(this.roomTopic, { type: 'TRACK_METADATA', metadata: item });
+      this.broadcastDataChannelMessage({ type: 'TRACK_METADATA', metadata: item });
     }
 
     try {
