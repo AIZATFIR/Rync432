@@ -247,9 +247,10 @@ export class AudioEngine {
     }
   }
 
-  async loadAudioFromUrl(url, trackName = 'Remote Track') {
+  async loadAudioFromUrl(url, trackName = 'Remote Track', signal = null) {
     await this.ensureContext();
-    const response = await fetch(url);
+    const fetchOptions = signal ? { signal } : {};
+    const response = await fetch(url, fetchOptions);
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }

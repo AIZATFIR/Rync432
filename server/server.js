@@ -4,6 +4,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { RoomManager } from './roomManager.js';
+import { handleStreamProxy } from './streaming/proxyStream.js';
+import { validateStreamUrl } from './streaming/urlSecurity.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,8 +15,31 @@ const PORT = process.env.PORT || 3000;
 const roomManager = new RoomManager();
 const peerSockets = new Map();
 
-const server = http.createServer((req, res) => {
-  let reqUrl = req.url.split('?')[0];
+const server = http.createServer(async (req, res) => {
+  const reqUrl = req.url.split('?')[0];
+
+  // 1. API: Streaming Proxy Route
+  if (reqUrl === '/api/stream') {
+    return handleStreamProxy(req, res);
+  }
+
+  // 2. API: Safe URL Capability/Validation Check
+  if (reqUrl === '/api/validate-url') {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Content-Type', 'application/json');
+    try {
+      const parsedReq = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+      const targetUrl = parsedReq.searchParams.get('url');
+      const result = await validateStreamUrl(targetUrl);
+      res.statusCode = result.valid ? 200 : 400;
+      return res.end(JSON.stringify(result));
+    } catch (e) {
+      res.statusCode = 500;
+      return res.end(JSON.stringify({ valid: false, error: e.message }));
+    }
+  }
+
+  // 3. Static File Serving
   let filePath = path.join(PUBLIC_DIR, reqUrl === '/' ? 'index.html' : reqUrl);
   const extname = path.extname(filePath).toLowerCase();
   

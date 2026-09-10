@@ -268,6 +268,15 @@ export class CloudMesh {
               }
               break;
 
+            case 'PEER_READINESS':
+              if (msg.peerId && this.localPeersMap.has(msg.peerId)) {
+                const p = this.localPeersMap.get(msg.peerId);
+                p.readiness = msg.readiness || 'READY';
+                p.isAudioLoading = (msg.readiness === 'BUFFERING');
+                this.dispatchLocalPeers();
+              }
+              break;
+
             case 'PEER_LEFT':
               if (msg.peerId) {
                 this.localPeersMap.delete(msg.peerId);
@@ -339,6 +348,15 @@ export class CloudMesh {
         case 'PEER_PONG':
           this.localPeersMap.set(msg.peer.id, msg.peer);
           this.dispatchLocalPeers();
+          break;
+
+        case 'PEER_READINESS':
+          if (msg.peerId && this.localPeersMap.has(msg.peerId)) {
+            const p = this.localPeersMap.get(msg.peerId);
+            p.readiness = msg.readiness || 'READY';
+            p.isAudioLoading = (msg.readiness === 'BUFFERING');
+            this.dispatchLocalPeers();
+          }
           break;
 
         case 'PEER_LEFT':
@@ -629,23 +647,6 @@ export class CloudMesh {
     this.fetchRemoteAudioUrl(fetchUrl, track.name, track.id);
   }
 
-  requestTrackBufferFromPeers(trackName, trackId) {
-    const now = Date.now();
-    if (this.lastRequestPeerTime && (now - this.lastRequestPeerTime < 1000)) return;
-    this.lastRequestPeerTime = now;
-
-    let sent = false;
-    this.dataChannels.forEach(channel => {
-      if (channel.readyState === 'open') {
-        try {
-          channel.send(JSON.stringify({ type: 'REQUEST_AUDIO_BUFFER', trackName, trackId }));
-          sent = true;
-        } catch (e) { }
-      }
-    });
-    return sent;
-  }
-
   async updateLoadingState(isLoading, status = '') {
     const me = this.localPeersMap.get(this.peerId);
     if (me) {
@@ -932,13 +933,67 @@ export class CloudMesh {
     } catch (e) { }
   }
 
+  requestTrackBufferFromPeers(trackName, trackId) {
+    const now = Date.now();
+    this.lastRequestPeerTime = now;
+
+    let sent = false;
+    this.dataChannels.forEach(channel => {
+      if (channel.readyState === 'open') {
+        try {
+          channel.send(JSON.stringify({ type: 'REQUEST_AUDIO_BUFFER', trackName, trackId }));
+          sent = true;
+        } catch (e) { }
+      }
+    });
+
+    if (!sent) {
+      if (this.peerBufferRequestInterval) clearInterval(this.peerBufferRequestInterval);
+      let attempts = 0;
+      this.peerBufferRequestInterval = setInterval(() => {
+        attempts++;
+        const cached = this.localAudioBufferCache.get(trackId) || this.localAudioBufferCache.get(trackName);
+        if (cached || attempts > 12) {
+          clearInterval(this.peerBufferRequestInterval);
+          this.peerBufferRequestInterval = null;
+          return;
+        }
+        this.dataChannels.forEach(channel => {
+          if (channel.readyState === 'open') {
+            try {
+              channel.send(JSON.stringify({ type: 'REQUEST_AUDIO_BUFFER', trackName, trackId }));
+              clearInterval(this.peerBufferRequestInterval);
+              this.peerBufferRequestInterval = null;
+            } catch (e) { }
+          }
+        });
+      }, 1000);
+    }
+
+    return sent;
+  }
+
   async fetchRemoteAudioUrl(url, trackName, trackId) {
     if (!this.incomingAudioChunks.size) {
       this.updateLoadingState(true, `Mengunduh ${trackName} (0%)...`);
       this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status: `Mengunduh ${trackName} (0%)...` });
     }
     try {
-      const response = await fetch(url);
+      let response;
+      try {
+        response = await fetch(url);
+        if (!response.ok && url.startsWith('http') && !url.includes('/api/stream') && !url.includes('/api/room')) {
+          throw new Error('DIRECT_FETCH_FAILED');
+        }
+      } catch (fetchErr) {
+        if (url.startsWith('http') && !url.includes('/api/stream') && !url.includes('/api/room')) {
+          const proxyUrl = `/api/stream?url=${encodeURIComponent(url)}`;
+          response = await fetch(proxyUrl);
+        } else {
+          throw fetchErr;
+        }
+      }
+
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
       const contentLength = response.headers.get('content-length');
@@ -974,20 +1029,45 @@ export class CloudMesh {
       this.localAudioBufferCache.set(trackName, arrayBuffer);
       if (trackId) this.localAudioBufferCache.set(trackId, arrayBuffer);
       this.localAudioBufferCache.set(url, arrayBuffer);
+      this.currentAudioArrayBuffer = arrayBuffer;
 
       this.currentFetchingTrackKey = null;
       this.pendingTrackBufferRequest = null;
       this.updateLoadingState(false, 'Siap');
+      this.broadcastReadiness('READY', trackId);
       this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 100, status: 'Audio siap!' });
       this.onEvent('BINARY_AUDIO_RECEIVED', { arrayBuffer, trackName, trackId });
     } catch (err) {
       this.currentFetchingTrackKey = null;
+      this.broadcastReadiness('FAILED', trackId);
       console.warn('Remote fetch notice, awaiting WebRTC stream:', err.message);
       if (!this.incomingAudioChunks.size) {
         this.updateLoadingState(true, 'Menunggu audio...');
         this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status: 'Menunggu audio...' });
       }
       this.requestTrackBufferFromPeers(trackName, trackId);
+    }
+  }
+
+  broadcastReadiness(readiness = 'READY', trackId = '') {
+    const me = this.localPeersMap.get(this.peerId);
+    if (me) {
+      me.readiness = readiness;
+      me.isAudioLoading = (readiness === 'BUFFERING');
+      this.dispatchLocalPeers();
+    }
+
+    const payload = {
+      type: 'PEER_READINESS',
+      peerId: this.peerId,
+      readiness,
+      trackId
+    };
+
+    this.publishMqtt(this.roomTopic, payload);
+    this.broadcastDataChannelMessage(payload);
+    if (this.broadcastChannel) {
+      this.broadcastChannel.postMessage(payload);
     }
   }
 
@@ -1008,27 +1088,23 @@ export class CloudMesh {
       });
     }
 
-    this.dataChannels.forEach(channel => {
-      if (channel.readyState === 'open') {
-        try {
-          channel.send(JSON.stringify({ type: 'SCHEDULED_PLAY', targetServerTime, startOffsetSec, track: trackPayload }));
-        } catch (e) { }
-      }
+    this.broadcastDataChannelMessage({
+      type: 'SCHEDULED_PLAY',
+      targetServerTime,
+      startOffsetSec,
+      track: trackPayload
     });
 
-    try {
-      fetch('/api/room?action=update_playback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          roomId: this.roomId,
-          state: 'PLAYING',
-          targetServerTime,
-          startOffsetSec,
-          track: trackPayload
-        })
-      }).catch(() => {});
-    } catch (e) { }
+    fetch('/api/room?action=play', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomId: this.roomId,
+        targetServerTime,
+        startOffsetSec,
+        track: trackPayload
+      })
+    }).catch(() => {});
   }
 
   async broadcastPause(currentOffsetSec) {
@@ -1048,33 +1124,26 @@ export class CloudMesh {
       });
     }
 
-    this.dataChannels.forEach(channel => {
-      if (channel.readyState === 'open') {
-        try {
-          channel.send(JSON.stringify({ type: 'PAUSED', currentOffsetSec }));
-        } catch (e) { }
-      }
+    this.broadcastDataChannelMessage({
+      type: 'PAUSED',
+      currentOffsetSec
     });
 
-    try {
-      fetch('/api/room?action=update_playback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          roomId: this.roomId,
-          state: 'PAUSED',
-          startOffsetSec: currentOffsetSec
-        })
-      }).catch(() => {});
-    } catch (e) { }
+    fetch('/api/room?action=pause', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomId: this.roomId,
+        currentOffsetSec
+      })
+    }).catch(() => {});
   }
 
-  async broadcastTrack(metadata) {
+  async sendTrackMetadata(metadata) {
     this.lastKnownTrack = metadata;
-
     this.publishMqtt(this.roomTopic, {
       type: 'TRACK_METADATA',
-      payload: metadata
+      metadata
     });
 
     if (this.broadcastChannel) {
@@ -1084,16 +1153,13 @@ export class CloudMesh {
       });
     }
 
-    this.dataChannels.forEach(channel => {
-      if (channel.readyState === 'open') {
-        try {
-          channel.send(JSON.stringify({ type: 'TRACK_METADATA', metadata }));
-        } catch (e) { }
-      }
+    this.broadcastDataChannelMessage({
+      type: 'TRACK_METADATA',
+      metadata
     });
 
     try {
-      fetch('/api/room?action=update_playback', {
+      fetch('/api/room?action=track', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1150,7 +1216,7 @@ export class CloudMesh {
       this.dataChannels.set(targetPeerId, channel);
       if (this.isHost) {
         const targetTrack = this.lastKnownTrack;
-        const activeBuffer = (targetTrack && (this.localAudioBufferCache.get(targetTrack.id) || this.localAudioBufferCache.get(targetTrack.name)))
+        const activeBuffer = (targetTrack && (this.localAudioBufferCache.get(targetTrack.id) || this.localAudioBufferCache.get(targetTrack.name) || (targetTrack.audioUrl && this.localAudioBufferCache.get(targetTrack.audioUrl))))
           || this.currentAudioArrayBuffer;
         if (activeBuffer && (activeBuffer instanceof ArrayBuffer || activeBuffer.byteLength)) {
           this.streamAudioToPeer(channel, activeBuffer, targetTrack?.name || 'Uploaded Track', targetTrack?.id || '');
@@ -1210,13 +1276,21 @@ export class CloudMesh {
             this.onEvent('TRACK_METADATA', msg.metadata);
           } else if (msg.type === 'PEER_SETTINGS') {
             this.onEvent('REMOTE_DEVICE_UPDATED', { role: msg.role, volume: msg.volume });
+          } else if (msg.type === 'PEER_READINESS') {
+            if (msg.peerId && this.localPeersMap.has(msg.peerId)) {
+              const p = this.localPeersMap.get(msg.peerId);
+              p.readiness = msg.readiness || 'READY';
+              p.isAudioLoading = (msg.readiness === 'BUFFERING');
+              this.dispatchLocalPeers();
+            }
           } else if (msg.type === 'REQUEST_AUDIO_BUFFER') {
             const now = Date.now();
-            if (this.lastSentBufferTime && (now - this.lastSentBufferTime < 1500) && this.lastSentBufferTrack === msg.trackName) {
+            if (this.lastSentBufferTime && (now - this.lastSentBufferTime < 1000) && this.lastSentBufferTrack === msg.trackName) {
               return;
             }
             const cached = this.localAudioBufferCache.get(msg.trackId) 
               || this.localAudioBufferCache.get(msg.trackName)
+              || (msg.audioUrl && this.localAudioBufferCache.get(msg.audioUrl))
               || this.currentAudioArrayBuffer;
             if (cached && (cached instanceof ArrayBuffer || cached.byteLength)) {
               this.lastSentBufferTime = now;
@@ -1246,7 +1320,12 @@ export class CloudMesh {
             const trackName = stream.name;
             const trackId = stream.id;
             this.incomingAudioChunks.delete(targetPeerId);
+            this.localAudioBufferCache.set(trackName, completeBuffer.buffer);
+            if (trackId) this.localAudioBufferCache.set(trackId, completeBuffer.buffer);
+            this.currentAudioArrayBuffer = completeBuffer.buffer;
+
             this.updateLoadingState(false, 'Siap');
+            this.broadcastReadiness('READY', trackId);
             this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 100, status: 'Audio P2P Siap!' });
             this.onEvent('BINARY_AUDIO_RECEIVED', {
               arrayBuffer: completeBuffer.buffer,
@@ -1339,9 +1418,9 @@ export class CloudMesh {
     });
   }
 
-  streamAudioToPeer(channel, arrayBuffer, trackName = 'Uploaded Track', trackId = '') {
+  async streamAudioToPeer(channel, arrayBuffer, trackName = 'Uploaded Track', trackId = '') {
     if (!channel || channel.readyState !== 'open' || !arrayBuffer) return;
-    const chunkSize = 64 * 1024;
+    const chunkSize = 32 * 1024;
     const totalBytes = arrayBuffer.byteLength;
     const totalChunks = Math.ceil(totalBytes / chunkSize);
 
@@ -1355,10 +1434,18 @@ export class CloudMesh {
       }));
 
       for (let offset = 0; offset < totalBytes; offset += chunkSize) {
+        if (channel.readyState !== 'open') break;
+
+        while (channel.bufferedAmount > 512 * 1024 && channel.readyState === 'open') {
+          await new Promise(r => setTimeout(r, 15));
+        }
+
         const chunk = arrayBuffer.slice(offset, offset + chunkSize);
         channel.send(chunk);
       }
-    } catch (e) { }
+    } catch (e) {
+      console.warn('P2P stream notice:', e.message);
+    }
   }
 
   async removeRemotePeer(targetPeerId) {

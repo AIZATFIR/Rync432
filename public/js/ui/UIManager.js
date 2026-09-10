@@ -1,6 +1,7 @@
 import { firebaseAuth } from '../auth/FirebaseAuth.js';
 import { QRCodeGenerator } from './QRCodeGenerator.js';
 import { QRScanner } from './QRScanner.js';
+import { MusicSourceManager } from '../music/MusicSourceManager.js';
 
 export class UIManager {
   constructor(app) {
@@ -13,6 +14,7 @@ export class UIManager {
     this.selectedDeviceForEdit = null;
     this.demoTrackIndex = 0;
     this.isPlayingState = false;
+    this.musicSourceManager = new MusicSourceManager();
   }
 
   init() {
@@ -92,15 +94,26 @@ export class UIManager {
       // Queue Section
       queueCardSection: document.getElementById('queueCardSection'),
       queueCountBadge: document.getElementById('queueCountBadge'),
-      queueListContainer: document.getElementById('queueListContainer'),
-      
       // Multi-Source Hub Tabs
-      tabBtnFile: document.getElementById('tabBtnFile'),
+      tabBtnDirectUrl: document.getElementById('tabBtnDirectUrl'),
       tabBtnYoutube: document.getElementById('tabBtnYoutube'),
+      tabBtnFile: document.getElementById('tabBtnFile'),
       tabBtnDemo: document.getElementById('tabBtnDemo'),
-      tabContentFile: document.getElementById('tabContentFile'),
+      tabContentDirectUrl: document.getElementById('tabContentDirectUrl'),
       tabContentYoutube: document.getElementById('tabContentYoutube'),
+      tabContentFile: document.getElementById('tabContentFile'),
       tabContentDemo: document.getElementById('tabContentDemo'),
+
+      // Direct URL Elements
+      directUrlInput: document.getElementById('directUrlInput'),
+      fetchDirectUrlBtn: document.getElementById('fetchDirectUrlBtn'),
+      directUrlFeedback: document.getElementById('directUrlFeedback'),
+      sampleUrlWav: document.getElementById('sampleUrlWav'),
+      sampleUrlSynth: document.getElementById('sampleUrlSynth'),
+
+      // Multi-Device Readiness Barrier
+      roomReadinessIndicator: document.getElementById('roomReadinessIndicator'),
+      roomReadinessText: document.getElementById('roomReadinessText'),
 
       // Upload & Demo Elements
       dropzone: document.getElementById('audioDropzone'),
@@ -409,7 +422,7 @@ export class UIManager {
 
     // 4. Multi-Source Tabs Switching
     const switchTab = (activeTab) => {
-      ['File', 'Youtube', 'Demo'].forEach(tab => {
+      ['DirectUrl', 'Youtube', 'File', 'Demo'].forEach(tab => {
         const btn = elements[`tabBtn${tab}`];
         const content = elements[`tabContent${tab}`];
         if (btn && content) {
@@ -424,9 +437,96 @@ export class UIManager {
       });
     };
 
-    if (elements.tabBtnFile) elements.tabBtnFile.addEventListener('click', () => switchTab('file'));
+    if (elements.tabBtnDirectUrl) elements.tabBtnDirectUrl.addEventListener('click', () => switchTab('directurl'));
     if (elements.tabBtnYoutube) elements.tabBtnYoutube.addEventListener('click', () => switchTab('youtube'));
+    if (elements.tabBtnFile) elements.tabBtnFile.addEventListener('click', () => switchTab('file'));
     if (elements.tabBtnDemo) elements.tabBtnDemo.addEventListener('click', () => switchTab('demo'));
+
+    // Direct Audio URL Ingestion & Stream Resolution
+    const handleDirectUrlIngest = async (url) => {
+      if (!url || !url.trim()) {
+        this.showUrlFeedback('Masukkan link audio yang valid (MP3 / WAV / OGG / FLAC / stream)', 'error');
+        return;
+      }
+      this.showUrlFeedback('Mengecek dan menyiapkan audio stream...', 'loading');
+      try {
+        await app.audioEngine.ensureContext();
+        if (!app.socketClient.roomId) {
+          app.socketClient.createRoom(this.getDeviceName());
+        }
+
+        const resolved = await this.musicSourceManager.resolve(url.trim());
+        const endpoint = await this.musicSourceManager.audioResolver.resolvePlayableEndpoint(resolved);
+
+        const item = {
+          id: resolved.trackId,
+          name: resolved.title,
+          artist: resolved.artist,
+          duration: resolved.duration || 0,
+          thumbnail: resolved.thumbnailUrl || '',
+          audioUrl: endpoint.playableUrl,
+          sourceType: resolved.sourceType,
+          isSynthetic: !!resolved.isSynthetic
+        };
+
+        this.showUrlFeedback(`Berhasil: ${resolved.title} (${endpoint.usedProxy ? 'via Proxy' : 'Direct CDN'})`, 'success');
+        setTimeout(() => {
+          if (elements.directUrlFeedback) elements.directUrlFeedback.style.display = 'none';
+        }, 4000);
+
+        if (!app.audioEngine.audioBuffer && !resolved.isSynthetic) {
+          this.setTrackLoading(`Memuat ${resolved.title}...`);
+          const buffer = await app.audioEngine.loadAudioFromUrl(endpoint.playableUrl, resolved.title);
+          this.updateTrackUI(resolved.title, buffer.duration, resolved.thumbnailUrl);
+        } else if (resolved.isSynthetic) {
+          app.audioEngine.generateSyntheticTrack();
+          this.updateTrackUI(resolved.title, resolved.duration || 20);
+        }
+
+        app.socketClient.addToQueue(item);
+        if (elements.directUrlInput) elements.directUrlInput.value = '';
+      } catch (err) {
+        console.error('Direct URL ingest error:', err);
+        this.showUrlFeedback(`Gagal: ${err.message || 'URL audio tidak dapat dijangkau'}`, 'error');
+      }
+    };
+
+    if (elements.fetchDirectUrlBtn) {
+      elements.fetchDirectUrlBtn.addEventListener('click', () => {
+        handleDirectUrlIngest(elements.directUrlInput?.value);
+      });
+    }
+
+    if (elements.directUrlInput) {
+      elements.directUrlInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          handleDirectUrlIngest(elements.directUrlInput.value);
+        }
+      });
+    }
+
+    if (elements.sampleUrlWav) {
+      elements.sampleUrlWav.addEventListener('click', () => {
+        handleDirectUrlIngest(window.location.origin + '/sample.wav');
+      });
+    }
+
+    if (elements.sampleUrlSynth) {
+      elements.sampleUrlSynth.addEventListener('click', () => {
+        app.audioEngine.ensureContext();
+        if (!app.socketClient.roomId) app.socketClient.createRoom(this.getDeviceName());
+        const synthTrack = {
+          id: 'public_synth_' + Date.now(),
+          name: 'Neon Cyber Synth',
+          artist: 'Rync Synth Lab',
+          duration: 20,
+          isSynthetic: true
+        };
+        app.audioEngine.generateSyntheticTrack();
+        this.updateTrackUI(synthTrack.name, synthTrack.duration);
+        app.socketClient.addToQueue(synthTrack);
+      });
+    }
 
     // 5. Genuine Live YouTube Search & Stream
     const handleYtSearchOrStream = async (queryOrUrl) => {
@@ -1202,6 +1302,13 @@ export class UIManager {
     }
   }
 
+  showUrlFeedback(msg, type = 'info') {
+    if (!this.elements.directUrlFeedback) return;
+    this.elements.directUrlFeedback.style.display = 'block';
+    this.elements.directUrlFeedback.className = `url-feedback-text ${type}`;
+    this.elements.directUrlFeedback.innerText = msg;
+  }
+
   setTrackLoading(msg) {
     if (this.elements.trackTitle) {
       this.elements.trackTitle.innerText = msg;
@@ -1330,6 +1437,21 @@ export class UIManager {
     
     if (this.elements.activeSpeakerCount) {
       this.elements.activeSpeakerCount.innerText = `${peers.length}`;
+    }
+
+    // Update Room Readiness Indicator Badge
+    if (this.elements.roomReadinessIndicator && this.elements.roomReadinessText) {
+      const readyCount = peers.filter(p => !p.isAudioLoading && p.readiness !== 'FAILED').length;
+      const totalCount = peers.length;
+      this.elements.roomReadinessText.innerText = `${readyCount}/${totalCount} Siap`;
+
+      if (readyCount === totalCount && totalCount > 0) {
+        this.elements.roomReadinessIndicator.className = 'readiness-indicator';
+      } else if (peers.some(p => p.readiness === 'FAILED')) {
+        this.elements.roomReadinessIndicator.className = 'readiness-indicator failed';
+      } else {
+        this.elements.roomReadinessIndicator.className = 'readiness-indicator buffering';
+      }
     }
 
     // Debounced and non-flickering peer loading notice banner for other devices

@@ -152,7 +152,11 @@
               </div>
               <div class="track-info-texts">
                 <div class="track-title" id="trackTitle">Pilih trek lagu</div>
-                <div class="track-sub" id="trackSub">Upload file, YouTube search, atau demo</div>
+                <div class="track-sub" id="trackSub">Direct URL, YouTube search, atau file</div>
+              </div>
+              <div class="readiness-indicator" id="roomReadinessIndicator" title="Status Kesiapan Speaker">
+                <span class="readiness-dot"></span>
+                <span id="roomReadinessText">1/1 Siap</span>
               </div>
               <button class="btn-sync-mini" id="refetchTrackBtn" title="Sync Audio">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -235,20 +239,38 @@
             </div>
 
             <div class="queue-list" id="queueListContainer">
-              <div class="queue-empty-msg">Antrean kosong. Tambah lagu dari YouTube, upload file, atau demo.</div>
+              <div class="queue-empty-msg">Antrean kosong. Tambah lagu dari Direct URL, YouTube, atau upload file.</div>
             </div>
           </div>
 
           <!-- Source Hub Tabs -->
           <div class="spotify-card">
             <div class="source-tabs-header">
-              <button class="source-tab-btn active" id="tabBtnFile">File</button>
+              <button class="source-tab-btn active" id="tabBtnDirectUrl">Direct URL</button>
               <button class="source-tab-btn" id="tabBtnYoutube">YouTube</button>
+              <button class="source-tab-btn" id="tabBtnFile">File</button>
               <button class="source-tab-btn" id="tabBtnDemo">Demo</button>
             </div>
 
+            <!-- Tab: Direct URL -->
+            <div class="source-tab-content active" id="tabContentDirectUrl">
+              <div class="yt-stream-box">
+                <div class="spotify-input-wrap">
+                  <input type="url" id="directUrlInput" class="spotify-input" placeholder="Paste link audio (MP3 / WAV / FLAC / OGG / stream)..." style="flex: 1;">
+                  <button class="btn-spotify btn-spotify-primary" id="fetchDirectUrlBtn">Load & Sync</button>
+                </div>
+                <div id="directUrlFeedback" class="url-feedback-text" style="display: none;"></div>
+
+                <div class="preset-chips" style="margin-top: 10px;">
+                  <span style="font-size: 0.72rem; color: var(--text-silver); margin-right: 4px; align-self: center;">Contoh:</span>
+                  <button class="chip-btn" id="sampleUrlWav" data-url="/sample.wav">Acoustic WAV</button>
+                  <button class="chip-btn" id="sampleUrlSynth" data-url="synth">Neon Synth</button>
+                </div>
+              </div>
+            </div>
+
             <!-- Tab: File Upload -->
-            <div class="source-tab-content active" id="tabContentFile">
+            <div class="source-tab-content" id="tabContentFile" style="display: none;">
               <div class="dropzone-box" id="audioDropzone">
                 <div class="dropzone-icon">
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -266,7 +288,7 @@
             <div class="source-tab-content" id="tabContentYoutube" style="display: none;">
               <div class="yt-stream-box">
                 <div class="spotify-input-wrap">
-                  <input type="text" id="ytUrlInput" class="spotify-input" placeholder="Cari judul lagu atau paste link..." style="flex: 1;">
+                  <input type="text" id="ytUrlInput" class="spotify-input" placeholder="Cari judul lagu atau link YouTube..." style="flex: 1;">
                   <button class="btn-spotify btn-spotify-primary" id="fetchYtAudioBtn">Cari</button>
                 </div>
 
