@@ -109,6 +109,7 @@ export class UIManager {
       fetchDirectUrlBtn: document.getElementById('fetchDirectUrlBtn'),
       directUrlFeedback: document.getElementById('directUrlFeedback'),
       sampleUrlWav: document.getElementById('sampleUrlWav'),
+      sampleUrlHelix: document.getElementById('sampleUrlHelix'),
       sampleUrlSynth: document.getElementById('sampleUrlSynth'),
 
       // Multi-Device Readiness Barrier
@@ -508,6 +509,12 @@ export class UIManager {
     if (elements.sampleUrlWav) {
       elements.sampleUrlWav.addEventListener('click', () => {
         handleDirectUrlIngest(window.location.origin + '/sample.wav');
+      });
+    }
+
+    if (elements.sampleUrlHelix) {
+      elements.sampleUrlHelix.addEventListener('click', () => {
+        handleDirectUrlIngest('https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3');
       });
     }
 

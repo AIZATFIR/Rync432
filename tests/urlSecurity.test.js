@@ -74,7 +74,7 @@ describe('urlSecurity - SSRF & IP Validation', () => {
     });
 
     it('allows valid public audio URLs', async () => {
-      const resValid = await validateStreamUrl('https://example.com/sound.mp3');
+      const resValid = await validateStreamUrl('https://8.8.8.8/sound.mp3');
       expect(resValid.valid).toBe(true);
       expect(resValid.parsedUrl).toBeDefined();
     });
