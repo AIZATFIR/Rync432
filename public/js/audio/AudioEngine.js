@@ -252,7 +252,14 @@ export class AudioEngine {
     const fetchOptions = signal ? { signal } : {};
     const response = await fetch(url, fetchOptions);
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      let errorDetail = `HTTP error! status: ${response.status}`;
+      try {
+        const errJson = await response.json();
+        if (errJson && errJson.error) {
+          errorDetail = errJson.error;
+        }
+      } catch (e) {}
+      throw new Error(errorDetail);
     }
     const arrayBuffer = await response.arrayBuffer();
     return this.loadAudioFromArrayBuffer(arrayBuffer, trackName);

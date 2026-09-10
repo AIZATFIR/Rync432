@@ -93,13 +93,26 @@ export default async function handler(req, res) {
     console.warn('Innertube direct error:', err.message);
   }
 
-  // 3. Fallback: Secondary Multi-Node Extractors
+  // 3. Fallback: Secondary Multi-Node Extractors (Cobalt v10, Invidious, Piped)
   if (!resolvedAudioUrl) {
     const fallbackNodes = [
       {
         type: 'cobalt',
-        url: 'https://cobalt-api.kwiatekm.tokyo/api/json',
-        body: { url: `https://www.youtube.com/watch?v=${videoId}`, isAudioOnly: true, aFormat: 'mp3' }
+        url: 'https://api.cobalt.tools',
+        body: { url: `https://www.youtube.com/watch?v=${videoId}`, downloadMode: 'audio', audioFormat: 'mp3' }
+      },
+      {
+        type: 'cobalt',
+        url: 'https://cobalt-api.kwiatekm.tokyo',
+        body: { url: `https://www.youtube.com/watch?v=${videoId}`, downloadMode: 'audio', audioFormat: 'mp3' }
+      },
+      {
+        type: 'invidious',
+        url: `https://yewtu.be/api/v1/videos/${videoId}`
+      },
+      {
+        type: 'invidious',
+        url: `https://invidious.jing.rocks/api/v1/videos/${videoId}`
       },
       {
         type: 'invidious',
@@ -108,17 +121,13 @@ export default async function handler(req, res) {
       {
         type: 'invidious',
         url: `https://inv.tux.pizza/api/v1/videos/${videoId}`
-      },
-      {
-        type: 'piped',
-        url: `https://pipedapi.kavin.rocks/streams/${videoId}`
       }
     ];
 
     for (const node of fallbackNodes) {
       try {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 3000);
+        const timeout = setTimeout(() => controller.abort(), 3500);
 
         if (node.type === 'cobalt') {
           const resp = await fetch(node.url, {
@@ -127,7 +136,7 @@ export default async function handler(req, res) {
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
-              'User-Agent': 'Mozilla/5.0'
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
             },
             body: JSON.stringify(node.body)
           });
@@ -185,7 +194,8 @@ export default async function handler(req, res) {
   }
 
   return res.status(422).json({
-    error: 'Gagal mengekstrak audio YouTube. Gunakan tab "File" untuk upload file audio langsung tanpa hambatan.',
-    videoId
+    error: 'PROVIDER_UNAVAILABLE: Stream YouTube diblokir oleh IP cloud/serverless. Gunakan link Direct Audio (MP3/WAV/FLAC) atau upload file langsung.',
+    videoId,
+    source: 'youtube'
   });
 }
