@@ -1002,7 +1002,7 @@ export class CloudMesh {
       const totalBytes = contentLength ? parseInt(contentLength, 10) : 0;
 
       let arrayBuffer;
-      if (response.body && totalBytes > 0) {
+      if (response.body) {
         const reader = response.body.getReader();
         const chunks = [];
         let receivedBytes = 0;
@@ -1012,9 +1012,15 @@ export class CloudMesh {
           if (done) break;
           chunks.push(value);
           receivedBytes += value.length;
-          const pct = Math.min(99, Math.round((receivedBytes / totalBytes) * 100));
-          this.updateLoadingState(true, `Mengunduh ${pct}%`);
-          this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct, status: `Mengunduh (${pct}%)...` });
+          if (totalBytes > 0) {
+            const pct = Math.min(99, Math.round((receivedBytes / totalBytes) * 100));
+            this.updateLoadingState(true, `Mengunduh ${pct}%`);
+            this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct, status: `Mengunduh (${pct}%)...` });
+          } else {
+            const mb = (receivedBytes / (1024 * 1024)).toFixed(1);
+            this.updateLoadingState(true, `Mengunduh ${mb} MB...`);
+            this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 50, status: `Mengunduh (${mb} MB)...` });
+          }
         }
 
         const complete = new Uint8Array(receivedBytes);

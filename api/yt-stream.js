@@ -204,9 +204,23 @@ export default async function handler(req, res) {
 
       if (audioFetch.ok) {
         const contentType = audioFetch.headers.get('content-type') || 'audio/mp4';
+        const contentLength = audioFetch.headers.get('content-length');
         res.setHeader('Content-Type', contentType);
         res.setHeader('X-Track-Title', encodeURIComponent(trackTitle));
         res.setHeader('Cache-Control', 'public, max-age=3600');
+        if (contentLength) {
+          res.setHeader('Content-Length', contentLength);
+        }
+
+        if (audioFetch.body && typeof audioFetch.body.getReader === 'function') {
+          try {
+            const { Readable } = await import('stream');
+            if (typeof Readable.fromWeb === 'function') {
+              return Readable.fromWeb(audioFetch.body).pipe(res);
+            }
+          } catch (e) {}
+        }
+
         const arrayBuf = await audioFetch.arrayBuffer();
         return res.status(200).send(Buffer.from(arrayBuf));
       } else {
