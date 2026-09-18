@@ -20,6 +20,8 @@ export class CloudMesh {
     // WebRTC P2P Connections
     this.peerConnections = new Map();
     this.dataChannels = new Map();
+    this.pendingIceCandidates = new Map();
+    this.lastSentBufferPerPeer = new Map();
     this.incomingAudioChunks = new Map();
     this.currentAudioArrayBuffer = null;
     this.localAudioBufferCache = new Map();
@@ -1176,13 +1178,18 @@ export class CloudMesh {
   createPeerConnection(targetPeerId) {
     const config = {
       iceServers: [
+        { urls: 'stun:stun.cloudflare.com:3478' },
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' }
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun.relay.metered.ca:80' }
       ]
     };
 
     const pc = new RTCPeerConnection(config);
+    if (!this.pendingIceCandidates.has(targetPeerId)) {
+      this.pendingIceCandidates.set(targetPeerId, []);
+    }
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
@@ -1198,6 +1205,7 @@ export class CloudMesh {
         try { pc.close(); } catch (e) { }
         this.peerConnections.delete(targetPeerId);
         this.dataChannels.delete(targetPeerId);
+        this.pendingIceCandidates.delete(targetPeerId);
       }
     };
 
@@ -1285,7 +1293,9 @@ export class CloudMesh {
             }
           } else if (msg.type === 'REQUEST_AUDIO_BUFFER') {
             const now = Date.now();
-            if (this.lastSentBufferTime && (now - this.lastSentBufferTime < 1000) && this.lastSentBufferTrack === msg.trackName) {
+            const peerKey = `${targetPeerId}_${msg.trackId || msg.trackName}`;
+            const lastSent = this.lastSentBufferPerPeer.get(peerKey) || 0;
+            if (now - lastSent < 1500) {
               return;
             }
             const cached = this.localAudioBufferCache.get(msg.trackId) 
@@ -1293,8 +1303,7 @@ export class CloudMesh {
               || (msg.audioUrl && this.localAudioBufferCache.get(msg.audioUrl))
               || this.currentAudioArrayBuffer;
             if (cached && (cached instanceof ArrayBuffer || cached.byteLength)) {
-              this.lastSentBufferTime = now;
-              this.lastSentBufferTrack = msg.trackName;
+              this.lastSentBufferPerPeer.set(peerKey, now);
               this.streamAudioToPeer(channel, cached, msg.trackName || this.lastKnownTrack?.name || 'Uploaded Track', msg.trackId || this.lastKnownTrack?.id || '');
             }
           }
@@ -1380,6 +1389,18 @@ export class CloudMesh {
     } catch (e) { }
   }
 
+  async drainPendingIceCandidates(peerId, pc) {
+    const pending = this.pendingIceCandidates.get(peerId);
+    if (Array.isArray(pending) && pending.length > 0) {
+      for (const candidate of pending) {
+        try {
+          await pc.addIceCandidate(candidate);
+        } catch (e) { }
+      }
+      this.pendingIceCandidates.set(peerId, []);
+    }
+  }
+
   async handleIncomingSignal(fromPeerId, signalData) {
     let pc = this.peerConnections.get(fromPeerId);
     if (!pc) {
@@ -1389,6 +1410,7 @@ export class CloudMesh {
     try {
       if (signalData.type === 'offer') {
         await pc.setRemoteDescription(new RTCSessionDescription(signalData.sdp));
+        await this.drainPendingIceCandidates(fromPeerId, pc);
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         await this.sendSignal(fromPeerId, {
@@ -1398,10 +1420,18 @@ export class CloudMesh {
       } else if (signalData.type === 'answer') {
         if (pc.signalingState !== 'stable') {
           await pc.setRemoteDescription(new RTCSessionDescription(signalData.sdp));
+          await this.drainPendingIceCandidates(fromPeerId, pc);
         }
       } else if (signalData.type === 'candidate') {
         if (signalData.candidate) {
-          await pc.addIceCandidate(new RTCIceCandidate(signalData.candidate));
+          const candidate = new RTCIceCandidate(signalData.candidate);
+          if (pc.remoteDescription && pc.remoteDescription.type) {
+            await pc.addIceCandidate(candidate);
+          } else {
+            const pending = this.pendingIceCandidates.get(fromPeerId) || [];
+            pending.push(candidate);
+            this.pendingIceCandidates.set(fromPeerId, pending);
+          }
         }
       }
     } catch (e) {

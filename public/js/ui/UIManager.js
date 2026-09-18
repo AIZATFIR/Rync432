@@ -1244,7 +1244,7 @@ export class UIManager {
           app.socketClient.cloudMesh.localAudioBufferCache.set(blobUrl, arrayBuffer);
         }
 
-        // 1. Direct High-Speed Cloud CDN Upload
+        // 1. Direct High-Speed Cloud CDN Upload with Server Relay Fallback
         this.setTrackLoading(`Mengunggah (${i + 1}/${totalFiles}) ${file.name}...`);
         let cloudAudioUrl = '';
         try {
@@ -1264,7 +1264,38 @@ export class UIManager {
             }
           }
         } catch (e) {
-          console.warn('Direct upload notice:', e);
+          console.warn('Direct upload notice, trying server relay:', e);
+        }
+
+        if (!cloudAudioUrl && arrayBuffer.byteLength < 35 * 1024 * 1024) {
+          try {
+            const chunkSize = 0x8000;
+            const bytes = new Uint8Array(arrayBuffer);
+            let binary = '';
+            for (let b = 0; b < bytes.byteLength; b += chunkSize) {
+              const chunk = bytes.subarray(b, Math.min(b + chunkSize, bytes.byteLength));
+              binary += String.fromCharCode.apply(null, chunk);
+            }
+            const b64 = btoa(binary);
+
+            const uploadApiRes = await fetch('/api/upload-audio', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                audioBase64: b64,
+                fileName: file.name,
+                contentType: file.type || 'audio/mpeg'
+              })
+            });
+            if (uploadApiRes.ok) {
+              const uploadApiData = await uploadApiRes.json();
+              if (uploadApiData.audioUrl) {
+                cloudAudioUrl = uploadApiData.audioUrl;
+              }
+            }
+          } catch (relayErr) {
+            console.warn('Server upload relay notice:', relayErr);
+          }
         }
 
         if (!cloudAudioUrl) {

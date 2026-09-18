@@ -6,6 +6,11 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { RoomManager } from './roomManager.js';
 import { handleStreamProxy } from './streaming/proxyStream.js';
 import { validateStreamUrl } from './streaming/urlSecurity.js';
+import roomHandler from '../api/room.js';
+import uploadAudioHandler from '../api/upload-audio.js';
+import ytSearchHandler from '../api/yt-search.js';
+import ytStreamHandler from '../api/yt-stream.js';
+import healthHandler from '../api/health.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,6 +19,44 @@ const PORT = process.env.PORT || 3000;
 
 const roomManager = new RoomManager();
 const peerSockets = new Map();
+
+async function runApiHandler(handler, req, res) {
+  const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  req.query = Object.fromEntries(urlObj.searchParams.entries());
+
+  if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
+    const buffers = [];
+    for await (const chunk of req) {
+      buffers.push(chunk);
+    }
+    const rawBody = Buffer.concat(buffers).toString('utf-8');
+    try {
+      req.body = JSON.parse(rawBody);
+    } catch (e) {
+      req.body = rawBody;
+    }
+  } else {
+    req.body = {};
+  }
+
+  res.status = (code) => {
+    res.statusCode = code;
+    return res;
+  };
+
+  res.json = (data) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify(data));
+    return res;
+  };
+
+  res.send = (data) => {
+    res.end(data);
+    return res;
+  };
+
+  return handler(req, res);
+}
 
 const server = http.createServer(async (req, res) => {
   const reqUrl = req.url.split('?')[0];
@@ -37,6 +80,27 @@ const server = http.createServer(async (req, res) => {
       res.statusCode = 500;
       return res.end(JSON.stringify({ valid: false, error: e.message }));
     }
+  }
+
+  // 3. API: Room & Signaling Handlers
+  if (reqUrl === '/api/room') {
+    return runApiHandler(roomHandler, req, res);
+  }
+
+  if (reqUrl === '/api/upload-audio') {
+    return runApiHandler(uploadAudioHandler, req, res);
+  }
+
+  if (reqUrl === '/api/yt-search') {
+    return runApiHandler(ytSearchHandler, req, res);
+  }
+
+  if (reqUrl === '/api/yt-stream') {
+    return runApiHandler(ytStreamHandler, req, res);
+  }
+
+  if (reqUrl === '/api/health') {
+    return runApiHandler(healthHandler, req, res);
   }
 
   // 3. Static File Serving
