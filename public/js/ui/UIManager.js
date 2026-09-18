@@ -475,17 +475,24 @@ export class UIManager {
           if (elements.directUrlFeedback) elements.directUrlFeedback.style.display = 'none';
         }, 4000);
 
+        // 1. Add to queue immediately (optimistic UI update)
+        await app.socketClient.addToQueue(item);
+        if (elements.directUrlInput) elements.directUrlInput.value = '';
+
+        // 2. Load audio in background if no buffer currently loaded
         if (!app.audioEngine.audioBuffer && !resolved.isSynthetic) {
           this.setTrackLoading(`Memuat ${resolved.title}...`);
-          const buffer = await app.audioEngine.loadAudioFromUrl(endpoint.playableUrl, resolved.title);
-          this.updateTrackUI(resolved.title, buffer.duration, resolved.thumbnailUrl);
+          this.updateTrackUI(resolved.title, resolved.duration || 0, resolved.thumbnailUrl);
+          app.audioEngine.loadAudioFromUrl(endpoint.playableUrl, resolved.title)
+            .then(buffer => {
+              this.updateTrackUI(resolved.title, buffer.duration, resolved.thumbnailUrl);
+              this.clearTrackLoading();
+            })
+            .catch(e => console.warn('Direct URL load notice:', e));
         } else if (resolved.isSynthetic) {
           app.audioEngine.generateSyntheticTrack();
           this.updateTrackUI(resolved.title, resolved.duration || 20);
         }
-
-        app.socketClient.addToQueue(item);
-        if (elements.directUrlInput) elements.directUrlInput.value = '';
       } catch (err) {
         console.error('Direct URL ingest error:', err);
         this.showUrlFeedback(`Gagal: ${err.message || 'URL audio tidak dapat dijangkau'}`, 'error');
@@ -888,10 +895,28 @@ export class UIManager {
           <div class="yt-result-title">${item.title}</div>
           <div class="yt-result-meta">${item.channel} • ${item.durationText || this.formatTime(item.duration)}</div>
         </div>
-        <button class="btn-spotify btn-spotify-primary" style="padding: 4px 10px; font-size: 0.72rem; min-height: 28px;">
+        <button class="btn-spotify btn-spotify-primary add-yt-queue-btn" style="padding: 4px 10px; font-size: 0.72rem; min-height: 28px; white-space: nowrap;">
           + Queue
         </button>
       `;
+
+      const queueBtn = card.querySelector('.add-yt-queue-btn');
+      if (queueBtn) {
+        queueBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          queueBtn.innerText = '✓ Ditambah';
+          queueBtn.style.backgroundColor = 'var(--spotify-green)';
+          queueBtn.style.color = '#000';
+          await this.streamAudioFromUrl(item.url, item.title, item.channel, item.duration, thumbSrc);
+          setTimeout(() => {
+            if (queueBtn) {
+              queueBtn.innerText = '+ Queue';
+              queueBtn.style.backgroundColor = '';
+              queueBtn.style.color = '';
+            }
+          }, 2500);
+        });
+      }
 
       card.addEventListener('click', () => {
         this.streamAudioFromUrl(item.url, item.title, item.channel, item.duration, thumbSrc);
@@ -902,6 +927,11 @@ export class UIManager {
   }
 
   async streamAudioFromUrl(url, trackTitle, artist = 'YouTube', duration = 210, thumbnail = '') {
+    this.app.audioEngine.ensureContext();
+    if (!this.app.socketClient.roomId) {
+      this.app.socketClient.createRoom(this.getDeviceName());
+    }
+
     const streamEndpoint = `/api/yt-stream?url=${encodeURIComponent(url)}`;
     let thumbUrl = thumbnail;
     if (!thumbUrl || thumbUrl === 'NA' || !thumbUrl.startsWith('http')) {
@@ -915,22 +945,27 @@ export class UIManager {
       id: 'q_' + Math.random().toString(36).substring(2, 9),
       name: trackTitle,
       artist,
-      duration,
+      duration: duration || 210,
       thumbnail: thumbUrl,
       audioUrl: streamEndpoint
     };
 
+    // 1. ADD TO QUEUE FIRST (Optimistic immediate update, never blocked by audio fetch!)
+    await this.app.socketClient.addToQueue(item);
+
+    // 2. If no track currently loaded, update UI and trigger load in background
     if (!this.app.audioEngine.audioBuffer) {
       this.setTrackLoading(`Mengekstrak ${trackTitle}...`);
-      try {
-        const buffer = await this.app.audioEngine.loadAudioFromUrl(streamEndpoint, trackTitle);
-        this.updateTrackUI(trackTitle, buffer.duration, thumbUrl);
-      } catch (err) {
-        console.error('Audio stream error:', err);
-      }
+      this.updateTrackUI(trackTitle, duration, thumbUrl);
+      this.app.audioEngine.loadAudioFromUrl(streamEndpoint, trackTitle)
+        .then(buffer => {
+          this.updateTrackUI(trackTitle, buffer.duration, thumbUrl);
+          this.clearTrackLoading();
+        })
+        .catch(err => {
+          console.warn('Audio background stream notice:', err);
+        });
     }
-
-    this.app.socketClient.addToQueue(item);
   }
 
   renderQueue(queue = []) {
