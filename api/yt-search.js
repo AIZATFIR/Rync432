@@ -32,11 +32,10 @@ export default async function handler(req, res) {
     for (const line of lines) {
       const parts = line.split('|||');
       if (parts.length >= 3 && parts[0]) {
-        const id = parts[0].trim();
-        const title = parts[1]?.trim() || 'YouTube Track';
-        const channel = parts[2]?.trim() || 'YouTube Artist';
-        const duration = parseInt(parts[3] || '210', 10) || 210;
-        const thumbnail = parts[4]?.trim() || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+        const rawThumb = parts[4]?.trim();
+        const thumbnail = (rawThumb && rawThumb !== 'NA' && rawThumb.startsWith('http'))
+          ? rawThumb
+          : `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
         results.push({
           id,
           title,

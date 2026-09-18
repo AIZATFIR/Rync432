@@ -875,10 +875,15 @@ export class UIManager {
     list.innerHTML = '';
 
     results.forEach((item) => {
+      const rawThumb = item.thumbnail;
+      const thumbSrc = (rawThumb && rawThumb !== 'NA' && rawThumb.startsWith('http'))
+        ? rawThumb
+        : `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`;
+
       const card = document.createElement('div');
       card.className = 'yt-result-item';
       card.innerHTML = `
-        <img class="yt-result-thumb" src="${item.thumbnail}" alt="Thumbnail">
+        <img class="yt-result-thumb" src="${thumbSrc}" alt="Thumbnail" onerror="this.src='https://img.youtube.com/vi/${item.id}/mqdefault.jpg'">
         <div class="yt-result-info">
           <div class="yt-result-title">${item.title}</div>
           <div class="yt-result-meta">${item.channel} • ${item.durationText || this.formatTime(item.duration)}</div>
@@ -889,7 +894,7 @@ export class UIManager {
       `;
 
       card.addEventListener('click', () => {
-        this.streamAudioFromUrl(item.url, item.title, item.channel, item.duration, item.thumbnail);
+        this.streamAudioFromUrl(item.url, item.title, item.channel, item.duration, thumbSrc);
       });
 
       list.appendChild(card);
@@ -898,12 +903,20 @@ export class UIManager {
 
   async streamAudioFromUrl(url, trackTitle, artist = 'YouTube', duration = 210, thumbnail = '') {
     const streamEndpoint = `/api/yt-stream?url=${encodeURIComponent(url)}`;
+    let thumbUrl = thumbnail;
+    if (!thumbUrl || thumbUrl === 'NA' || !thumbUrl.startsWith('http')) {
+      const match = url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([a-zA-Z0-9_-]{11})/);
+      if (match) {
+        thumbUrl = `https://i.ytimg.com/vi/${match[1]}/hqdefault.jpg`;
+      }
+    }
+
     const item = {
       id: 'q_' + Math.random().toString(36).substring(2, 9),
       name: trackTitle,
       artist,
       duration,
-      thumbnail,
+      thumbnail: thumbUrl,
       audioUrl: streamEndpoint
     };
 
@@ -911,7 +924,7 @@ export class UIManager {
       this.setTrackLoading(`Mengekstrak ${trackTitle}...`);
       try {
         const buffer = await this.app.audioEngine.loadAudioFromUrl(streamEndpoint, trackTitle);
-        this.updateTrackUI(trackTitle, buffer.duration, thumbnail);
+        this.updateTrackUI(trackTitle, buffer.duration, thumbUrl);
       } catch (err) {
         console.error('Audio stream error:', err);
       }
@@ -1371,9 +1384,23 @@ export class UIManager {
     if (this.elements.trackSub) this.elements.trackSub.innerText = `${this.formatTime(duration)} • Ready`;
     if (this.elements.totalTimeText) this.elements.totalTimeText.innerText = this.formatTime(duration);
 
+    const currentTrack = this.app?.socketClient?.cloudMesh?.lastKnownTrack;
+    let thumbUrl = thumbnail;
+    if (!thumbUrl || thumbUrl === 'NA' || !thumbUrl.startsWith('http')) {
+      thumbUrl = currentTrack?.thumbnail;
+    }
+    if (!thumbUrl || thumbUrl === 'NA' || !thumbUrl.startsWith('http')) {
+      const match = (currentTrack?.audioUrl || currentTrack?.url || currentTrack?.id || '')
+        .match(/(?:v=|youtu\.be\/|shorts\/|embed\/|\/vi\/|aud_yt_|yt_)([a-zA-Z0-9_-]{11})/);
+      if (match) {
+        thumbUrl = `https://i.ytimg.com/vi/${match[1]}/hqdefault.jpg`;
+      }
+    }
+
     if (this.elements.albumArtBox) {
-      if (thumbnail) {
-        this.elements.albumArtBox.innerHTML = `<img src="${thumbnail}" alt="Artwork" style="width:100%;height:100%;object-fit:cover;">`;
+      if (thumbUrl && thumbUrl.startsWith('http')) {
+        const vidId = thumbUrl.match(/[a-zA-Z0-9_-]{11}/)?.[0] || '';
+        this.elements.albumArtBox.innerHTML = `<img src="${thumbUrl}" alt="Artwork" style="width:100%;height:100%;object-fit:cover;border-radius:6px;" onerror="this.src='https://img.youtube.com/vi/${vidId}/mqdefault.jpg'">`;
       } else {
         this.elements.albumArtBox.innerHTML = `
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
