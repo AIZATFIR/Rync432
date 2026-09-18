@@ -1,5 +1,7 @@
-// Genuine YouTube Live Search Scraper (Discord Music Bot style)
-// Scrapes live YouTube results directly from youtube.com ytInitialData without API keys or mock fallback.
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+
+const execFileAsync = promisify(execFile);
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -14,6 +16,43 @@ export default async function handler(req, res) {
   const query = req.query?.q || '';
   if (!query.trim()) {
     return res.status(400).json({ error: 'Missing search query ?q=...' });
+  }
+
+  // 1. Primary for Dedicated Server: Native yt-dlp search
+  try {
+    const { stdout } = await execFileAsync('yt-dlp', [
+      '--no-warnings',
+      '--flat-playlist',
+      '--print', '%(id)s|||%(title)s|||%(uploader)s|||%(duration)s|||%(thumbnail)s',
+      `ytsearch8:${query}`
+    ], { timeout: 8000 });
+
+    const results = [];
+    const lines = stdout.trim().split('\n').filter(Boolean);
+    for (const line of lines) {
+      const parts = line.split('|||');
+      if (parts.length >= 3 && parts[0]) {
+        const id = parts[0].trim();
+        const title = parts[1]?.trim() || 'YouTube Track';
+        const channel = parts[2]?.trim() || 'YouTube Artist';
+        const duration = parseInt(parts[3] || '210', 10) || 210;
+        const thumbnail = parts[4]?.trim() || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+        results.push({
+          id,
+          title,
+          channel,
+          duration,
+          durationText: `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}`,
+          thumbnail,
+          url: `https://www.youtube.com/watch?v=${id}`
+        });
+      }
+    }
+    if (results.length > 0) {
+      return res.status(200).json({ results });
+    }
+  } catch (ytDlpErr) {
+    // yt-dlp not available or failed, fallback to HTTP HTML scraping
   }
 
   try {

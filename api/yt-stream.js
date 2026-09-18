@@ -1,5 +1,7 @@
-// Rync432 High-Speed YouTube & Audio Stream Proxy Engine
-// Direct YouTube Innertube Audio Stream Extraction (Zero Key / Zero Proxy Delay)
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+
+const execFileAsync = promisify(execFile);
 
 export const config = {
   api: {
@@ -52,6 +54,28 @@ export default async function handler(req, res) {
 
   let resolvedAudioUrl = null;
   let trackTitle = 'YouTube Audio';
+
+  // 2. Primary for Dedicated Server: Native yt-dlp (Bypasses all bot-blocks & extract audio instantly)
+  try {
+    const { stdout } = await execFileAsync('yt-dlp', [
+      '--no-warnings',
+      '--no-playlist',
+      '--print', '%(title)s',
+      '--print', '%(url)s',
+      '-f', 'bestaudio[ext=m4a]/bestaudio/best',
+      `https://www.youtube.com/watch?v=${videoId}`
+    ], { timeout: 12000 });
+
+    const lines = stdout.trim().split('\n').filter(Boolean);
+    if (lines.length >= 2) {
+      trackTitle = lines[0].trim() || trackTitle;
+      resolvedAudioUrl = lines[1].trim();
+    } else if (lines.length === 1 && lines[0].startsWith('http')) {
+      resolvedAudioUrl = lines[0].trim();
+    }
+  } catch (ytDlpErr) {
+    // yt-dlp not available or failed, fallback to HTTP scrapers
+  }
 
   // 2. Primary: Direct YouTube Innertube API (ANDROID_VR Client)
   try {
