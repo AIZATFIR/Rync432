@@ -55,6 +55,20 @@ async function runApiHandler(handler, req, res) {
     return res;
   };
 
+  res.redirect = (urlOrStatus, url) => {
+    let status = 302;
+    let target = urlOrStatus;
+    if (typeof urlOrStatus === 'number') {
+      status = urlOrStatus;
+      target = url;
+    }
+    if (!res.headersSent) {
+      res.writeHead(status, { Location: target });
+      res.end();
+    }
+    return res;
+  };
+
   return handler(req, res);
 }
 
@@ -117,7 +131,11 @@ const server = http.createServer(async (req, res) => {
     '.svg': 'image/svg+xml',
     '.mp3': 'audio/mpeg',
     '.wav': 'audio/wav',
-    '.ogg': 'audio/ogg'
+    '.ogg': 'audio/ogg',
+    '.webm': 'audio/webm',
+    '.m4a': 'audio/mp4',
+    '.flac': 'audio/flac',
+    '.aac': 'audio/aac'
   };
 
   const contentType = mimeTypes[extname] || 'application/octet-stream';
