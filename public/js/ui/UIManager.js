@@ -93,6 +93,7 @@ export class UIManager {
 
       // Queue Section
       queueCardSection: document.getElementById('queueCardSection'),
+      queueListContainer: document.getElementById('queueListContainer'),
       queueCountBadge: document.getElementById('queueCountBadge'),
       // Multi-Source Hub Tabs
       tabBtnDirectUrl: document.getElementById('tabBtnDirectUrl'),
