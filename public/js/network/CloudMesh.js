@@ -684,6 +684,7 @@ export class CloudMesh {
       isSynthetic: !!track.isSynthetic,
       addedBy: track.addedBy || this.deviceName
     };
+    this.deletedQueueIds.delete(item.id);
 
     if (!currentQ.some(q => q.id === item.id)) {
       this.lastKnownQueue = [...currentQ, item];
@@ -701,29 +702,33 @@ export class CloudMesh {
       this.broadcastDataChannelMessage({ type: 'TRACK_METADATA', metadata: item });
     }
 
-    try {
-      const res = await fetch('/api/room?action=add_queue', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          roomId: this.roomId,
-          peerId: this.peerId,
-          deviceName: this.deviceName,
-          ...item
-        })
-      });
-      const data = await res.json();
+    fetch('/api/room?action=add_queue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomId: this.roomId,
+        peerId: this.peerId,
+        deviceName: this.deviceName,
+        ...item
+      })
+    }).then(res => res.json()).then(data => {
       if (data.queue && data.queue.length > 0) {
-        this.lastKnownQueue = data.queue;
-        this.lastKnownQueueStr = JSON.stringify(data.queue);
-        this.saveLocalQueue(data.queue);
-        this.onEvent('QUEUE_UPDATED', { queue: data.queue });
-        this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: data.queue });
-        this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: data.queue });
+        const confirmedTracks = data.queue.filter(track => !this.deletedQueueIds.has(track.id));
+        const serverIds = new Set(confirmedTracks.map(track => track.id));
+        const pendingLocalTracks = (this.lastKnownQueue || []).filter(track =>
+          !serverIds.has(track.id) && !this.deletedQueueIds.has(track.id)
+        );
+        const mergedQueue = [...confirmedTracks, ...pendingLocalTracks];
+        this.lastKnownQueue = mergedQueue;
+        this.lastKnownQueueStr = JSON.stringify(mergedQueue);
+        this.saveLocalQueue(mergedQueue);
+        this.onEvent('QUEUE_UPDATED', { queue: mergedQueue });
+        this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: mergedQueue });
+        this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: mergedQueue });
         if (this.broadcastChannel) {
           this.broadcastChannel.postMessage({
             type: 'QUEUE_UPDATED',
-            payload: { queue: data.queue }
+            payload: { queue: mergedQueue }
           });
         }
       }
@@ -732,7 +737,7 @@ export class CloudMesh {
         this.onEvent('TRACK_METADATA', data.track);
         this.publishMqtt(this.roomTopic, { type: 'TRACK_METADATA', metadata: data.track });
       }
-    } catch (e) { }
+    }).catch(() => {});
   }
 
   async playQueueItem(queueId, autoplay = false) {
@@ -1230,8 +1235,7 @@ export class CloudMesh {
       this.dataChannels.set(targetPeerId, channel);
       if (this.isHost) {
         const targetTrack = this.lastKnownTrack;
-        const activeBuffer = (targetTrack && (this.localAudioBufferCache.get(targetTrack.id) || this.localAudioBufferCache.get(targetTrack.name) || (targetTrack.audioUrl && this.localAudioBufferCache.get(targetTrack.audioUrl))))
-          || this.currentAudioArrayBuffer;
+        const activeBuffer = targetTrack && (this.localAudioBufferCache.get(targetTrack.id) || this.localAudioBufferCache.get(targetTrack.name) || (targetTrack.audioUrl && this.localAudioBufferCache.get(targetTrack.audioUrl)));
         if (activeBuffer && (activeBuffer instanceof ArrayBuffer || activeBuffer.byteLength)) {
           this.streamAudioToPeer(channel, activeBuffer, targetTrack?.name || 'Uploaded Track', targetTrack?.id || '');
         }
@@ -1306,8 +1310,7 @@ export class CloudMesh {
             }
             const cached = this.localAudioBufferCache.get(msg.trackId) 
               || this.localAudioBufferCache.get(msg.trackName)
-              || (msg.audioUrl && this.localAudioBufferCache.get(msg.audioUrl))
-              || this.currentAudioArrayBuffer;
+              || (msg.audioUrl && this.localAudioBufferCache.get(msg.audioUrl));
             if (cached && (cached instanceof ArrayBuffer || cached.byteLength)) {
               this.lastSentBufferPerPeer.set(peerKey, now);
               this.streamAudioToPeer(channel, cached, msg.trackName || this.lastKnownTrack?.name || 'Uploaded Track', msg.trackId || this.lastKnownTrack?.id || '');

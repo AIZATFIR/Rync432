@@ -35,7 +35,7 @@ export default async function handler(req, res) {
         const id = parts[0].trim();
         const title = parts[1]?.trim() || 'YouTube Track';
         const channel = parts[2]?.trim() || 'YouTube Artist';
-        const duration = parseInt(parts[3] || '210', 10) || 210;
+        const duration = Number(parts[3]) || 0;
         const rawThumb = parts[4]?.trim();
         const thumbnail = (rawThumb && rawThumb !== 'NA' && rawThumb.startsWith('http'))
           ? rawThumb

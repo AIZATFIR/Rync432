@@ -60,6 +60,7 @@ export default async function handler(req, res) {
     const { stdout } = await execFileAsync('yt-dlp', [
       '--no-warnings',
       '--no-playlist',
+      '--extractor-args', 'youtube:player_client=android',
       '--print', '%(title)s',
       '--print', '%(url)s',
       '-f', 'bestaudio[ext=m4a]/bestaudio/best',
@@ -77,44 +78,46 @@ export default async function handler(req, res) {
     // yt-dlp not available or failed, fallback to HTTP scrapers
   }
 
-  // 2. Primary: Direct YouTube Innertube API (ANDROID_VR Client)
-  try {
-    const innertubeResp = await fetch('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'X-YouTube-Client-Name': '28',
-        'X-YouTube-Client-Version': '1.58.18'
-      },
-      body: JSON.stringify({
-        context: {
-          client: {
-            clientName: 'ANDROID_VR',
-            clientVersion: '1.58.18',
-            deviceModel: 'Quest 3',
-            hl: 'en',
-            gl: 'US'
-          }
+  // 2. Fallback: Direct YouTube Innertube API (ANDROID_VR Client)
+  if (!resolvedAudioUrl) {
+    try {
+      const innertubeResp = await fetch('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          'X-YouTube-Client-Name': '28',
+          'X-YouTube-Client-Version': '1.58.18'
         },
-        videoId: videoId
-      })
-    });
+        body: JSON.stringify({
+          context: {
+            client: {
+              clientName: 'ANDROID_VR',
+              clientVersion: '1.58.18',
+              deviceModel: 'Quest 3',
+              hl: 'en',
+              gl: 'US'
+            }
+          },
+          videoId: videoId
+        })
+      });
 
-    if (innertubeResp.ok) {
-      const data = await innertubeResp.json();
-      trackTitle = data.videoDetails?.title || trackTitle;
-      const formats = data.streamingData?.adaptiveFormats || [];
-      const audioFormats = formats.filter(f => (f.mimeType || '').startsWith('audio/') && f.url);
+      if (innertubeResp.ok) {
+        const data = await innertubeResp.json();
+        trackTitle = data.videoDetails?.title || trackTitle;
+        const formats = data.streamingData?.adaptiveFormats || [];
+        const audioFormats = formats.filter(f => (f.mimeType || '').startsWith('audio/') && f.url);
 
-      if (audioFormats.length > 0) {
-        // Sort by audio quality (highest bitrate first)
-        audioFormats.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-        resolvedAudioUrl = audioFormats[0].url;
+        if (audioFormats.length > 0) {
+          // Sort by audio quality (highest bitrate first)
+          audioFormats.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+          resolvedAudioUrl = audioFormats[0].url;
+        }
       }
+    } catch (err) {
+      console.warn('Innertube direct error:', err.message);
     }
-  } catch (err) {
-    console.warn('Innertube direct error:', err.message);
   }
 
   // 3. Fallback: Secondary Multi-Node Extractors (Cobalt v10, Invidious, Piped)
