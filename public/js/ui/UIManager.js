@@ -904,26 +904,62 @@ export class UIManager {
       if (queueBtn) {
         queueBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
+          if (queueBtn.disabled) return;
+          queueBtn.disabled = true;
           queueBtn.innerText = '✓ Ditambah';
           queueBtn.style.backgroundColor = 'var(--spotify-green)';
           queueBtn.style.color = '#000';
-          await this.streamAudioFromUrl(item.url, item.title, item.channel, item.duration, thumbSrc);
+          await this.addYoutubeTrackToQueueOnly(item.url, item.title, item.channel, item.duration, thumbSrc);
           setTimeout(() => {
             if (queueBtn) {
+              queueBtn.disabled = false;
               queueBtn.innerText = '+ Queue';
               queueBtn.style.backgroundColor = '';
               queueBtn.style.color = '';
             }
-          }, 2500);
+          }, 2000);
         });
       }
 
-      card.addEventListener('click', () => {
-        this.streamAudioFromUrl(item.url, item.title, item.channel, item.duration, thumbSrc);
+      let isCardClicking = false;
+      card.addEventListener('click', async () => {
+        if (isCardClicking) return;
+        isCardClicking = true;
+        try {
+          await this.streamAudioFromUrl(item.url, item.title, item.channel, item.duration, thumbSrc);
+        } finally {
+          setTimeout(() => { isCardClicking = false; }, 1000);
+        }
       });
 
       list.appendChild(card);
     });
+  }
+
+  async addYoutubeTrackToQueueOnly(url, trackTitle, artist = 'YouTube', duration = 210, thumbnail = '') {
+    if (!this.app.socketClient.roomId) {
+      this.app.socketClient.createRoom(this.getDeviceName());
+    }
+
+    const streamEndpoint = `/api/yt-stream?url=${encodeURIComponent(url)}`;
+    let thumbUrl = thumbnail;
+    if (!thumbUrl || thumbUrl === 'NA' || !thumbUrl.startsWith('http')) {
+      const match = url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([a-zA-Z0-9_-]{11})/);
+      if (match) {
+        thumbUrl = `https://i.ytimg.com/vi/${match[1]}/hqdefault.jpg`;
+      }
+    }
+
+    const item = {
+      id: 'q_' + Math.random().toString(36).substring(2, 9),
+      name: trackTitle,
+      artist,
+      duration: duration || 210,
+      thumbnail: thumbUrl,
+      audioUrl: streamEndpoint
+    };
+
+    await this.app.socketClient.addToQueue(item);
   }
 
   async streamAudioFromUrl(url, trackTitle, artist = 'YouTube', duration = 210, thumbnail = '') {
@@ -953,19 +989,8 @@ export class UIManager {
     // 1. ADD TO QUEUE FIRST (Optimistic immediate update, never blocked by audio fetch!)
     await this.app.socketClient.addToQueue(item);
 
-    // 2. If no track currently loaded, update UI and trigger load in background
-    if (!this.app.audioEngine.audioBuffer) {
-      this.setTrackLoading(`Mengekstrak ${trackTitle}...`);
-      this.updateTrackUI(trackTitle, duration, thumbUrl);
-      this.app.audioEngine.loadAudioFromUrl(streamEndpoint, trackTitle)
-        .then(buffer => {
-          this.updateTrackUI(trackTitle, buffer.duration, thumbUrl);
-          this.clearTrackLoading();
-        })
-        .catch(err => {
-          console.warn('Audio background stream notice:', err);
-        });
-    }
+    // 2. Play this queue item cleanly through CloudMesh so only 1 download pipeline runs
+    await this.app.socketClient.playQueueItem(item.id, true);
   }
 
   renderQueue(queue = []) {
@@ -1042,7 +1067,7 @@ export class UIManager {
         this.app.audioEngine.stopLocalPlayback();
         this.setPlayState(false);
         this.setTrackLoading(`Memuat ${item.name}...`);
-        this.app.socketClient.playQueueItem(item.id, false);
+        this.app.socketClient.playQueueItem(item.id, true);
       });
 
       // 2. Play Next Action
@@ -1075,7 +1100,7 @@ export class UIManager {
         this.app.socketClient.removeFromQueue(item.id);
       });
 
-      // Click row to select/load track (without autoplay)
+      // Click row to select/load track (with autoplay)
       div.addEventListener('click', (e) => {
         if (e.target.closest('.queue-item-actions') || e.target.closest('.drag-handle')) return;
         this.app.audioEngine.ensureContext();
@@ -1086,7 +1111,7 @@ export class UIManager {
           const buffer = this.app.audioEngine.generateSyntheticTrack('synthwave');
           this.updateTrackUI(item.name, buffer.duration);
         }
-        this.app.socketClient.playQueueItem(item.id, false);
+        this.app.socketClient.playQueueItem(item.id, true);
       });
 
       // Desktop HTML5 Drag and Drop
@@ -1682,9 +1707,9 @@ export class UIManager {
   startPlaybackTicker() {
     setInterval(() => {
       const app = this.app;
-      if (app.audioEngine && app.audioEngine.audioBuffer) {
+      if (app.audioEngine) {
+        const dur = app.audioEngine.currentTrackDuration || 0;
         const cur = app.audioEngine.getCurrentPlaybackPosition();
-        const dur = app.audioEngine.currentTrackDuration;
         if (this.elements.currentTimeText) this.elements.currentTimeText.innerText = this.formatTime(cur);
 
         if (dur > 0 && this.elements.progressFill) {

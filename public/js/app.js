@@ -197,6 +197,9 @@ class App {
             this.socketClient.cloudMesh.lastKnownTrack = payload.track;
           }
           uiManager.updateTrackUI(payload.track.name || 'Shared Track', payload.track.duration || 0, payload.track.thumbnail || '');
+          if (payload.track.duration) {
+            audioEngine.currentTrackDuration = payload.track.duration;
+          }
           uiManager.renderQueue(uiManager.cachedQueue);
           
           const isTrackDifferent = !audioEngine.audioBuffer || (payload.track.name && audioEngine.currentTrackName !== payload.track.name);

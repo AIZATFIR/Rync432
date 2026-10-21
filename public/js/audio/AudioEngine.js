@@ -367,6 +367,8 @@ export class AudioEngine {
 
     this.currentSource = this.ctx.createBufferSource();
     this.currentSource.buffer = this.audioBuffer;
+    this.isPlaying = true;
+    this.startOffsetSec = startOffsetSec;
 
     // Connect source to DSP chain entrance (bassFilter)
     this.currentSource.connect(this.bassFilter || this.pannerNode || this.gainNode);
@@ -417,10 +419,10 @@ export class AudioEngine {
   }
 
   getCurrentPlaybackPosition() {
-    if (!this.isPlaying || !this.ctx) return this.pauseOffsetSec;
+    if (!this.isPlaying || !this.ctx || !this.startAudioContextTime) return this.pauseOffsetSec;
     const elapsed = this.ctx.currentTime - this.startAudioContextTime;
-    if (elapsed < 0) return this.startOffsetSec;
-    return Math.min(this.currentTrackDuration, Math.max(0, elapsed + this.startOffsetSec));
+    if (elapsed < 0) return this.startOffsetSec || 0;
+    return Math.min(this.currentTrackDuration, Math.max(0, elapsed + (this.startOffsetSec || 0)));
   }
 
   setVolume(vol) {

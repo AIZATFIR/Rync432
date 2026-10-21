@@ -780,24 +780,24 @@ canvas#visualizerCanvas {
 
 /* YouTube Live Search Results */
 .yt-search-results {
-  margin-top: 10px;
+  margin-top: 12px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  max-height: 240px;
+  gap: 8px;
+  max-height: 380px;
   overflow-y: auto;
 }
 
 .yt-result-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 8px;
+  gap: 12px;
+  padding: 8px 10px;
   background: var(--spotify-dark-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background var(--transition-fast);
+  transition: all var(--transition-fast);
 }
 
 .yt-result-item:hover, .yt-result-item:active {
@@ -806,20 +806,22 @@ canvas#visualizerCanvas {
 }
 
 .yt-result-thumb {
-  width: 44px;
-  height: 34px;
-  border-radius: 4px;
+  width: 54px;
+  height: 40px;
+  border-radius: 6px;
   object-fit: cover;
   background: #333;
+  flex-shrink: 0;
 }
 
 .yt-result-info {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
 }
 
 .yt-result-title {
-  font-size: 0.8rem;
+  font-size: 0.85rem;
   font-weight: 600;
   color: var(--text-base);
   white-space: nowrap;
@@ -828,8 +830,16 @@ canvas#visualizerCanvas {
 }
 
 .yt-result-meta {
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   color: var(--text-silver);
+  margin-top: 2px;
+}
+
+.yt-result-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .preset-chips {
@@ -1300,25 +1310,49 @@ input:checked + .slider-round:before {
 
   .active-room-bar {
     padding: 8px 8px;
-    gap: 6px;
+    gap: 8px;
     width: 100%;
     box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .room-meta-group {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    min-width: 0;
   }
 
   .room-code-tag {
-    font-size: 0.95rem;
+    font-size: 0.85rem;
     padding: 2px 6px;
+    letter-spacing: 0.5px;
   }
 
   .room-top-actions {
-    gap: 4px;
-    flex-wrap: wrap;
+    gap: 6px;
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    width: 100%;
   }
 
   .room-top-actions .btn-spotify {
-    padding: 3px 6px;
+    flex: 1 1 0;
+    padding: 5px 4px;
     font-size: 0.68rem;
     min-height: 28px;
+    white-space: nowrap;
+    text-align: center;
+  }
+
+  #activeRoomSection, .player-stage, .main-grid, .spotify-card {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
   }
 
   .track-artwork-row {

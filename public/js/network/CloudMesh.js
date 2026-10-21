@@ -981,6 +981,12 @@ export class CloudMesh {
   }
 
   async fetchRemoteAudioUrl(url, trackName, trackId) {
+    if (this.activeAudioAbortController) {
+      try { this.activeAudioAbortController.abort(); } catch (e) { }
+    }
+    this.activeAudioAbortController = new AbortController();
+    const signal = this.activeAudioAbortController.signal;
+
     if (!this.incomingAudioChunks.size) {
       this.updateLoadingState(true, `Mengunduh ${trackName} (0%)...`);
       this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status: `Mengunduh ${trackName} (0%)...` });
@@ -988,19 +994,21 @@ export class CloudMesh {
     try {
       let response;
       try {
-        response = await fetch(url);
+        response = await fetch(url, { signal });
         if (!response.ok && url.startsWith('http') && !url.includes('/api/stream') && !url.includes('/api/room')) {
           throw new Error('DIRECT_FETCH_FAILED');
         }
       } catch (fetchErr) {
+        if (signal.aborted) return;
         if (url.startsWith('http') && !url.includes('/api/stream') && !url.includes('/api/room')) {
           const proxyUrl = `/api/stream?url=${encodeURIComponent(url)}`;
-          response = await fetch(proxyUrl);
+          response = await fetch(proxyUrl, { signal });
         } else {
           throw fetchErr;
         }
       }
 
+      if (signal.aborted) return;
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
       const contentLength = response.headers.get('content-length');
@@ -1013,6 +1021,7 @@ export class CloudMesh {
         let receivedBytes = 0;
 
         while (true) {
+          if (signal.aborted) return;
           const { done, value } = await reader.read();
           if (done) break;
           chunks.push(value);
