@@ -40,6 +40,11 @@ export default async function handler(req, res) {
   const deviceName = query.deviceName || body.deviceName || 'Speaker';
 
   const now = Date.now();
+  const requireHost = (room) => {
+    if (room && peerId && room.hostId === peerId) return true;
+    res.status(403).json({ success: false, error: 'HOST_ONLY' });
+    return false;
+  };
 
   // Cleanup old inactive rooms & audio (> 3 hours)
   for (const [id, room] of rooms.entries()) {
@@ -202,52 +207,55 @@ export default async function handler(req, res) {
         state: room.state,
         track: room.track,
         queue: room.queue || [],
-        peers: Object.values(room.peers)
+        targetServerTime: room.targetServerTime,
+        startOffsetSec: room.startOffsetSec,
+        peers: Object.values(room.peers),
+        serverTime: now
       }
     });
   }
 
   if (action === 'poll') {
     let room = rooms.get(roomId);
-    const isThisHost = body.isHost === true || query.isHost === 'true';
+    const claimsHost = body.isHost === true || query.isHost === 'true';
 
     if (!room) {
       room = {
         roomId,
-        hostId: isThisHost ? peerId : (body.hostId || null),
-        state: body.state || 'IDLE',
-        track: body.track || null,
-        targetServerTime: body.targetServerTime || 0,
-        startOffsetSec: body.startOffsetSec || 0,
+        hostId: claimsHost ? peerId : (body.hostId || null),
+        state: claimsHost ? (body.state || 'IDLE') : 'IDLE',
+        track: claimsHost ? (body.track || null) : null,
+        targetServerTime: claimsHost ? (body.targetServerTime || 0) : 0,
+        startOffsetSec: claimsHost ? (body.startOffsetSec || 0) : 0,
         updatedAt: now,
-        queue: Array.isArray(body.queue) ? body.queue : [],
+        queue: claimsHost && Array.isArray(body.queue) ? body.queue : [],
         peers: {},
         signals: []
       };
       rooms.set(roomId, room);
     }
+    const isThisHost = !!peerId && room.hostId === peerId;
 
     if (isThisHost) {
-      room.hostId = peerId;
       if (body.track) room.track = body.track;
       if (body.state) room.state = body.state;
       if (body.targetServerTime) room.targetServerTime = body.targetServerTime;
     }
 
     // Merge incoming queue from client with server queue to avoid serverless fragmentation
-    if (Array.isArray(body.queue) && body.queue.length > 0) {
+    if (isThisHost && Array.isArray(body.queue) && body.queue.length > 0) {
       const map = new Map();
       (room.queue || []).forEach(item => { if (item && item.id) map.set(item.id, item); });
       body.queue.forEach(item => { if (item && item.id) map.set(item.id, item); });
       room.queue = Array.from(map.values());
     }
 
-    if (Array.isArray(body.deletedQueueIds) && body.deletedQueueIds.length > 0) {
+    if (isThisHost && Array.isArray(body.deletedQueueIds) && body.deletedQueueIds.length > 0) {
       const delSet = new Set(body.deletedQueueIds);
       room.queue = (room.queue || []).filter(item => !delSet.has(item.id));
     }
 
-    const isHostAssigned = isThisHost || (room.hostId === peerId);
+    const isHostAssigned = isThisHost;
 
     // Prune stale / disconnected peers (> 10s without poll)
     for (const [pId, p] of Object.entries(room.peers || {})) {
@@ -302,6 +310,7 @@ export default async function handler(req, res) {
 
   if (action === 'update_playback') {
     let room = rooms.get(roomId);
+    if (!requireHost(room)) return;
     if (!room) {
       room = {
         roomId,
@@ -324,6 +333,35 @@ export default async function handler(req, res) {
     if (Array.isArray(body.queue)) room.queue = body.queue;
     room.updatedAt = now;
     return res.status(200).json({ success: true, track: room.track, queue: room.queue });
+  }
+
+  if (action === 'play') {
+    const room = rooms.get(roomId);
+    if (!requireHost(room)) return;
+    room.state = 'PLAYING';
+    room.targetServerTime = body.targetServerTime || now + 800;
+    room.startOffsetSec = body.startOffsetSec || 0;
+    if (body.track) room.track = body.track;
+    room.updatedAt = now;
+    return res.status(200).json({ success: true, track: room.track, state: room.state });
+  }
+
+  if (action === 'pause') {
+    const room = rooms.get(roomId);
+    if (!requireHost(room)) return;
+    room.state = 'PAUSED';
+    room.targetServerTime = null;
+    room.startOffsetSec = body.currentOffsetSec || 0;
+    room.updatedAt = now;
+    return res.status(200).json({ success: true, track: room.track, state: room.state });
+  }
+
+  if (action === 'track') {
+    const room = rooms.get(roomId);
+    if (!requireHost(room)) return;
+    if (body.track) room.track = body.track;
+    room.updatedAt = now;
+    return res.status(200).json({ success: true, track: room.track });
   }
 
   if (action === 'add_queue') {
@@ -370,13 +408,6 @@ export default async function handler(req, res) {
       }
     }
 
-    if (!room.track && room.queue.length > 0) {
-      room.track = room.queue[0];
-      room.state = 'PAUSED';
-      room.targetServerTime = 0;
-      room.startOffsetSec = 0;
-    }
-
     room.updatedAt = now;
     return res.status(200).json({
       success: true,
@@ -389,6 +420,7 @@ export default async function handler(req, res) {
 
   if (action === 'reorder_queue') {
     const room = rooms.get(roomId);
+    if (!requireHost(room)) return;
     if (room && Array.isArray(body.queue)) {
       room.queue = body.queue;
       room.updatedAt = now;
@@ -399,6 +431,7 @@ export default async function handler(req, res) {
 
   if (action === 'play_next') {
     const room = rooms.get(roomId);
+    if (!requireHost(room)) return;
     if (room && room.queue) {
       const qId = body.queueId;
       const targetIdx = room.queue.findIndex(q => q.id === qId);
@@ -416,6 +449,7 @@ export default async function handler(req, res) {
 
   if (action === 'play_queue_item') {
     const room = rooms.get(roomId);
+    if (!requireHost(room)) return;
     if (room && room.queue) {
       const qId = body.queueId;
       const target = room.queue.find(q => q.id === qId);
@@ -440,6 +474,7 @@ export default async function handler(req, res) {
 
   if (action === 'remove_queue') {
     const room = rooms.get(roomId);
+    if (!requireHost(room)) return;
     if (room && room.queue) {
       const qId = body.queueId;
       room.queue = room.queue.filter(q => q.id !== qId);
@@ -451,6 +486,7 @@ export default async function handler(req, res) {
 
   if (action === 'next_track') {
     const room = rooms.get(roomId);
+    if (!requireHost(room)) return;
     if (room) {
       if (room.queue && room.queue.length > 0) {
         const currentIndex = room.track ? room.queue.findIndex(q => q.id === room.track.id) : -1;
@@ -479,6 +515,7 @@ export default async function handler(req, res) {
 
   if (action === 'prev_track') {
     const room = rooms.get(roomId);
+    if (!requireHost(room)) return;
     if (room) {
       if (room.queue && room.queue.length > 0) {
         const currentIndex = room.track ? room.queue.findIndex(q => q.id === room.track.id) : 0;
@@ -517,6 +554,7 @@ export default async function handler(req, res) {
 
   if (action === 'remove_peer') {
     const room = rooms.get(roomId);
+    if (!requireHost(room)) return;
     const targetPeerId = body.targetPeerId || query.targetPeerId;
     if (room && targetPeerId) {
       if (!room.kickedPeers) room.kickedPeers = [];

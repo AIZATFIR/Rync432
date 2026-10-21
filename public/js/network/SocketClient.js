@@ -94,14 +94,22 @@ export class SocketClient {
   }
 
   schedulePlay(delayMs = 800, startOffsetSec = 0) {
+    if (!this.isHost) return false;
     const targetServerTime = this.clockSync.getServerTime() + delayMs;
     this.cloudMesh.broadcastPlay(targetServerTime, startOffsetSec);
     this.onEvent('SCHEDULED_PLAY', { targetServerTime, startOffsetSec });
+    return true;
   }
 
   pausePlayback(currentOffsetSec = 0) {
+    if (!this.isHost) return false;
     this.cloudMesh.broadcastPause(currentOffsetSec);
     this.onEvent('PAUSED', { currentOffsetSec });
+    return true;
+  }
+
+  requestControl(action, details = {}) {
+    return this.cloudMesh.requestControl(action, details);
   }
 
   sendTrackMetadata(metadata) {
@@ -181,6 +189,8 @@ export class SocketClient {
       this.onEvent('SCHEDULED_PLAY', payload);
     } else if (event === 'PAUSED') {
       this.onEvent('PAUSED', payload);
+    } else if (event === 'CONTROL_REQUEST') {
+      this.onEvent('CONTROL_REQUEST', payload);
     } else if (event === 'BINARY_AUDIO_RECEIVED') {
       this.onEvent('BINARY_AUDIO_RECEIVED', payload);
     } else if (event === 'AUDIO_TRANSFER_PROGRESS') {

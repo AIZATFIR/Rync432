@@ -40,7 +40,48 @@ describe('CloudMesh audio transfer', () => {
 
     channel.onopen();
 
+    expect(channel.sent.map(message => JSON.parse(message))).toContainEqual(expect.objectContaining({
+      type: 'ROOM_SNAPSHOT',
+      track: { id: 'new-track', name: 'New track' }
+    }));
+    expect(channel.sent.some(message => JSON.parse(message).type === 'AUDIO_HEADER')).toBe(false);
+  });
+
+  it('does not serve a same-title buffer for a different requested track id', () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.isHost = true;
+    mesh.localAudioBufferCache.set('Diet Mountain Dew', new ArrayBuffer(16));
+    const channel = makeChannel();
+    mesh.setupDataChannel('peer-2', channel);
+
+    channel.onmessage({ data: JSON.stringify({
+      type: 'REQUEST_AUDIO_BUFFER',
+      trackId: 'youtube-track-id',
+      trackName: 'Diet Mountain Dew'
+    }) });
+
     expect(channel.sent).toEqual([]);
+  });
+
+  it('applies a room snapshot once for a late joiner', () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.loadTrackBuffer = vi.fn();
+    const snapshot = {
+      track: { id: 'track-new', name: 'New track' },
+      queue: [{ id: 'track-new', name: 'New track' }],
+      state: 'PLAYING',
+      targetServerTime: Date.now() - 5000,
+      startOffsetSec: 12
+    };
+
+    mesh.applyRoomSnapshot(snapshot);
+    mesh.applyRoomSnapshot(snapshot);
+
+    expect(events.filter(event => event.type === 'TRACK_METADATA')).toHaveLength(1);
+    expect(events.filter(event => event.type === 'QUEUE_UPDATED')).toHaveLength(1);
+    expect(events.filter(event => event.type === 'SCHEDULED_PLAY')).toHaveLength(1);
+    expect(events.find(event => event.type === 'SCHEDULED_PLAY').payload.startOffsetSec).toBe(12);
   });
 
   it('does not wait for server acknowledgement after optimistic queue addition', async () => {
@@ -58,6 +99,19 @@ describe('CloudMesh audio transfer', () => {
     expect(settled).toBe(true);
     expect(mesh.lastKnownQueue.map(track => track.id)).toEqual(['next-track']);
     await add;
+  });
+
+  it('adding a queued item never changes the active track', async () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'peer-1';
+    mesh.deviceName = 'Host';
+    mesh.lastKnownTrack = { id: 'active-track', name: 'Active track' };
+    vi.stubGlobal('fetch', () => new Promise(() => {}));
+
+    await mesh.addToQueue({ id: 'queued-track', name: 'Queued track' });
+
+    expect(mesh.lastKnownTrack).toEqual({ id: 'active-track', name: 'Active track' });
   });
 
   it('keeps concurrent optimistic additions when an older server response arrives last', async () => {
@@ -98,6 +152,7 @@ describe('CloudMesh audio transfer', () => {
     mesh.roomId = 'ROOM';
     mesh.peerId = 'peer-1';
     mesh.deviceName = 'Host';
+    mesh.isHost = true;
     const responses = [];
     vi.stubGlobal('fetch', () => new Promise(resolve => responses.push(resolve)));
 
