@@ -32,6 +32,8 @@ export default async function handler(req, res) {
     for (const line of lines) {
       const parts = line.split('|||');
       if (parts.length >= 3 && parts[0]) {
+        const [id, title, channel, rawDuration] = parts;
+        const duration = Number(rawDuration) || 0;
         const rawThumb = parts[4]?.trim();
         const thumbnail = (rawThumb && rawThumb !== 'NA' && rawThumb.startsWith('http'))
           ? rawThumb
