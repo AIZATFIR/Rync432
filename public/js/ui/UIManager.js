@@ -93,6 +93,7 @@ export class UIManager {
 
       // Queue Section
       queueCardSection: document.getElementById('queueCardSection'),
+      queueListContainer: document.getElementById('queueListContainer'),
       queueCountBadge: document.getElementById('queueCountBadge'),
       // Multi-Source Hub Tabs
       tabBtnDirectUrl: document.getElementById('tabBtnDirectUrl'),
@@ -335,6 +336,10 @@ export class UIManager {
     // 3. Single Alternating Play/Pause Toggle & Redo & Next
     if (elements.playPauseToggleBtn) {
       elements.playPauseToggleBtn.addEventListener('click', () => {
+        if (!app.socketClient.isHost) {
+          app.socketClient.requestControl(this.isPlayingState ? 'pause' : 'play');
+          return;
+        }
         app.audioEngine.ensureContext();
 
         if (this.isPlayingState) {
@@ -364,6 +369,10 @@ export class UIManager {
 
     if (elements.redoBtn) {
       elements.redoBtn.addEventListener('click', () => {
+        if (!app.socketClient.isHost) {
+          app.socketClient.requestControl('previous');
+          return;
+        }
         app.audioEngine.ensureContext();
         app.audioEngine.stopLocalPlayback();
         this.setPlayState(false);
@@ -378,6 +387,10 @@ export class UIManager {
 
     if (elements.nextBtn) {
       elements.nextBtn.addEventListener('click', () => {
+        if (!app.socketClient.isHost) {
+          app.socketClient.requestControl('next');
+          return;
+        }
         app.audioEngine.ensureContext();
         app.audioEngine.stopLocalPlayback();
         this.setPlayState(false);
@@ -409,6 +422,10 @@ export class UIManager {
         const clickX = e.clientX - rect.left;
         const pct = Math.max(0, Math.min(1, clickX / rect.width));
         const targetSec = pct * app.audioEngine.currentTrackDuration;
+        if (!app.socketClient.isHost) {
+          app.socketClient.requestControl('seek', { position: targetSec });
+          return;
+        }
         app.socketClient.schedulePlay(800, targetSec);
       });
     }
@@ -909,7 +926,7 @@ export class UIManager {
           queueBtn.innerText = '✓ Ditambah';
           queueBtn.style.backgroundColor = 'var(--spotify-green)';
           queueBtn.style.color = '#000';
-          await this.addYoutubeTrackToQueueOnly(item.url, item.title, item.channel, item.duration, thumbSrc);
+          await this.addYoutubeTrackToQueue(item.url, item.title, item.channel, item.duration, thumbSrc);
           setTimeout(() => {
             if (queueBtn) {
               queueBtn.disabled = false;
@@ -964,33 +981,33 @@ export class UIManager {
 
   async streamAudioFromUrl(url, trackTitle, artist = 'YouTube', duration = 210, thumbnail = '') {
     this.app.audioEngine.ensureContext();
-    if (!this.app.socketClient.roomId) {
-      this.app.socketClient.createRoom(this.getDeviceName());
+    const item = await this.addYoutubeTrackToQueue(url, trackTitle, artist, duration, thumbnail);
+    if (this.app.socketClient.isHost) {
+      this.app.socketClient.playQueueItem(item.id, true);
+    } else {
+      this.app.socketClient.requestControl('play_queue_item', { queueId: item.id, name: item.name });
     }
+  }
 
-    const streamEndpoint = `/api/yt-stream?url=${encodeURIComponent(url)}`;
-    let thumbUrl = thumbnail;
-    if (!thumbUrl || thumbUrl === 'NA' || !thumbUrl.startsWith('http')) {
-      const match = url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([a-zA-Z0-9_-]{11})/);
-      if (match) {
-        thumbUrl = `https://i.ytimg.com/vi/${match[1]}/hqdefault.jpg`;
-      }
-    }
-
+  async addYoutubeTrackToQueue(url, trackTitle, artist = 'YouTube', duration = 210, thumbnail = '') {
+    if (!this.app.socketClient.roomId) this.app.socketClient.createRoom(this.getDeviceName());
+    const match = url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([a-zA-Z0-9_-]{11})/);
+    const videoId = match?.[1];
+    const thumbUrl = thumbnail && thumbnail !== 'NA' && thumbnail.startsWith('http')
+      ? thumbnail
+      : (videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : '');
     const item = {
-      id: 'q_' + Math.random().toString(36).substring(2, 9),
+      id: videoId ? `yt_${videoId}` : `yt_${Math.random().toString(36).slice(2, 9)}`,
       name: trackTitle,
       artist,
       duration: duration || 210,
       thumbnail: thumbUrl,
-      audioUrl: streamEndpoint
+      audioUrl: videoId
+        ? `/api/yt-stream?id=${videoId}`
+        : `/api/yt-stream?url=${encodeURIComponent(url)}`
     };
-
-    // 1. ADD TO QUEUE FIRST (Optimistic immediate update, never blocked by audio fetch!)
     await this.app.socketClient.addToQueue(item);
-
-    // 2. Play this queue item cleanly through CloudMesh so only 1 download pipeline runs
-    await this.app.socketClient.playQueueItem(item.id, true);
+    return item;
   }
 
   renderQueue(queue = []) {
@@ -1015,7 +1032,7 @@ export class UIManager {
       const isCurrent = currentTrackId ? (item.id === currentTrackId) : (currentTrackName && item.name === currentTrackName);
       const div = document.createElement('div');
       div.className = `queue-item ${isCurrent ? 'active-track' : ''}`;
-      div.setAttribute('draggable', 'true');
+      div.setAttribute('draggable', String(!!this.app.socketClient?.isHost));
       div.dataset.index = index;
       div.dataset.id = item.id;
 
@@ -1063,6 +1080,10 @@ export class UIManager {
       div.querySelector('.q-action-play')?.addEventListener('click', (e) => {
         e.stopPropagation();
         dropdown.classList.remove('active');
+        if (!this.app.socketClient.isHost) {
+          this.app.socketClient.requestControl('play_queue_item', { queueId: item.id, name: item.name });
+          return;
+        }
         this.app.audioEngine.ensureContext();
         this.app.audioEngine.stopLocalPlayback();
         this.setPlayState(false);
@@ -1074,6 +1095,10 @@ export class UIManager {
       div.querySelector('.q-action-playnext')?.addEventListener('click', (e) => {
         e.stopPropagation();
         dropdown.classList.remove('active');
+        if (!this.app.socketClient.isHost) {
+          this.app.socketClient.requestControl('play_next', { queueId: item.id, name: item.name });
+          return;
+        }
         this.app.socketClient.playNext(item.id);
       });
 
@@ -1097,12 +1122,20 @@ export class UIManager {
       div.querySelector('.q-action-delete')?.addEventListener('click', (e) => {
         e.stopPropagation();
         dropdown.classList.remove('active');
+        if (!this.app.socketClient.isHost) {
+          this.app.socketClient.requestControl('remove_queue', { queueId: item.id, name: item.name });
+          return;
+        }
         this.app.socketClient.removeFromQueue(item.id);
       });
 
       // Click row to select/load track (with autoplay)
       div.addEventListener('click', (e) => {
         if (e.target.closest('.queue-item-actions') || e.target.closest('.drag-handle')) return;
+        if (!this.app.socketClient.isHost) {
+          this.app.socketClient.requestControl('play_queue_item', { queueId: item.id, name: item.name });
+          return;
+        }
         this.app.audioEngine.ensureContext();
         this.app.audioEngine.stopLocalPlayback();
         this.setPlayState(false);
@@ -1133,6 +1166,7 @@ export class UIManager {
 
       div.addEventListener('drop', (e) => {
         e.preventDefault();
+        if (!this.app.socketClient.isHost) return;
         const fromIdx = this.draggedIndex;
         const toIdx = index;
         if (fromIdx !== null && fromIdx !== undefined && fromIdx !== toIdx) {
@@ -1284,11 +1318,8 @@ export class UIManager {
 
     const fileList = Array.from(files);
     const totalFiles = fileList.length;
-    const isQueueEmpty = !app.audioEngine.audioBuffer && (!this.cachedQueue || this.cachedQueue.length === 0);
-
     for (let i = 0; i < totalFiles; i++) {
       const file = fileList[i];
-      const isFirstOfEmpty = isQueueEmpty && (i === 0);
       const itemId = 'q_' + Math.random().toString(36).substring(2, 9);
       const blobUrl = URL.createObjectURL(file);
 
@@ -1300,12 +1331,6 @@ export class UIManager {
         try {
           const decoded = await app.audioEngine.decodeAudioDataSafe(arrayBuffer);
           duration = decoded.duration;
-          if (isFirstOfEmpty) {
-            app.audioEngine.audioBuffer = decoded;
-            app.audioEngine.currentTrackName = file.name;
-            app.audioEngine.currentTrackDuration = duration;
-            this.updateTrackUI(file.name, duration);
-          }
         } catch (decErr) {
           console.warn('Audio decode duration notice:', decErr);
         }
@@ -1393,9 +1418,6 @@ export class UIManager {
           addedBy: this.getDeviceName()
         };
         await app.socketClient.addToQueue(queueItem);
-        if (isFirstOfEmpty) {
-          app.socketClient.sendTrackMetadata(queueItem);
-        }
         this.clearTrackLoading();
 
         // 3. WebRTC binary streaming as local fast fallback

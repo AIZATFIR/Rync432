@@ -12,10 +12,12 @@ export class CloudMesh {
     this.broadcastChannel = null;
     this.localPeersMap = new Map();
     this.lastKnownState = null;
+    this.lastKnownOffsetSec = 0;
     this.lastKnownTrack = null;
     this.lastKnownQueue = null;
-    this.isPaused = false;
+    this.isPaused = true;
     this.lastPauseTime = 0;
+    this.seenControlRequestIds = new Set();
 
     // WebRTC P2P Connections
     this.peerConnections = new Map();
@@ -98,14 +100,6 @@ export class CloudMesh {
     this.deviceName = deviceName;
     this.isHost = false;
 
-    // Restore cached queue from localStorage if available
-    const savedQueue = this.loadLocalQueue(roomId);
-    if (savedQueue && (!this.lastKnownQueue || this.lastKnownQueue.length === 0)) {
-      this.lastKnownQueue = savedQueue;
-      this.lastKnownQueueStr = JSON.stringify(savedQueue);
-      this.onEvent('QUEUE_UPDATED', { queue: savedQueue });
-    }
-
     this.initBroadcastChannel(roomId, deviceName);
     this.initMqttBus(roomId, deviceName);
 
@@ -114,10 +108,56 @@ export class CloudMesh {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roomId, peerId, deviceName })
+      }).then(res => res.json()).then(data => {
+        if (data.room) this.applyRoomSnapshot(data.room);
       }).catch(() => {});
     } catch (e) {}
 
     this.startPolling();
+  }
+
+  applyRoomSnapshot(snapshot) {
+    if (this.isHost || !snapshot) return;
+    if (Array.isArray(snapshot.queue)) {
+      const queueStr = JSON.stringify(snapshot.queue);
+      if (queueStr !== this.lastKnownQueueStr) {
+        this.lastKnownQueue = snapshot.queue;
+        this.lastKnownQueueStr = queueStr;
+        this.saveLocalQueue(snapshot.queue);
+        this.onEvent('QUEUE_UPDATED', { queue: snapshot.queue });
+      }
+    }
+    let trackChanged = false;
+    if (snapshot.track) {
+      trackChanged = !this.lastKnownTrack
+        || (snapshot.track.id && this.lastKnownTrack.id
+          ? snapshot.track.id !== this.lastKnownTrack.id
+          : snapshot.track.name !== this.lastKnownTrack.name);
+      if (trackChanged) {
+        this.lastKnownTrack = snapshot.track;
+        this.onEvent('TRACK_METADATA', snapshot.track);
+        this.loadTrackBuffer(snapshot.track);
+      }
+    }
+    const offset = snapshot.startOffsetSec || 0;
+    if (snapshot.state === 'PLAYING' && snapshot.targetServerTime) {
+      const changed = this.isPaused || this.lastKnownState !== snapshot.targetServerTime || trackChanged;
+      this.isPaused = false;
+      this.lastKnownState = snapshot.targetServerTime;
+      if (changed) {
+        this.onEvent('SCHEDULED_PLAY', {
+          targetServerTime: snapshot.targetServerTime,
+          startOffsetSec: offset,
+          track: snapshot.track || this.lastKnownTrack
+        });
+      }
+    } else {
+      const changed = !this.isPaused || this.lastKnownState !== 'PAUSED' || this.lastKnownOffsetSec !== offset;
+      this.isPaused = true;
+      this.lastKnownState = 'PAUSED';
+      if (changed) this.onEvent('PAUSED', { currentOffsetSec: offset });
+    }
+    this.lastKnownOffsetSec = offset;
   }
 
   initMqttBus(roomId, deviceName) {
@@ -184,6 +224,7 @@ export class CloudMesh {
                     queue: this.lastKnownQueue || [],
                     state: this.isPaused ? 'PAUSED' : 'PLAYING',
                     targetServerTime: this.lastKnownState,
+                    startOffsetSec: this.lastKnownOffsetSec,
                     peers: Array.from(this.localPeersMap.values())
                   });
 
@@ -203,26 +244,7 @@ export class CloudMesh {
                   });
                   this.dispatchLocalPeers();
                 }
-                if (Array.isArray(msg.queue)) {
-                  this.lastKnownQueue = msg.queue;
-                  this.lastKnownQueueStr = JSON.stringify(msg.queue);
-                  this.saveLocalQueue(msg.queue);
-                  this.onEvent('QUEUE_UPDATED', { queue: msg.queue });
-                }
-                if (msg.track) {
-                  this.lastKnownTrack = msg.track;
-                  this.onEvent('TRACK_METADATA', msg.track);
-                  this.loadTrackBuffer(msg.track);
-                }
-                if (msg.state === 'PLAYING' && msg.targetServerTime) {
-                  this.isPaused = false;
-                  this.lastKnownState = msg.targetServerTime;
-                  this.onEvent('SCHEDULED_PLAY', {
-                    targetServerTime: msg.targetServerTime,
-                    startOffsetSec: 0,
-                    track: msg.track || this.lastKnownTrack
-                  });
-                }
+                this.applyRoomSnapshot(msg);
               }
               break;
 
@@ -256,6 +278,10 @@ export class CloudMesh {
                 this.saveLocalQueue(q);
                 this.onEvent('QUEUE_UPDATED', { queue: q });
               }
+              break;
+
+            case 'CONTROL_REQUEST':
+              this.receiveControlRequest(msg);
               break;
 
             case 'SIGNAL':
@@ -344,7 +370,21 @@ export class CloudMesh {
               type: 'PEER_PONG',
               peer: this.localPeersMap.get(this.peerId)
             });
+            if (this.isHost) {
+              this.broadcastChannel.postMessage({
+                type: 'ROOM_SNAPSHOT',
+                track: this.lastKnownTrack,
+                queue: this.lastKnownQueue || [],
+                state: this.isPaused ? 'PAUSED' : 'PLAYING',
+                targetServerTime: this.isPaused ? null : this.lastKnownState,
+                startOffsetSec: this.lastKnownOffsetSec
+              });
+            }
           }
+          break;
+
+        case 'ROOM_SNAPSHOT':
+          this.applyRoomSnapshot(msg);
           break;
 
         case 'PEER_PONG':
@@ -368,6 +408,8 @@ export class CloudMesh {
 
         case 'SCHEDULED_PLAY':
           this.isPaused = false;
+          this.lastKnownState = msg.payload?.targetServerTime;
+          if (msg.payload?.track) this.lastKnownTrack = msg.payload.track;
           this.onEvent('SCHEDULED_PLAY', msg.payload);
           break;
 
@@ -378,11 +420,16 @@ export class CloudMesh {
           break;
 
         case 'TRACK_METADATA':
+          this.lastKnownTrack = msg.payload;
           this.onEvent('TRACK_METADATA', msg.payload);
           break;
 
         case 'QUEUE_UPDATED':
           this.onEvent('QUEUE_UPDATED', msg.payload);
+          break;
+
+        case 'CONTROL_REQUEST':
+          this.receiveControlRequest(msg);
           break;
 
         case 'REMOTE_DEVICE_UPDATED':
@@ -471,8 +518,8 @@ export class CloudMesh {
           deviceName: this.deviceName,
           isHost: this.isHost,
           hostId: this.isHost ? this.peerId : undefined,
-          queue: this.lastKnownQueue || [],
-          deletedQueueIds: Array.from(this.deletedQueueIds),
+          queue: this.isHost ? (this.lastKnownQueue || []) : undefined,
+          deletedQueueIds: this.isHost ? Array.from(this.deletedQueueIds) : [],
           track: this.isHost ? this.lastKnownTrack : undefined,
           state: this.isPaused ? 'PAUSED' : 'PLAYING'
         })
@@ -538,14 +585,19 @@ export class CloudMesh {
 
       // 2. Queue list with resilient merge - never lose songs across serverless lambdas
       if (Array.isArray(data.queue) && (Date.now() - (this.lastQueueReorderTime || 0) > 2000)) {
-        const mergedMap = new Map();
-        (this.lastKnownQueue || []).forEach(item => {
-          if (item && item.id && !this.deletedQueueIds.has(item.id)) mergedMap.set(item.id, item);
-        });
-        data.queue.forEach(item => {
-          if (item && item.id && !this.deletedQueueIds.has(item.id)) mergedMap.set(item.id, item);
-        });
-        const mergedQueue = Array.from(mergedMap.values());
+        let mergedQueue;
+        if (this.isHost) {
+          const mergedMap = new Map();
+          (this.lastKnownQueue || []).forEach(item => {
+            if (item && item.id && !this.deletedQueueIds.has(item.id)) mergedMap.set(item.id, item);
+          });
+          data.queue.forEach(item => {
+            if (item && item.id && !this.deletedQueueIds.has(item.id)) mergedMap.set(item.id, item);
+          });
+          mergedQueue = Array.from(mergedMap.values());
+        } else {
+          mergedQueue = data.queue;
+        }
         const queueStr = JSON.stringify(mergedQueue);
         if (queueStr !== this.lastKnownQueueStr) {
           this.lastKnownQueueStr = queueStr;
@@ -580,6 +632,7 @@ export class CloudMesh {
 
         if (shouldPlay) {
           this.isPaused = false;
+          this.lastKnownOffsetSec = data.startOffsetSec || 0;
           if (data.targetServerTime) this.lastKnownState = data.targetServerTime;
           this.onEvent('SCHEDULED_PLAY', {
             targetServerTime: data.targetServerTime || (Date.now() + 600),
@@ -591,6 +644,7 @@ export class CloudMesh {
         if (this.lastKnownState !== 'PAUSED' || !this.isPaused) {
           this.isPaused = true;
           this.lastKnownState = 'PAUSED';
+          this.lastKnownOffsetSec = data.startOffsetSec || 0;
           this.lastPauseTime = Date.now();
           this.onEvent('PAUSED', {
             currentOffsetSec: data.startOffsetSec || 0
@@ -617,11 +671,11 @@ export class CloudMesh {
     }
 
     const trackKey = track.id || track.audioId || track.name;
-    const cached = this.localAudioBufferCache.get(track.id) 
+    const cached = this.localAudioBufferCache.get(track.id)
       || (track.audioId && this.localAudioBufferCache.get(track.audioId))
       || (track.audioUrl && this.localAudioBufferCache.get(track.audioUrl))
-      || this.localAudioBufferCache.get(track.name)
-      || (this.currentAudioArrayBuffer && this.lastKnownTrack?.name === track.name ? this.currentAudioArrayBuffer : null);
+      || (!track.id && this.localAudioBufferCache.get(track.name))
+      || (!track.id && this.currentAudioArrayBuffer && this.lastKnownTrack?.name === track.name ? this.currentAudioArrayBuffer : null);
 
     if (cached) {
       this.currentFetchingTrackKey = null;
@@ -695,13 +749,6 @@ export class CloudMesh {
       this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
     }
 
-    if (!this.lastKnownTrack) {
-      this.lastKnownTrack = item;
-      this.onEvent('TRACK_METADATA', item);
-      this.publishMqtt(this.roomTopic, { type: 'TRACK_METADATA', metadata: item });
-      this.broadcastDataChannelMessage({ type: 'TRACK_METADATA', metadata: item });
-    }
-
     fetch('/api/room?action=add_queue', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -732,26 +779,52 @@ export class CloudMesh {
           });
         }
       }
-      if (data.track && (!this.lastKnownTrack || data.track.id !== this.lastKnownTrack.id)) {
-        this.lastKnownTrack = data.track;
-        this.onEvent('TRACK_METADATA', data.track);
-        this.publishMqtt(this.roomTopic, { type: 'TRACK_METADATA', metadata: data.track });
-      }
     }).catch(() => {});
   }
 
+  requestControl(action, details = {}) {
+    if (this.isHost) return false;
+    const request = {
+      type: 'CONTROL_REQUEST',
+      requestId: `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      action,
+      details,
+      peerId: this.peerId,
+      requestedBy: this.deviceName
+    };
+
+    if (this.mqttClient && this.isMqttConnected) {
+      this.publishMqtt(this.roomTopic, request);
+    } else {
+      this.broadcastDataChannelMessage(request);
+      this.broadcastChannel?.postMessage(request);
+    }
+    return true;
+  }
+
+  receiveControlRequest(request) {
+    if (!this.isHost || !request?.requestId || this.seenControlRequestIds.has(request.requestId)) return;
+    this.seenControlRequestIds.add(request.requestId);
+    if (this.seenControlRequestIds.size > 100) {
+      this.seenControlRequestIds.delete(this.seenControlRequestIds.values().next().value);
+    }
+    this.onEvent('CONTROL_REQUEST', request);
+  }
+
   async playQueueItem(queueId, autoplay = false) {
+    if (!this.isHost) return;
     try {
       const res = await fetch('/api/room?action=play_queue_item', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: this.roomId, queueId })
+        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, queueId })
       });
       const data = await res.json();
       if (data.track) {
         this.lastKnownTrack = data.track;
         this.isPaused = !autoplay;
-        this.lastKnownState = autoplay ? data.targetServerTime : 'PAUSED';
+        this.lastKnownOffsetSec = 0;
+        this.lastKnownState = autoplay ? (data.targetServerTime || Date.now() + 800) : 'PAUSED';
         this.onEvent('TRACK_METADATA', data.track);
         this.loadTrackBuffer(data.track);
         this.publishMqtt(this.roomTopic, { type: 'TRACK_METADATA', metadata: data.track });
@@ -759,13 +832,25 @@ export class CloudMesh {
 
         if (autoplay) {
           const payload = {
-            targetServerTime: data.targetServerTime || (Date.now() + 800),
+            targetServerTime: this.lastKnownState,
             startOffsetSec: data.startOffsetSec || 0,
             track: data.track
           };
           this.onEvent('SCHEDULED_PLAY', payload);
           this.publishMqtt(this.roomTopic, { type: 'SCHEDULED_PLAY', payload });
           this.broadcastDataChannelMessage({ type: 'SCHEDULED_PLAY', ...payload });
+          this.broadcastChannel?.postMessage({ type: 'SCHEDULED_PLAY', payload });
+          fetch('/api/room?action=play', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              roomId: this.roomId,
+              peerId: this.peerId,
+              targetServerTime: payload.targetServerTime,
+              startOffsetSec: payload.startOffsetSec,
+              track: data.track
+            })
+          }).catch(() => {});
         } else {
           this.onEvent('PAUSED', { currentOffsetSec: 0 });
           this.publishMqtt(this.roomTopic, { type: 'PAUSED', payload: { currentOffsetSec: 0 } });
@@ -779,11 +864,33 @@ export class CloudMesh {
         this.onEvent('QUEUE_UPDATED', { queue: data.queue });
         this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: data.queue });
         this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: data.queue });
+        this.broadcastChannel?.postMessage({ type: 'QUEUE_UPDATED', payload: { queue: data.queue } });
+      }
+    } catch (e) { }
+  }
+
+  async playNext(queueId) {
+    if (!this.isHost) return;
+    try {
+      const res = await fetch('/api/room?action=play_next', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, queueId })
+      });
+      const data = await res.json();
+      if (data.queue) {
+        this.lastKnownQueue = data.queue;
+        this.lastKnownQueueStr = JSON.stringify(data.queue);
+        this.saveLocalQueue(data.queue);
+        this.onEvent('QUEUE_UPDATED', { queue: data.queue });
+        this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: data.queue });
+        this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: data.queue });
       }
     } catch (e) { }
   }
 
   async reorderQueue(newQueue) {
+    if (!this.isHost) return;
     this.lastQueueReorderTime = Date.now();
     this.lastKnownQueue = newQueue;
     this.lastKnownQueueStr = JSON.stringify(newQueue);
@@ -802,18 +909,23 @@ export class CloudMesh {
       const res = await fetch('/api/room?action=reorder_queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: this.roomId, queue: newQueue })
+        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, queue: newQueue })
       });
       const data = await res.json();
       if (data.queue) {
         this.lastKnownQueue = data.queue;
         this.lastKnownQueueStr = JSON.stringify(data.queue);
         this.saveLocalQueue(data.queue);
+        this.onEvent('QUEUE_UPDATED', { queue: data.queue });
+        this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: data.queue });
+        this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: data.queue });
+        this.broadcastChannel?.postMessage({ type: 'QUEUE_UPDATED', payload: { queue: data.queue } });
       }
     } catch (e) { }
   }
 
   async removeFromQueue(queueId) {
+    if (!this.isHost) return;
     if (queueId) {
       this.deletedQueueIds.add(queueId);
       this.lastKnownQueue = (this.lastKnownQueue || []).filter(q => q.id !== queueId);
@@ -830,6 +942,7 @@ export class CloudMesh {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           roomId: this.roomId,
+          peerId: this.peerId,
           queueId
         })
       });
@@ -843,19 +956,22 @@ export class CloudMesh {
   }
 
   async nextTrack() {
+    if (!this.isHost) return;
     try {
       const res = await fetch('/api/room?action=next_track', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: this.roomId })
+        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId })
       });
       const data = await res.json();
       if (data.track) {
         this.lastKnownTrack = data.track;
         this.isPaused = (data.state === 'PAUSED');
         this.lastKnownState = data.targetServerTime;
+        this.lastKnownOffsetSec = data.startOffsetSec || 0;
         this.onEvent('TRACK_METADATA', data.track);
         this.loadTrackBuffer(data.track);
+        this.broadcastDataChannelMessage({ type: 'TRACK_METADATA', metadata: data.track });
         if (data.state === 'PLAYING') {
           const payload = {
             targetServerTime: data.targetServerTime || (Date.now() + 800),
@@ -864,6 +980,7 @@ export class CloudMesh {
           };
           this.onEvent('SCHEDULED_PLAY', payload);
           this.publishMqtt(this.roomTopic, { type: 'SCHEDULED_PLAY', payload });
+          this.broadcastDataChannelMessage({ type: 'SCHEDULED_PLAY', ...payload });
         }
       }
       if (data.queue) {
@@ -876,19 +993,22 @@ export class CloudMesh {
   }
 
   async prevTrack() {
+    if (!this.isHost) return;
     try {
       const res = await fetch('/api/room?action=prev_track', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: this.roomId })
+        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId })
       });
       const data = await res.json();
       if (data.track) {
         this.lastKnownTrack = data.track;
         this.isPaused = (data.state === 'PAUSED');
         this.lastKnownState = data.targetServerTime;
+        this.lastKnownOffsetSec = data.startOffsetSec || 0;
         this.onEvent('TRACK_METADATA', data.track);
         this.loadTrackBuffer(data.track);
+        this.broadcastDataChannelMessage({ type: 'TRACK_METADATA', metadata: data.track });
         if (data.state === 'PLAYING') {
           const payload = {
             targetServerTime: data.targetServerTime || (Date.now() + 800),
@@ -897,6 +1017,7 @@ export class CloudMesh {
           };
           this.onEvent('SCHEDULED_PLAY', payload);
           this.publishMqtt(this.roomTopic, { type: 'SCHEDULED_PLAY', payload });
+          this.broadcastDataChannelMessage({ type: 'SCHEDULED_PLAY', ...payload });
         }
       }
       if (data.queue) {
@@ -904,6 +1025,8 @@ export class CloudMesh {
         this.lastKnownQueueStr = JSON.stringify(data.queue);
         this.onEvent('QUEUE_UPDATED', { queue: data.queue });
         this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: data.queue });
+        this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: data.queue });
+        this.broadcastChannel?.postMessage({ type: 'QUEUE_UPDATED', payload: { queue: data.queue } });
       }
     } catch (e) { }
   }
@@ -959,7 +1082,7 @@ export class CloudMesh {
       let attempts = 0;
       this.peerBufferRequestInterval = setInterval(() => {
         attempts++;
-        const cached = this.localAudioBufferCache.get(trackId) || this.localAudioBufferCache.get(trackName);
+        const cached = trackId ? this.localAudioBufferCache.get(trackId) : this.localAudioBufferCache.get(trackName);
         if (cached || attempts > 12) {
           clearInterval(this.peerBufferRequestInterval);
           this.peerBufferRequestInterval = null;
@@ -1094,8 +1217,10 @@ export class CloudMesh {
   }
 
   async broadcastPlay(targetServerTime, startOffsetSec, track) {
+    if (!this.isHost) return;
     this.isPaused = false;
     this.lastKnownState = targetServerTime;
+    this.lastKnownOffsetSec = startOffsetSec;
     const trackPayload = track || this.lastKnownTrack;
 
     this.publishMqtt(this.roomTopic, {
@@ -1122,6 +1247,7 @@ export class CloudMesh {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         roomId: this.roomId,
+        peerId: this.peerId,
         targetServerTime,
         startOffsetSec,
         track: trackPayload
@@ -1130,9 +1256,11 @@ export class CloudMesh {
   }
 
   async broadcastPause(currentOffsetSec) {
+    if (!this.isHost) return;
     this.isPaused = true;
     this.lastPauseTime = Date.now();
     this.lastKnownState = 'PAUSED';
+    this.lastKnownOffsetSec = currentOffsetSec;
 
     this.publishMqtt(this.roomTopic, {
       type: 'PAUSED',
@@ -1156,12 +1284,14 @@ export class CloudMesh {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         roomId: this.roomId,
+        peerId: this.peerId,
         currentOffsetSec
       })
     }).catch(() => {});
   }
 
   async sendTrackMetadata(metadata) {
+    if (!this.isHost) return;
     this.lastKnownTrack = metadata;
     this.publishMqtt(this.roomTopic, {
       type: 'TRACK_METADATA',
@@ -1186,6 +1316,7 @@ export class CloudMesh {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           roomId: this.roomId,
+          peerId: this.peerId,
           track: metadata
         })
       }).catch(() => {});
@@ -1244,14 +1375,22 @@ export class CloudMesh {
       this.dataChannels.set(targetPeerId, channel);
       if (this.isHost) {
         const targetTrack = this.lastKnownTrack;
-        const activeBuffer = targetTrack && (this.localAudioBufferCache.get(targetTrack.id) || this.localAudioBufferCache.get(targetTrack.name) || (targetTrack.audioUrl && this.localAudioBufferCache.get(targetTrack.audioUrl)));
+        channel.send(JSON.stringify({
+          type: 'ROOM_SNAPSHOT',
+          track: targetTrack,
+          queue: this.lastKnownQueue || [],
+          state: this.isPaused ? 'PAUSED' : 'PLAYING',
+          targetServerTime: this.isPaused ? null : this.lastKnownState,
+          startOffsetSec: this.lastKnownOffsetSec
+        }));
+        const activeBuffer = targetTrack && (this.localAudioBufferCache.get(targetTrack.id) || (!targetTrack.id && this.localAudioBufferCache.get(targetTrack.name)) || (targetTrack.audioUrl && this.localAudioBufferCache.get(targetTrack.audioUrl)));
         if (activeBuffer && (activeBuffer instanceof ArrayBuffer || activeBuffer.byteLength)) {
           this.streamAudioToPeer(channel, activeBuffer, targetTrack?.name || 'Uploaded Track', targetTrack?.id || '');
         }
       } else {
         const reqTrack = this.pendingTrackBufferRequest || this.lastKnownTrack;
         if (reqTrack) {
-          const cached = this.localAudioBufferCache.get(reqTrack.id) || this.localAudioBufferCache.get(reqTrack.name);
+          const cached = reqTrack.id ? this.localAudioBufferCache.get(reqTrack.id) : this.localAudioBufferCache.get(reqTrack.name);
           if (!cached) {
             try {
               channel.send(JSON.stringify({
@@ -1269,7 +1408,11 @@ export class CloudMesh {
       if (typeof event.data === 'string') {
         try {
           const msg = JSON.parse(event.data);
-          if (msg.type === 'AUDIO_HEADER') {
+          if (msg.type === 'ROOM_SNAPSHOT') {
+            this.applyRoomSnapshot(msg);
+          } else if (msg.type === 'CONTROL_REQUEST') {
+            this.receiveControlRequest(msg);
+          } else if (msg.type === 'AUDIO_HEADER') {
             this.incomingAudioChunks.set(targetPeerId, {
               name: msg.name,
               id: msg.id,
@@ -1317,8 +1460,8 @@ export class CloudMesh {
             if (now - lastSent < 1500) {
               return;
             }
-            const cached = this.localAudioBufferCache.get(msg.trackId) 
-              || this.localAudioBufferCache.get(msg.trackName)
+            const cached = this.localAudioBufferCache.get(msg.trackId)
+              || (!msg.trackId && this.localAudioBufferCache.get(msg.trackName))
               || (msg.audioUrl && this.localAudioBufferCache.get(msg.audioUrl));
             if (cached && (cached instanceof ArrayBuffer || cached.byteLength)) {
               this.lastSentBufferPerPeer.set(peerKey, now);
@@ -1511,7 +1654,7 @@ export class CloudMesh {
       fetch('/api/room?action=remove_peer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: this.roomId, targetPeerId })
+        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, targetPeerId })
       }).catch(() => {});
     } catch (e) { }
   }

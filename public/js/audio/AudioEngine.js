@@ -19,6 +19,7 @@ export class AudioEngine {
     this.analyserNode = null;
     this.isPlaying = false;
     this.currentTrackName = 'No track loaded';
+    this.currentTrackId = null;
     this.currentTrackDuration = 0;
     this.startAudioContextTime = 0;
     this.startOffsetSec = 0;
@@ -220,7 +221,7 @@ export class AudioEngine {
     });
   }
 
-  async loadAudioFromArrayBuffer(arrayBuffer, trackName = 'Uploaded Track') {
+  async loadAudioFromArrayBuffer(arrayBuffer, trackName = 'Uploaded Track', trackId = null) {
     await this.ensureContext();
     try {
       this.stopLocalPlayback();
@@ -230,6 +231,7 @@ export class AudioEngine {
         this.audioBuffer = await this.decodeAudioDataSafe(arrayBuffer);
       }
       this.currentTrackName = trackName;
+      this.currentTrackId = trackId;
       this.currentTrackDuration = this.audioBuffer.duration;
       this.currentServerTargetTime = null;
       this.pauseOffsetSec = 0;
@@ -330,6 +332,7 @@ export class AudioEngine {
 
     this.audioBuffer = buffer;
     this.currentTrackName = 'Neon Groove Synthwave';
+    this.currentTrackId = null;
     this.currentTrackDuration = duration;
     this.pauseOffsetSec = 0;
     return this.audioBuffer;

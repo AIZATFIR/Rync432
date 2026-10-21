@@ -125,6 +125,43 @@ class App {
         }
         break;
 
+      case 'CONTROL_REQUEST': {
+        if (!socketClient?.isHost) break;
+        const labels = {
+          play: 'playback',
+          pause: 'pause playback',
+          next: 'skip to next track',
+          previous: 'play previous track',
+          play_queue_item: `play “${payload.details?.name || 'queued track'}”`,
+          play_next: 'move a track to next',
+          remove_queue: 'remove a track from queue',
+          seek: 'seek playback'
+        };
+        const actionLabel = labels[payload.action];
+        if (!actionLabel || !window.confirm(`${payload.requestedBy || 'A member'} requests to ${actionLabel}. Approve?`)) break;
+
+        switch (payload.action) {
+          case 'play':
+            socketClient.schedulePlay(800, audioEngine.pauseOffsetSec || 0);
+            break;
+          case 'pause': {
+            const offset = audioEngine.getCurrentPlaybackPosition();
+            audioEngine.stopLocalPlayback();
+            audioEngine.pauseOffsetSec = offset;
+            uiManager.setPlayState(false);
+            socketClient.pausePlayback(offset);
+            break;
+          }
+          case 'next': socketClient.nextTrack(); break;
+          case 'previous': socketClient.prevTrack(); break;
+          case 'play_queue_item': socketClient.playQueueItem(payload.details?.queueId, true); break;
+          case 'play_next': socketClient.playNext(payload.details?.queueId); break;
+          case 'remove_queue': socketClient.removeFromQueue(payload.details?.queueId); break;
+          case 'seek': socketClient.schedulePlay(800, payload.details?.position || 0); break;
+        }
+        break;
+      }
+
       case 'TRACK_METADATA':
       case 'TRACK_LOADED':
         if (payload.isSynthetic) {
@@ -166,10 +203,13 @@ class App {
           }
 
           const currentTrack = this.socketClient?.cloudMesh?.lastKnownTrack;
-          const isCurrent = !currentTrack || currentTrack.name === trackTitle || currentTrack.id === payload?.trackId || (trackTitle && currentTrack.name && (currentTrack.name.includes(trackTitle) || trackTitle.includes(currentTrack.name)));
+          const hasTrackIds = currentTrack?.id && payload?.trackId;
+          const isCurrent = !!currentTrack && (hasTrackIds
+            ? currentTrack.id === payload.trackId
+            : currentTrack.name === trackTitle);
 
           if (isCurrent) {
-            const buffer = await audioEngine.loadAudioFromArrayBuffer(rawBuffer, trackTitle);
+            const buffer = await audioEngine.loadAudioFromArrayBuffer(rawBuffer, trackTitle, payload?.trackId || null);
             uiManager.updateTrackUI(trackTitle, buffer.duration, currentTrack?.thumbnail || '');
             uiManager.renderQueue(uiManager.cachedQueue);
             uiManager.clearTrackLoading();
@@ -202,7 +242,10 @@ class App {
           }
           uiManager.renderQueue(uiManager.cachedQueue);
           
-          const isTrackDifferent = !audioEngine.audioBuffer || (payload.track.name && audioEngine.currentTrackName !== payload.track.name);
+          const hasActiveTrackIds = audioEngine.currentTrackId && payload.track.id;
+          const isTrackDifferent = !audioEngine.audioBuffer || (hasActiveTrackIds
+            ? audioEngine.currentTrackId !== payload.track.id
+            : (payload.track.name && audioEngine.currentTrackName !== payload.track.name));
           if (isTrackDifferent) {
             // STOP previous song immediately so old track doesn't keep playing!
             audioEngine.stopLocalPlayback();
