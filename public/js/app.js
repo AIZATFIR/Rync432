@@ -304,4 +304,13 @@ window.addEventListener('DOMContentLoaded', () => {
   const app = new App();
   app.init();
   window.__ryncApp = app;
+
+  // Register Service Worker for PWA Android installation & offline cache
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js').catch((err) => {
+        console.warn('ServiceWorker registration error:', err);
+      });
+    });
+  }
 });
