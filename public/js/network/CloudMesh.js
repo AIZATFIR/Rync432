@@ -699,7 +699,11 @@ export class CloudMesh {
       fetchUrl = `/api/room?action=get_audio&roomId=${encodeURIComponent(this.roomId)}&audioId=${encodeURIComponent(track.audioId || track.id || '')}&trackName=${encodeURIComponent(track.name || '')}`;
     }
 
-    this.requestTrackBufferFromPeers(track.name, track.id);
+    // Only request P2P buffer if there is NO remote fetch URL, or if fetch fails (fallback)
+    const hasRemoteUrl = !!(fetchUrl && (fetchUrl.startsWith('http') || fetchUrl.startsWith('/api/')));
+    if (!hasRemoteUrl) {
+      this.requestTrackBufferFromPeers(track.name, track.id);
+    }
     this.fetchRemoteAudioUrl(fetchUrl, track.name, track.id);
   }
 

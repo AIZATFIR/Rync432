@@ -343,6 +343,25 @@ export class AudioEngine {
     if (this.ctx && this.ctx.state === 'suspended') {
       try { this.ctx.resume(); } catch (e) {}
     }
+    // Autoplay unlock listener on first user interaction if suspended
+    if (this.ctx && this.ctx.state === 'suspended' && typeof window !== 'undefined' && !this._hasUnlockListener) {
+      this._hasUnlockListener = true;
+      const unlock = () => {
+        if (this.ctx && this.ctx.state === 'suspended') {
+          this.ctx.resume().then(() => {
+            if (this.isPlaying && this.currentSource && this.pendingScheduledPlay) {
+              const { serverTargetTime, startOffsetSec } = this.pendingScheduledPlay;
+              this.pendingScheduledPlay = null;
+              this.schedulePlayAtServerTime(serverTargetTime, startOffsetSec);
+            }
+          }).catch(() => {});
+        }
+        window.removeEventListener('pointerdown', unlock);
+        window.removeEventListener('keydown', unlock);
+      };
+      window.addEventListener('pointerdown', unlock, { once: true });
+      window.addEventListener('keydown', unlock, { once: true });
+    }
 
     if (!this.audioBuffer) {
       console.warn('Playback queued: audioBuffer still loading...');
