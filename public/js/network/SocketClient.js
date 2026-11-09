@@ -16,6 +16,7 @@ export class SocketClient {
     this.isHost = false;
     this.isConnected = false;
     this.cachedDeviceName = 'Speaker';
+    this.roomReady = Promise.resolve();
 
     // Serverless CloudMesh
     this.cloudMesh = new CloudMesh((event, payload) => {
@@ -71,12 +72,20 @@ export class SocketClient {
     this.roomId = Math.random().toString(36).substring(2, 6).toUpperCase();
     this.isHost = true;
 
-    this.cloudMesh.createRoom(this.roomId, this.peerId, deviceName);
-    this.onEvent('ROOM_CREATED', {
-      roomId: this.roomId,
-      peerId: this.peerId,
-      isHost: true
+    this.roomReady = this.cloudMesh.createRoom(this.roomId, this.peerId, deviceName);
+    this.roomReady.catch(() => {});
+    this.roomReady.then(() => {
+      this.onEvent('ROOM_CREATED', {
+        roomId: this.roomId,
+        peerId: this.peerId,
+        isHost: true
+      });
+    }).catch(() => {
+      this.roomId = null;
+      this.peerId = null;
+      this.isHost = false;
     });
+    return this.roomReady;
   }
 
   joinRoom(roomId, deviceName = 'Satellite Speaker') {
@@ -85,12 +94,19 @@ export class SocketClient {
     this.peerId = 'peer_' + Math.random().toString(36).substring(2, 9);
     this.isHost = false;
 
-    this.cloudMesh.joinRoom(this.roomId, this.peerId, deviceName);
-    this.onEvent('ROOM_JOINED', {
-      roomId: this.roomId,
-      peerId: this.peerId,
-      isHost: false
+    this.roomReady = this.cloudMesh.joinRoom(this.roomId, this.peerId, deviceName);
+    this.roomReady.then(() => {
+      this.onEvent('ROOM_JOINED', {
+        roomId: this.roomId,
+        peerId: this.peerId,
+        isHost: false
+      });
+    }).catch(() => {
+      this.roomId = null;
+      this.peerId = null;
+      this.isHost = false;
     });
+    return this.roomReady;
   }
 
   schedulePlay(delayMs = 800, startOffsetSec = 0) {
@@ -117,7 +133,7 @@ export class SocketClient {
   }
 
   addToQueue(track) {
-    return this.cloudMesh.addToQueue(track);
+    return this.roomReady.then(() => this.cloudMesh.addToQueue(track));
   }
 
   playQueueItem(queueId) {
@@ -168,6 +184,11 @@ export class SocketClient {
 
   leaveRoom() {
     this.cloudMesh.leaveRoom();
+    this.roomId = null;
+    this.peerId = null;
+    this.isHost = false;
+    this.roomReady = Promise.resolve();
+    this.onEvent('ROOM_LEFT');
   }
 
   sendBinary(arrayBuffer, trackName, trackId = '') {
@@ -197,6 +218,12 @@ export class SocketClient {
       this.onEvent('AUDIO_TRANSFER_PROGRESS', payload);
     } else if (event === 'REMOTE_DEVICE_UPDATED') {
       this.onEvent('REMOTE_DEVICE_UPDATED', payload);
+    } else if (event === 'ROOM_LEFT') {
+      this.roomId = null;
+      this.peerId = null;
+      this.isHost = false;
+      this.roomReady = Promise.resolve();
+      this.onEvent('ROOM_LEFT', payload);
     }
   }
 }

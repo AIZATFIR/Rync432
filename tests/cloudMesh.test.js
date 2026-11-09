@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CloudMesh } from '../public/js/network/CloudMesh.js';
+import { SocketClient } from '../public/js/network/SocketClient.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -14,6 +15,58 @@ function makeChannel() {
 }
 
 describe('CloudMesh audio transfer', () => {
+  it('clears room peer transports and identity when leaving', () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'peer-1';
+    mesh.roomTopic = 'room-topic';
+    mesh.peerTopic = 'peer-topic';
+    const peer = { close: vi.fn() };
+    const channel = { close: vi.fn() };
+    mesh.peerConnections.set('peer-2', peer);
+    mesh.dataChannels.set('peer-2', channel);
+    mesh.pendingIceCandidates.set('peer-2', [{ candidate: true }]);
+
+    mesh.leaveRoom();
+
+    expect(peer.close).toHaveBeenCalledOnce();
+    expect(channel.close).toHaveBeenCalledOnce();
+    expect(mesh.peerConnections.size).toBe(0);
+    expect(mesh.dataChannels.size).toBe(0);
+    expect(mesh.pendingIceCandidates.size).toBe(0);
+    expect(mesh.roomId).toBeNull();
+    expect(mesh.peerId).toBeNull();
+  });
+
+  it('waits for server room creation before reporting the room ready', async () => {
+    const mesh = new CloudMesh(() => {});
+    let finishCreate;
+    vi.stubGlobal('fetch', () => new Promise(resolve => {
+      finishCreate = () => resolve({ ok: true, json: async () => ({ success: true }) });
+    }));
+
+    let settled = false;
+    const creating = mesh.createRoom('ROOM', 'peer-1', 'Host').then(() => { settled = true; });
+    await Promise.resolve();
+
+    expect(settled).toBe(false);
+    finishCreate();
+    await creating;
+    expect(settled).toBe(true);
+  });
+
+  it('reports join failure and releases the room state', async () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 404 }));
+
+    await expect(mesh.joinRoom('MISS', 'peer-1', 'Guest')).rejects.toThrow();
+
+    expect(mesh.roomId).toBeNull();
+    expect(mesh.peerId).toBeNull();
+    expect(events).toContainEqual(expect.objectContaining({ type: 'ROOM_ERROR' }));
+  });
+
   it('does not send a stale buffer when a peer requests a track that is not cached', () => {
     const mesh = new CloudMesh(() => {});
     mesh.currentAudioArrayBuffer = new ArrayBuffer(16);
@@ -101,6 +154,21 @@ describe('CloudMesh audio transfer', () => {
     await add;
   });
 
+  it('keeps a queued item visible and reports a server rejection', async () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'peer-1';
+    mesh.deviceName = 'Host';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 503, json: async () => ({}) }));
+
+    await mesh.addToQueue({ id: 'track-offline', name: 'Offline track' });
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(mesh.lastKnownQueue.map(track => track.id)).toContain('track-offline');
+    expect(events).toContainEqual(expect.objectContaining({ type: 'QUEUE_SYNC_ERROR' }));
+  });
+
   it('adding a queued item never changes the active track', async () => {
     const mesh = new CloudMesh(() => {});
     mesh.roomId = 'ROOM';
@@ -165,5 +233,38 @@ describe('CloudMesh audio transfer', () => {
     await removal;
 
     expect(mesh.lastKnownQueue.map(track => track.id)).toEqual([]);
+  });
+});
+
+describe('SocketClient room readiness', () => {
+  it('announces a room only after the server confirms creation', async () => {
+    const events = [];
+    const client = new SocketClient((type, payload) => events.push({ type, payload }));
+    let resolveRoom;
+    client.cloudMesh.createRoom = vi.fn(() => new Promise(resolve => { resolveRoom = resolve; }));
+
+    client.createRoom('Host');
+    expect(events.some(event => event.type === 'ROOM_CREATED')).toBe(false);
+    resolveRoom({ id: client.roomId });
+    await client.roomReady;
+
+    expect(events.some(event => event.type === 'ROOM_CREATED')).toBe(true);
+  });
+
+  it('does not submit a queue item before room creation completes', async () => {
+    const client = new SocketClient(() => {});
+    let finishRoom;
+    const roomReady = new Promise(resolve => { finishRoom = resolve; });
+    client.cloudMesh.createRoom = vi.fn(() => roomReady);
+    client.cloudMesh.addToQueue = vi.fn().mockResolvedValue({ id: 'track-1' });
+
+    expect(client.createRoom('Host')).toBe(roomReady);
+    const add = client.addToQueue({ id: 'track-1', name: 'Track' });
+    await Promise.resolve();
+    expect(client.cloudMesh.addToQueue).not.toHaveBeenCalled();
+
+    finishRoom();
+    await add;
+    expect(client.cloudMesh.addToQueue).toHaveBeenCalledWith({ id: 'track-1', name: 'Track' });
   });
 });

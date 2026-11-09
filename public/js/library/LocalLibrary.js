@@ -11,6 +11,7 @@ export class LocalLibrary {
 
   async open() {
     if (this.db) return this.db;
+    if (typeof indexedDB === 'undefined') return null;
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(this.dbName, this.version);
 
@@ -156,6 +157,111 @@ export class LocalLibrary {
       return hist.slice(0, limit);
     } catch (e) {
       return [];
+    }
+  }
+
+  async getPlaylists() {
+    const db = await this.open();
+    if (db) {
+      return new Promise((resolve) => {
+        const request = db.transaction('playlists', 'readonly').objectStore('playlists').getAll();
+        request.onsuccess = () => resolve(request.result || []);
+        request.onerror = () => resolve([]);
+      });
+    }
+    try {
+      return JSON.parse(localStorage.getItem('rync_playlists') || '[]');
+    } catch (e) {
+      return [];
+    }
+  }
+
+  async savePlaylist(playlist) {
+    const db = await this.open();
+    if (db) {
+      return new Promise((resolve) => {
+        const tx = db.transaction('playlists', 'readwrite');
+        tx.objectStore('playlists').put(playlist);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      });
+    }
+    try {
+      const playlists = await this.getPlaylists();
+      const index = playlists.findIndex(item => item.id === playlist.id);
+      if (index < 0) playlists.unshift(playlist);
+      else playlists[index] = playlist;
+      localStorage.setItem('rync_playlists', JSON.stringify(playlists));
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  async createPlaylist(name) {
+    const title = String(name || '').trim();
+    if (!title) throw new Error('Playlist name is required');
+    const now = Date.now();
+    const playlist = {
+      id: `playlist_${globalThis.crypto?.randomUUID?.() || `${now}_${Math.random().toString(36).slice(2, 8)}`}`,
+      name: title,
+      tracks: [],
+      createdAt: now,
+      updatedAt: now
+    };
+    if (!await this.savePlaylist(playlist)) throw new Error('Playlist could not be saved');
+    return playlist;
+  }
+
+  async updatePlaylist(playlistId, update) {
+    const playlists = await this.getPlaylists();
+    const playlist = playlists.find(item => item.id === playlistId);
+    if (!playlist) return false;
+    const next = { ...playlist, ...update, id: playlist.id, updatedAt: Date.now() };
+    return this.savePlaylist(next);
+  }
+
+  async renamePlaylist(playlistId, name) {
+    const title = String(name || '').trim();
+    if (!title) throw new Error('Playlist name is required');
+    return this.updatePlaylist(playlistId, { name: title });
+  }
+
+  async addTrackToPlaylist(playlistId, track) {
+    if (!track?.id) return false;
+    const playlists = await this.getPlaylists();
+    const playlist = playlists.find(item => item.id === playlistId);
+    if (!playlist) return false;
+    const tracks = playlist.tracks || [];
+    if (tracks.some(item => item.id === track.id)) return true;
+    return this.updatePlaylist(playlistId, { tracks: [...tracks, track] });
+  }
+
+  async removeTrackFromPlaylist(playlistId, trackId) {
+    const playlists = await this.getPlaylists();
+    const playlist = playlists.find(item => item.id === playlistId);
+    if (!playlist) return false;
+    return this.updatePlaylist(playlistId, {
+      tracks: (playlist.tracks || []).filter(item => item.id !== trackId)
+    });
+  }
+
+  async deletePlaylist(playlistId) {
+    const db = await this.open();
+    if (db) {
+      return new Promise((resolve) => {
+        const tx = db.transaction('playlists', 'readwrite');
+        tx.objectStore('playlists').delete(playlistId);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      });
+    }
+    try {
+      const playlists = (await this.getPlaylists()).filter(item => item.id !== playlistId);
+      localStorage.setItem('rync_playlists', JSON.stringify(playlists));
+      return true;
+    } catch (e) {
+      return false;
     }
   }
 }

@@ -38,6 +38,9 @@ export default async function handler(req, res) {
   const roomId = (query.roomId || body.roomId || '').toUpperCase();
   const peerId = query.peerId || body.peerId || '';
   const deviceName = query.deviceName || body.deviceName || 'Speaker';
+  if (['create', 'join'].includes(action) && (!/^[A-Z0-9]{4}$/.test(roomId) || !peerId || peerId.length > 96)) {
+    return res.status(400).json({ success: false, error: 'INVALID_ROOM_REQUEST' });
+  }
 
   const now = Date.now();
   const requireHost = (room) => {
@@ -172,22 +175,8 @@ export default async function handler(req, res) {
   }
 
   if (action === 'join') {
-    let room = rooms.get(roomId);
-    if (!room) {
-      room = {
-        roomId,
-        hostId: peerId,
-        state: 'IDLE',
-        track: null,
-        targetServerTime: 0,
-        startOffsetSec: 0,
-        updatedAt: now,
-        queue: [],
-        peers: {},
-        signals: []
-      };
-      rooms.set(roomId, room);
-    }
+    const room = rooms.get(roomId);
+    if (!room) return res.status(404).json({ success: false, error: 'ROOM_NOT_FOUND' });
 
     room.peers[peerId] = {
       id: peerId,

@@ -2,9 +2,9 @@
 <html lang="id">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Rync432 • Audio Mesh</title>
-  <meta name="description" content="Sinkronisasi audio multi-device tanpa delay dengan Web Audio API dan clock sync presisi.">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Rync — music, together</title>
+  <meta name="description" content="Putar musik sendiri atau sinkronkan sesi dengar bareng teman di Rync.">
   <link rel="manifest" href="/manifest.json">
   <meta name="theme-color" content="#0a0a0c">
   <meta name="mobile-web-app-capable" content="yes">
@@ -13,13 +13,11 @@
   <meta name="apple-mobile-web-app-title" content="Rync432">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
   <link rel="stylesheet" href="/css/style.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2250%22 r=%2245%22 fill=%22%231ed760%22/></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2250%22 r=%2245%22 fill=%22%23d8ff45%22/></svg>">
   
   <!-- Real-Time Pub/Sub Bus Engine -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.10.3/mqtt.min.js"></script>
 
-  <!-- Google AdSense Tag -->
-  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-XXXXXXXXXXXXXXXX" crossorigin="anonymous"></script>
 </head>
 <body>
   <div class="app-container">
@@ -37,8 +35,8 @@
           </svg>
         </div>
         <div class="brand-title-wrap">
-          <h1 class="brand-title">RYNC432</h1>
-          <span class="brand-tagline">Audio Mesh</span>
+          <h1 class="brand-title">RYNC</h1>
+          <span class="brand-tagline">music, together</span>
         </div>
       </div>
 
@@ -62,34 +60,29 @@
       </div>
     </header>
 
-    <!-- Top Google Ads -->
-    <div class="ads-placement-container">
-      <div class="ads-banner-slot" id="topAdBanner">
-        <ins class="adsbygoogle"
-             style="display:block; width:100%; height:90px;"
-             data-ad-client="ca-pub-XXXXXXXXXXXXXXXX"
-             data-ad-slot="1234567890"
-             data-ad-format="horizontal"
-             data-full-width-responsive="true"></ins>
-        <span>Iklan Sponsor</span>
-      </div>
-    </div>
+    <nav class="primary-nav" aria-label="Navigasi utama">
+      <button type="button" class="primary-nav-item active" id="navHomeBtn" data-view="home" aria-current="page">Home</button>
+      <button type="button" class="primary-nav-item" id="navSearchBtn" data-view="search">Search</button>
+      <button type="button" class="primary-nav-item" id="navLibraryBtn" data-view="library">Library</button>
+      <button type="button" class="primary-nav-item" id="navRoomBtn" data-view="room">Listen together</button>
+    </nav>
 
     <!-- Hidden File Input for Batch Music Audio Selection -->
     <input type="file" id="audioFileInput" accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac" multiple style="display: none;">
 
     <!-- Landing / Room Select (Hero) -->
-    <section class="spotify-card hero-centered-card" id="roomHeroSection">
+    <section class="spotify-card hero-centered-card" id="roomHeroSection" hidden>
       <div class="hero-title-group" style="text-align: center;">
-        <h2>Sinkron Audio</h2>
-        <p>Putar musik serempak di banyak speaker HP, laptop, dan tablet tanpa jeda.</p>
+        <h2>Listen together</h2>
+        <p>Bikin room, kirim link, lalu dengarkan bareng dari perangkat masing-masing.</p>
       </div>
+      <p class="url-feedback-text" id="roomFeedback" role="status" aria-live="polite" hidden></p>
 
       <div class="room-actions-grid">
         <!-- Host Tile -->
         <div class="action-tile">
-          <h3>Host Room</h3>
-          <p>Mulai room baru sebagai Master.</p>
+          <h3>Buat room</h3>
+          <p>Bagikan kontrol pemutaran dengan teman.</p>
           <button class="btn-spotify btn-spotify-primary" id="createRoomBtn" style="width: 100%;">
             Buat Room
           </button>
@@ -97,8 +90,8 @@
 
         <!-- Join Tile -->
         <div class="action-tile">
-          <h3>Join Room</h3>
-          <p>Masukkan kode room atau scan QR.</p>
+          <h3>Gabung room</h3>
+          <p>Masukkan kode undangan atau scan QR.</p>
           <div class="spotify-input-wrap">
             <input type="text" id="roomCodeInput" class="spotify-input room-code-input" placeholder="KODE" maxlength="4">
             <button class="btn-spotify btn-spotify-primary" id="joinRoomBtn">Gabung</button>
@@ -115,7 +108,7 @@
     </section>
 
     <!-- Active Room Interface -->
-    <div id="activeRoomSection" style="display: none; flex-direction: column; gap: 16px;">
+    <div id="activeRoomSection" style="display: flex; flex-direction: column; gap: 16px;">
       
       <!-- Room Bar -->
       <div class="active-room-bar">
@@ -147,7 +140,7 @@
         
         <!-- Left: Audio Player -->
         <div class="player-stage">
-          <div class="spotify-card">
+        <div class="spotify-card" id="sourceHubSection">
             
             <div class="track-artwork-row">
               <div class="album-art-box" id="albumArtBox">
@@ -161,6 +154,7 @@
                 <div class="track-title" id="trackTitle">Pilih trek lagu</div>
                 <div class="track-sub" id="trackSub">Direct URL, YouTube search, atau file</div>
               </div>
+              <button type="button" class="favorite-track-btn" id="favoriteTrackBtn" aria-label="Simpan ke lagu favorit" aria-pressed="false">♡</button>
               <div class="readiness-indicator" id="roomReadinessIndicator" title="Status Kesiapan Speaker">
                 <span class="readiness-dot"></span>
                 <span id="roomReadinessText">1/1 Siap</span>
@@ -378,18 +372,27 @@
 
     </div>
 
-    <!-- Bottom Google Ads -->
-    <div class="ads-placement-container" style="margin-top: 16px;">
-      <div class="ads-banner-slot" id="bottomAdBanner">
-        <ins class="adsbygoogle"
-             style="display:block; width:100%; height:90px;"
-             data-ad-client="ca-pub-XXXXXXXXXXXXXXXX"
-             data-ad-slot="0987654321"
-             data-ad-format="horizontal"
-             data-full-width-responsive="true"></ins>
-        <span>Iklan Sponsor</span>
+    <section class="library-view" id="librarySection" hidden aria-labelledby="libraryHeading">
+      <div class="library-heading-row">
+        <div>
+          <p class="eyebrow">Tersimpan di perangkat ini</p>
+          <h2 id="libraryHeading">Your library</h2>
+        </div>
+        <button type="button" class="btn-spotify btn-spotify-primary" id="createPlaylistBtn">Playlist baru</button>
       </div>
-    </div>
+      <section class="library-group" aria-labelledby="playlistHeading">
+        <h3 id="playlistHeading">Playlists</h3>
+        <div id="playlistList" class="library-list"></div>
+      </section>
+      <section class="library-group" aria-labelledby="favoritesHeading">
+        <h3 id="favoritesHeading">Liked tracks</h3>
+        <div id="favoriteList" class="library-list"></div>
+      </section>
+      <section class="library-group" aria-labelledby="recentHeading">
+        <h3 id="recentHeading">Recently played</h3>
+        <div id="recentList" class="library-list"></div>
+      </section>
+    </section>
 
   </div>
 

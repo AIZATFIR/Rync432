@@ -50,4 +50,35 @@ describe('LocalLibrary Local Storage Fallback', () => {
     expect(history.length).toBe(2);
     expect(history[0].name).toBe('Song 2');
   });
+
+  it('creates, renames, populates and deletes playlists', async () => {
+    const playlist = await lib.createPlaylist('Late night');
+    expect(playlist.name).toBe('Late night');
+
+    const track = { id: 'track-1', name: 'Track one' };
+    await lib.addTrackToPlaylist(playlist.id, track);
+    await lib.addTrackToPlaylist(playlist.id, track);
+    await lib.renamePlaylist(playlist.id, 'Night drive');
+
+    expect(await lib.getPlaylists()).toEqual([expect.objectContaining({
+      id: playlist.id, name: 'Night drive', tracks: [track]
+    })]);
+
+    await lib.removeTrackFromPlaylist(playlist.id, track.id);
+    expect((await lib.getPlaylists())[0].tracks).toEqual([]);
+    await lib.deletePlaylist(playlist.id);
+    expect(await lib.getPlaylists()).toEqual([]);
+  });
+
+  it('rejects blank playlist names', async () => {
+    await expect(lib.createPlaylist('   ')).rejects.toThrow('Playlist name is required');
+  });
+
+  it('falls back to localStorage when IndexedDB is unavailable', async () => {
+    delete global.indexedDB;
+    const fallbackLibrary = new LocalLibrary();
+    await fallbackLibrary.addFavorite({ id: 'fallback-track', name: 'Offline favorite' });
+
+    expect(await fallbackLibrary.isFavorite('fallback-track')).toBe(true);
+  });
 });

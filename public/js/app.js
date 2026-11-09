@@ -45,12 +45,12 @@ class App {
     });
 
     const urlParams = new URLSearchParams(window.location.search);
-    const roomParam = urlParams.get('room');
-    if (roomParam && roomParam.length === 4) {
+    const roomParam = urlParams.get('room')?.trim().toUpperCase();
+    if (/^[A-Z0-9]{4}$/.test(roomParam || '')) {
       setTimeout(() => {
         this.audioEngine.ensureContext();
         this.socketClient.joinRoom(roomParam.toUpperCase(), this.uiManager.getDeviceName());
-      }, 500);
+      }, 0);
     }
   }
 
@@ -110,6 +110,10 @@ class App {
         alert(payload.message || 'Room error');
         break;
 
+      case 'ROOM_LEFT':
+        uiManager.setSoloState();
+        break;
+
       case 'PEER_JOINED':
       case 'PEER_LEFT':
       case 'PEER_UPDATED':
@@ -123,6 +127,10 @@ class App {
         if (payload.queue) {
           uiManager.renderQueue(payload.queue);
         }
+        break;
+
+      case 'QUEUE_SYNC_ERROR':
+        uiManager.showUrlFeedback(payload.message || 'Antrean belum tersinkron ke room.', 'error');
         break;
 
       case 'CONTROL_REQUEST': {

@@ -79,7 +79,7 @@ export class CloudMesh {
     this.initMqttBus(roomId, deviceName);
 
     try {
-      fetch('/api/room?action=create', {
+      const response = await fetch('/api/room?action=create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -88,10 +88,19 @@ export class CloudMesh {
           deviceName,
           queue: this.lastKnownQueue || []
         })
-      }).catch(() => {});
-    } catch (e) {}
-
-    this.startPolling();
+      });
+      if (!response.ok) throw new Error(`Room creation failed (${response.status})`);
+      const result = await response.json();
+      if (!result.success) throw new Error(result.error || 'Room creation failed');
+      this.startPolling();
+      return result.room;
+    } catch (error) {
+      this.roomId = null;
+      this.peerId = null;
+      this.isHost = false;
+      this.onEvent('ROOM_ERROR', { message: 'Room gagal dibuat. Coba lagi.' });
+      throw error;
+    }
   }
 
   async joinRoom(roomId, peerId, deviceName) {
@@ -104,16 +113,25 @@ export class CloudMesh {
     this.initMqttBus(roomId, deviceName);
 
     try {
-      fetch('/api/room?action=join', {
+      const response = await fetch('/api/room?action=join', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roomId, peerId, deviceName })
-      }).then(res => res.json()).then(data => {
-        if (data.room) this.applyRoomSnapshot(data.room);
-      }).catch(() => {});
-    } catch (e) {}
-
-    this.startPolling();
+      });
+      const data = await response.json();
+      if (!response.ok || !data.room) throw new Error(data.error || 'Room tidak ditemukan.');
+      if (data.room.roomId && data.room.roomId !== roomId) throw new Error('Room response mismatch');
+      this.applyRoomSnapshot(data.room);
+      this.startPolling();
+      return data.room;
+    } catch (error) {
+      this.unsubscribe();
+      this.roomId = null;
+      this.peerId = null;
+      this.isHost = false;
+      this.onEvent('ROOM_ERROR', { message: 'Room tidak bisa dimasuki. Periksa kode atau koneksi.' });
+      throw error;
+    }
   }
 
   applyRoomSnapshot(snapshot) {
@@ -762,7 +780,12 @@ export class CloudMesh {
         deviceName: this.deviceName,
         ...item
       })
-    }).then(res => res.json()).then(data => {
+    }).then(async res => {
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Antrean tersimpan di perangkat ini, sinkronisasi room gagal.' });
+        return;
+      }
       if (data.queue && data.queue.length > 0) {
         const confirmedTracks = data.queue.filter(track => !this.deletedQueueIds.has(track.id));
         const serverIds = new Set(confirmedTracks.map(track => track.id));
@@ -783,7 +806,9 @@ export class CloudMesh {
           });
         }
       }
-    }).catch(() => {});
+    }).catch(() => {
+      this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Antrean tersimpan di perangkat ini, sinkronisasi room gagal.' });
+    });
   }
 
   requestControl(action, details = {}) {
@@ -1664,22 +1689,41 @@ export class CloudMesh {
   }
 
   leaveRoom() {
+    const roomId = this.roomId;
+    const peerId = this.peerId;
     this.unsubscribe();
     if (this.roomTopic) {
       this.publishMqtt(this.roomTopic, {
         type: 'PEER_LEFT',
-        peerId: this.peerId
+        peerId
       });
     }
-    if (this.roomId && this.peerId) {
+    if (roomId && peerId) {
       try {
         if (navigator.sendBeacon) {
-          navigator.sendBeacon(`/api/room?action=leave_room&roomId=${this.roomId}&peerId=${this.peerId}`);
+          navigator.sendBeacon(`/api/room?action=leave_room&roomId=${roomId}&peerId=${peerId}`);
         } else {
-          fetch(`/api/room?action=leave_room&roomId=${this.roomId}&peerId=${this.peerId}`, { method: 'POST', keepalive: true }).catch(() => {});
+          fetch(`/api/room?action=leave_room&roomId=${roomId}&peerId=${peerId}`, { method: 'POST', keepalive: true }).catch(() => {});
         }
       } catch (e) { }
     }
+    this.peerConnections.forEach(peer => {
+      try { peer.close(); } catch (e) { }
+    });
+    this.dataChannels.forEach(channel => {
+      try { channel.close(); } catch (e) { }
+    });
+    this.peerConnections.clear();
+    this.dataChannels.clear();
+    this.pendingIceCandidates.clear();
+    this.lastSentBufferPerPeer.clear();
+    this.incomingAudioChunks.clear();
+    this.localPeersMap.clear();
+    this.roomId = null;
+    this.peerId = null;
+    this.roomTopic = null;
+    this.peerTopic = null;
+    this.isHost = false;
   }
 
   unsubscribe() {

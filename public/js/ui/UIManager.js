@@ -15,6 +15,8 @@ export class UIManager {
     this.selectedDeviceForEdit = null;
     this.demoTrackIndex = 0;
     this.isPlayingState = false;
+    this.currentView = 'home';
+    this.currentTrack = null;
     this.musicSourceManager = new MusicSourceManager();
     this.localLibrary = new LocalLibrary();
   }
@@ -22,9 +24,22 @@ export class UIManager {
   init() {
     this.elements = {
       connectionStatus: document.getElementById('connectionStatus'),
+      roomFeedback: document.getElementById('roomFeedback'),
       connectionDot: document.getElementById('connectionDot'),
       roomHeroSection: document.getElementById('roomHeroSection'),
       activeRoomSection: document.getElementById('activeRoomSection'),
+      librarySection: document.getElementById('librarySection'),
+      sourceHubSection: document.getElementById('sourceHubSection'),
+      navHomeBtn: document.getElementById('navHomeBtn'),
+      navSearchBtn: document.getElementById('navSearchBtn'),
+      navLibraryBtn: document.getElementById('navLibraryBtn'),
+      navRoomBtn: document.getElementById('navRoomBtn'),
+      favoriteTrackBtn: document.getElementById('favoriteTrackBtn'),
+      createPlaylistBtn: document.getElementById('createPlaylistBtn'),
+      playlistList: document.getElementById('playlistList'),
+      favoriteList: document.getElementById('favoriteList'),
+      recentList: document.getElementById('recentList'),
+      queueCardSection: document.getElementById('queueCardSection'),
       roomCodeDisplay: document.getElementById('roomCodeDisplay'),
       userRoleBadge: document.getElementById('userRoleBadge'),
       
@@ -171,6 +186,8 @@ export class UIManager {
 
     this.initFirebaseAuthListener();
     this.bindEvents();
+    this.setView('home');
+    this.refreshLibrary();
     this.startPlaybackTicker();
 
     // Auto next track when current finishes (Only host advances to prevent race condition)
@@ -191,6 +208,34 @@ export class UIManager {
 
   bindEvents() {
     const { elements, app } = this;
+
+    [
+      [elements.navHomeBtn, 'home'],
+      [elements.navSearchBtn, 'search'],
+      [elements.navLibraryBtn, 'library'],
+      [elements.navRoomBtn, 'room']
+    ].forEach(([button, view]) => button?.addEventListener('click', () => this.setView(view)));
+
+    elements.favoriteTrackBtn?.addEventListener('click', async () => {
+      const track = this.currentTrack || this.app.socketClient?.cloudMesh?.lastKnownTrack;
+      if (!track?.id) return;
+      const isFavorite = await this.localLibrary.isFavorite(track.id);
+      if (isFavorite) await this.localLibrary.removeFavorite(track.id);
+      else await this.localLibrary.addFavorite(track);
+      this.updateFavoriteButton(!isFavorite);
+      this.refreshLibrary();
+    });
+
+    elements.createPlaylistBtn?.addEventListener('click', async () => {
+      const name = window.prompt('Nama playlist');
+      if (!name?.trim()) return;
+      try {
+        await this.localLibrary.createPlaylist(name);
+        this.refreshLibrary();
+      } catch (error) {
+        this.showUrlFeedback(error.message, 'error');
+      }
+    });
 
     // 1. Settings & Auth Modal
     if (elements.userAuthBtn) {
@@ -234,20 +279,28 @@ export class UIManager {
 
     // 2. Room Actions
     if (elements.createRoomBtn) {
-      elements.createRoomBtn.addEventListener('click', () => {
-        app.audioEngine.ensureContext();
-        app.socketClient.createRoom(this.getDeviceName());
+      elements.createRoomBtn.addEventListener('click', async () => {
+        try {
+          await app.audioEngine.ensureContext();
+          await app.socketClient.createRoom(this.getDeviceName());
+        } catch (error) {
+          this.showUrlFeedback('Room gagal dibuat. Periksa koneksi lalu coba lagi.', 'error');
+        }
       });
     }
 
     if (elements.joinRoomBtn) {
-      elements.joinRoomBtn.addEventListener('click', () => {
+      elements.joinRoomBtn.addEventListener('click', async () => {
         const code = elements.roomCodeInput.value.trim().toUpperCase();
-        if (code.length === 4) {
-          app.audioEngine.ensureContext();
-          app.socketClient.joinRoom(code, this.getDeviceName());
+        if (/^[A-Z0-9]{4}$/.test(code)) {
+          try {
+            await app.audioEngine.ensureContext();
+            await app.socketClient.joinRoom(code, this.getDeviceName());
+          } catch (error) {
+            this.showUrlFeedback('Room tidak bisa dimasuki. Periksa kode atau koneksi.', 'error');
+          }
         } else {
-          alert('Masukkan 4 digit kode room.');
+          this.showUrlFeedback('Kode room terdiri dari 4 huruf atau angka.', 'error');
         }
       });
     }
@@ -260,7 +313,7 @@ export class UIManager {
 
     if (elements.leaveRoomBtn) {
       elements.leaveRoomBtn.addEventListener('click', () => {
-        window.location.reload();
+        app.socketClient.leaveRoom();
       });
     }
 
@@ -269,11 +322,15 @@ export class UIManager {
       elements.scanQrBtn.addEventListener('click', async () => {
         if (elements.qrScannerModal) elements.qrScannerModal.classList.add('active');
         try {
-          this.qrScanner = new QRScanner(elements.qrVideo, (scannedCode) => {
+          this.qrScanner = new QRScanner(elements.qrVideo, async (scannedCode) => {
             if (elements.roomCodeInput) elements.roomCodeInput.value = scannedCode;
             if (elements.qrScannerModal) elements.qrScannerModal.classList.remove('active');
-            app.audioEngine.ensureContext();
-            app.socketClient.joinRoom(scannedCode, this.getDeviceName());
+            try {
+              await app.audioEngine.ensureContext();
+              await app.socketClient.joinRoom(scannedCode, this.getDeviceName());
+            } catch (error) {
+              this.showUrlFeedback('Room tidak bisa dimasuki. Periksa kode atau koneksi.', 'error');
+            }
           });
           await this.qrScanner.start();
         } catch (err) {
@@ -298,12 +355,16 @@ export class UIManager {
       });
     }
 
-    const copyLinkHandler = () => {
-      const roomId = app.socketClient.roomId || 'DEMO';
+    const copyLinkHandler = async () => {
+      const roomId = app.socketClient.roomId;
+      if (!roomId) return this.showUrlFeedback('Buat atau gabung room dulu untuk membagikan link.', 'error');
       const url = `${window.location.origin}/?room=${roomId}`;
-      navigator.clipboard.writeText(url).then(() => {
-        alert(`Link Room disalin: ${url}`);
-      });
+      try {
+        await navigator.clipboard.writeText(url);
+        this.showUrlFeedback('Link room disalin. Kirim ke temanmu.', 'success');
+      } catch (error) {
+        this.showUrlFeedback(`Salin link ini: ${url}`, 'error');
+      }
     };
 
     if (elements.copyRoomLinkBtn) elements.copyRoomLinkBtn.addEventListener('click', copyLinkHandler);
@@ -311,7 +372,8 @@ export class UIManager {
 
     // Devices & QR Modal
     const openConnectModal = () => {
-      const roomId = app.socketClient.roomId || 'DEMO';
+      const roomId = app.socketClient.roomId;
+      if (!roomId) return this.showUrlFeedback('Buat atau gabung room dulu untuk menghubungkan perangkat.', 'error');
       const roomUrl = `${window.location.origin}/?room=${roomId}`;
       if (elements.roomQrCodeContainer) {
         elements.roomQrCodeContainer.innerHTML = QRCodeGenerator.generateSVG(roomUrl, 160);
@@ -902,22 +964,37 @@ export class UIManager {
 
     results.forEach((item) => {
       const rawThumb = item.thumbnail;
-      const thumbSrc = (rawThumb && rawThumb !== 'NA' && rawThumb.startsWith('http'))
+      const videoId = /^[\w-]{11}$/.test(item.id || '') ? item.id : '';
+      const thumbSrc = (rawThumb && rawThumb !== 'NA' && /^https:\/\//i.test(rawThumb))
         ? rawThumb
-        : `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`;
+        : `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
 
       const card = document.createElement('div');
       card.className = 'yt-result-item';
-      card.innerHTML = `
-        <img class="yt-result-thumb" src="${thumbSrc}" alt="Thumbnail" onerror="this.src='https://img.youtube.com/vi/${item.id}/mqdefault.jpg'">
-        <div class="yt-result-info">
-          <div class="yt-result-title">${item.title}</div>
-          <div class="yt-result-meta">${item.channel} • ${item.durationText || this.formatTime(item.duration)}</div>
-        </div>
-        <button class="btn-spotify btn-spotify-primary add-yt-queue-btn" style="padding: 4px 10px; font-size: 0.72rem; min-height: 28px; white-space: nowrap;">
-          + Queue
-        </button>
-      `;
+      const thumbnail = document.createElement('img');
+      thumbnail.className = 'yt-result-thumb';
+      thumbnail.alt = 'Thumbnail';
+      const title = document.createElement('div');
+      title.className = 'yt-result-title';
+      title.textContent = item.title || 'Untitled';
+      const meta = document.createElement('div');
+      meta.className = 'yt-result-meta';
+      meta.textContent = `${item.channel || 'YouTube'} • ${item.durationText || this.formatTime(item.duration)}`;
+      const info = document.createElement('div');
+      info.className = 'yt-result-info';
+      info.appendChild(title);
+      info.appendChild(meta);
+      thumbnail.src = thumbSrc;
+      thumbnail.onerror = () => {
+        if (videoId) thumbnail.src = `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`;
+      };
+      const queueButton = document.createElement('button');
+      queueButton.className = 'btn-spotify btn-spotify-primary add-yt-queue-btn';
+      queueButton.style.cssText = 'padding: 4px 10px; font-size: 0.72rem; min-height: 28px; white-space: nowrap;';
+      queueButton.textContent = '+ Queue';
+      card.appendChild(thumbnail);
+      card.appendChild(info);
+      card.appendChild(queueButton);
 
       const queueBtn = card.querySelector('.add-yt-queue-btn');
       if (queueBtn) {
@@ -1064,6 +1141,8 @@ export class UIManager {
           </div>
         </div>
       `;
+      div.querySelector('.queue-item-title').textContent = item.name || 'Untitled';
+      div.querySelector('.queue-item-meta').textContent = `${item.artist || 'Artist'} • ${this.formatTime(item.duration)} • Oleh ${item.addedBy || 'Member'}`;
 
       const menuBtn = div.querySelector('.queue-menu-btn');
       const dropdown = div.querySelector('.queue-dropdown-menu');
@@ -1438,10 +1517,14 @@ export class UIManager {
   }
 
   showUrlFeedback(msg, type = 'info') {
-    if (!this.elements.directUrlFeedback) return;
-    this.elements.directUrlFeedback.style.display = 'block';
-    this.elements.directUrlFeedback.className = `url-feedback-text ${type}`;
-    this.elements.directUrlFeedback.innerText = msg;
+    const feedback = this.currentView === 'room'
+      ? (this.elements.roomFeedback || this.elements.directUrlFeedback)
+      : (this.elements.directUrlFeedback || this.elements.roomFeedback);
+    if (!feedback) return;
+    feedback.hidden = false;
+    feedback.style.display = 'block';
+    feedback.className = `url-feedback-text ${type}`;
+    feedback.innerText = msg;
   }
 
   setTrackLoading(msg) {
@@ -1461,6 +1544,16 @@ export class UIManager {
   }
 
   updateTrackUI(title, duration, thumbnail = '') {
+    const sourceTrack = this.app?.socketClient?.cloudMesh?.lastKnownTrack || {};
+    const currentTrack = {
+      ...sourceTrack,
+      id: sourceTrack.id || `track_${encodeURIComponent(title || 'unknown')}`,
+      name: title || sourceTrack.name || 'Untitled',
+      artist: sourceTrack.artist || '',
+      duration: duration || sourceTrack.duration || 0,
+      thumbnail: thumbnail || sourceTrack.thumbnail || ''
+    };
+    this.currentTrack = currentTrack;
     if (duration > 0 && this.app?.audioEngine) {
       this.app.audioEngine.currentTrackDuration = duration;
     }
@@ -1470,15 +1563,12 @@ export class UIManager {
 
     // Save playback to recent history if meaningful track
     if (title && title !== 'Pilih trek lagu' && this.localLibrary) {
-      this.localLibrary.addHistory({
-        id: currentTrack?.id || ('trk_' + encodeURIComponent(title)),
-        name: title,
-        duration: duration || 0,
-        thumbnail: thumbnail || currentTrack?.thumbnail || ''
-      }).catch(() => {});
+      this.localLibrary.addHistory(currentTrack).catch(() => {});
+      this.localLibrary.isFavorite(currentTrack.id)
+        .then(isFavorite => this.updateFavoriteButton(isFavorite))
+        .catch(() => this.updateFavoriteButton(false));
     }
 
-    const currentTrack = this.app?.socketClient?.cloudMesh?.lastKnownTrack;
     let thumbUrl = thumbnail;
     if (!thumbUrl || thumbUrl === 'NA' || !thumbUrl.startsWith('http')) {
       thumbUrl = currentTrack?.thumbnail;
@@ -1557,7 +1647,180 @@ export class UIManager {
     }
   }
 
+  setView(view) {
+    if (!['home', 'search', 'library', 'room'].includes(view)) return;
+    this.currentView = view;
+    const hasRoom = !!this.app.socketClient?.roomId;
+    const showRoomSetup = view === 'room' && !hasRoom;
+    const showLibrary = view === 'library';
+
+    if (this.elements.activeRoomSection) {
+      this.elements.activeRoomSection.style.display = showLibrary || showRoomSetup ? 'none' : 'flex';
+    }
+    if (this.elements.roomHeroSection) {
+      this.elements.roomHeroSection.hidden = !showRoomSetup;
+      this.elements.roomHeroSection.style.display = showRoomSetup ? 'block' : 'none';
+    }
+    if (this.elements.librarySection) this.elements.librarySection.hidden = !showLibrary;
+    if (this.elements.sourceHubSection) {
+      this.elements.sourceHubSection.style.display = view === 'search' ? '' : 'none';
+    }
+
+    const navButtons = [
+      [this.elements.navHomeBtn, 'home'],
+      [this.elements.navSearchBtn, 'search'],
+      [this.elements.navLibraryBtn, 'library'],
+      [this.elements.navRoomBtn, 'room']
+    ];
+    navButtons.forEach(([button, name]) => {
+      if (!button) return;
+      button.classList.toggle('active', name === view);
+      if (name === view) button.setAttribute('aria-current', 'page');
+      else button.removeAttribute('aria-current');
+    });
+
+    if (view === 'search') {
+      this.elements.tabBtnYoutube?.click();
+      this.elements.ytUrlInput?.focus();
+    }
+    if (showLibrary) this.refreshLibrary();
+  }
+
+  updateFavoriteButton(isFavorite) {
+    const button = this.elements.favoriteTrackBtn;
+    if (!button) return;
+    button.textContent = isFavorite ? '♥' : '♡';
+    button.setAttribute('aria-pressed', String(isFavorite));
+    button.setAttribute('aria-label', isFavorite ? 'Hapus dari lagu favorit' : 'Simpan ke lagu favorit');
+  }
+
+  async refreshLibrary() {
+    try {
+      const [playlists, favorites, recent] = await Promise.all([
+        this.localLibrary.getPlaylists(),
+        this.localLibrary.getFavorites(),
+        this.localLibrary.getRecentHistory(20)
+      ]);
+      this.renderPlaylists(playlists);
+      this.renderLibraryTracks(this.elements.favoriteList, favorites, 'Belum ada lagu favorit.');
+      this.renderLibraryTracks(this.elements.recentList, recent, 'Lagu yang diputar akan muncul di sini.');
+    } catch (error) {
+      console.warn('Library unavailable:', error);
+    }
+  }
+
+  renderPlaylists(playlists = []) {
+    const container = this.elements.playlistList;
+    if (!container) return;
+    container.replaceChildren();
+    if (!playlists.length) {
+      container.append(this.createLibraryEmpty('Belum ada playlist.'));
+      return;
+    }
+
+    playlists.forEach(playlist => {
+      const row = document.createElement('article');
+      row.className = 'playlist-row';
+      const title = document.createElement('strong');
+      title.textContent = playlist.name;
+      const count = document.createElement('span');
+      count.className = 'library-row-meta';
+      count.textContent = `${playlist.tracks?.length || 0} lagu`;
+      const addCurrent = document.createElement('button');
+      addCurrent.type = 'button';
+      addCurrent.className = 'library-action';
+      addCurrent.textContent = 'Simpan yang diputar';
+      addCurrent.disabled = !this.currentTrack?.id;
+      addCurrent.addEventListener('click', async () => {
+        if (this.currentTrack) await this.localLibrary.addTrackToPlaylist(playlist.id, this.currentTrack);
+        this.refreshLibrary();
+      });
+      const rename = document.createElement('button');
+      rename.type = 'button';
+      rename.className = 'library-action';
+      rename.textContent = 'Ubah nama';
+      rename.addEventListener('click', async () => {
+        const name = window.prompt('Nama playlist', playlist.name);
+        if (name?.trim()) await this.localLibrary.renamePlaylist(playlist.id, name);
+        this.refreshLibrary();
+      });
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'library-action danger';
+      remove.textContent = 'Hapus';
+      remove.addEventListener('click', async () => {
+        await this.localLibrary.deletePlaylist(playlist.id);
+        this.refreshLibrary();
+      });
+      row.append(title, count, addCurrent, rename, remove);
+      this.renderLibraryTracks(row, playlist.tracks || [], 'Playlist ini kosong.', playlist.id);
+      container.append(row);
+    });
+  }
+
+  renderLibraryTracks(container, tracks = [], emptyMessage, playlistId = null) {
+    if (!container) return;
+    container.replaceChildren();
+    if (!tracks.length) {
+      container.append(this.createLibraryEmpty(emptyMessage));
+      return;
+    }
+    tracks.forEach(track => {
+      const row = document.createElement('div');
+      row.className = 'library-track-row';
+      const play = document.createElement('button');
+      play.type = 'button';
+      play.className = 'library-track-play';
+      play.textContent = `${track.name || 'Untitled'}${track.artist ? ` · ${track.artist}` : ''}`;
+      play.addEventListener('click', () => this.playLibraryTrack(track));
+      row.append(play);
+      if (playlistId) {
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'library-action';
+        remove.textContent = 'Hapus';
+        remove.setAttribute('aria-label', `Hapus ${track.name || 'lagu'} dari playlist`);
+        remove.addEventListener('click', async () => {
+          await this.localLibrary.removeTrackFromPlaylist(playlistId, track.id);
+          this.refreshLibrary();
+        });
+        row.append(remove);
+      }
+      container.append(row);
+    });
+  }
+
+  createLibraryEmpty(message) {
+    const empty = document.createElement('p');
+    empty.className = 'library-empty';
+    empty.textContent = message;
+    return empty;
+  }
+
+  async playLibraryTrack(track) {
+    if (!track?.id || !track.audioUrl) {
+      this.showUrlFeedback('Sumber audio lagu ini sudah tidak tersedia. Cari ulang untuk memutarnya.', 'error');
+      return;
+    }
+    try {
+      await this.app.audioEngine.ensureContext();
+      if (!this.app.socketClient.roomId) await this.app.socketClient.createRoom(this.getDeviceName());
+      const item = { ...track, id: track.id, addedBy: this.getDeviceName() };
+      await this.app.socketClient.addToQueue(item);
+      this.app.socketClient.playQueueItem(item.id, true);
+      this.setView('home');
+    } catch (error) {
+      this.showUrlFeedback('Lagu gagal dimuat. Coba cari ulang sumber audio.', 'error');
+    }
+  }
+
   setRoomState(roomId, isHost) {
+    document.body?.classList.add('in-room');
+    this.currentView = 'home';
+    this.elements.navHomeBtn?.classList.add('active');
+    this.elements.navHomeBtn?.setAttribute('aria-current', 'page');
+    this.elements.navRoomBtn?.classList.remove('active');
+    this.elements.navRoomBtn?.removeAttribute('aria-current');
     if (this.elements.roomHeroSection) this.elements.roomHeroSection.style.display = 'none';
     if (this.elements.activeRoomSection) this.elements.activeRoomSection.style.display = 'flex';
     if (this.elements.roomCodeDisplay) this.elements.roomCodeDisplay.innerText = roomId;
@@ -1573,6 +1836,12 @@ export class UIManager {
         this.elements.userRoleBadge.innerText = 'SATELLITE';
       }
     }
+  }
+
+  setSoloState() {
+    document.body?.classList.remove('in-room');
+    if (this.elements.roomCodeDisplay) this.elements.roomCodeDisplay.innerText = '----';
+    this.setView('home');
   }
 
   // Single Play/Pause Toggle View State
