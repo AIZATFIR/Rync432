@@ -2,6 +2,7 @@ import { firebaseAuth } from '../auth/FirebaseAuth.js';
 import { QRCodeGenerator } from './QRCodeGenerator.js';
 import { QRScanner } from './QRScanner.js';
 import { MusicSourceManager } from '../music/MusicSourceManager.js';
+import { LocalLibrary } from '../library/LocalLibrary.js';
 
 export class UIManager {
   constructor(app) {
@@ -15,6 +16,7 @@ export class UIManager {
     this.demoTrackIndex = 0;
     this.isPlayingState = false;
     this.musicSourceManager = new MusicSourceManager();
+    this.localLibrary = new LocalLibrary();
   }
 
   init() {
@@ -1465,6 +1467,16 @@ export class UIManager {
     if (this.elements.trackTitle) this.elements.trackTitle.innerText = title;
     if (this.elements.trackSub) this.elements.trackSub.innerText = `${this.formatTime(duration)} • Ready`;
     if (this.elements.totalTimeText) this.elements.totalTimeText.innerText = this.formatTime(duration);
+
+    // Save playback to recent history if meaningful track
+    if (title && title !== 'Pilih trek lagu' && this.localLibrary) {
+      this.localLibrary.addHistory({
+        id: currentTrack?.id || ('trk_' + encodeURIComponent(title)),
+        name: title,
+        duration: duration || 0,
+        thumbnail: thumbnail || currentTrack?.thumbnail || ''
+      }).catch(() => {});
+    }
 
     const currentTrack = this.app?.socketClient?.cloudMesh?.lastKnownTrack;
     let thumbUrl = thumbnail;
