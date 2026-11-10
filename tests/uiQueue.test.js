@@ -34,6 +34,35 @@ describe('YouTube search queue UI', () => {
     expect(moveQueueItem(original, -1, 1)).toEqual(original);
   });
 
+  it('serves repeated search results from the short local cache and can force refresh', async () => {
+    const ui = new UIManager({ socketClient: { createRoom: vi.fn(), joinRoom: vi.fn() } });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [{ id: 'first' }] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [{ id: 'fresh' }] }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect((await ui.fetchYoutubeSearch('Ambient')).map(item => item.id)).toEqual(['first']);
+    expect((await ui.fetchYoutubeSearch(' ambient ')).map(item => item.id)).toEqual(['first']);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(ui.lastYoutubeSearchCacheState).toBe('fresh');
+    expect((await ui.fetchYoutubeSearch('Ambient', undefined, { refresh: true })).map(item => item.id)).toEqual(['fresh']);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns stale search results when refresh fails', async () => {
+    vi.useFakeTimers();
+    const ui = new UIManager({});
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [{ id: 'cached' }] }) })
+      .mockRejectedValueOnce(new TypeError('offline')));
+    await ui.fetchYoutubeSearch('Ambient');
+    vi.advanceTimersByTime(60_001);
+
+    await expect(ui.fetchYoutubeSearch('Ambient', undefined, { refresh: true }))
+      .rejects.toMatchObject({ staleResults: [{ id: 'cached' }] });
+    expect(ui.lastYoutubeSearchCacheState).toBe('stale');
+  });
+
   it('fetches search results without creating or joining an audio room', async () => {
     const ui = new UIManager({ socketClient: { createRoom: vi.fn(), joinRoom: vi.fn() } });
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ results: [{ id: 'video-1' }] }) });
@@ -53,7 +82,7 @@ describe('YouTube search queue UI', () => {
       set innerHTML(value) { this._html = value; this.children = []; },
       get innerHTML() { return this._html || ''; },
       appendChild(child) { this.children.push(child); },
-      addEventListener() {},
+      addEventListener() {}, setAttribute() {},
       querySelector(selector) {
         if (!this._selectors) this._selectors = {};
         return this._selectors[selector] ||= makeElement();
@@ -70,9 +99,9 @@ describe('YouTube search queue UI', () => {
       title: '<img src=x onerror=alert(1)>', channel: '<svg onload=alert(1)>', duration: 60
     }]);
 
-    expect(list.children[0].children).toHaveLength(3);
-    expect(list.children[0].children[1].children[0].textContent).toBe('<img src=x onerror=alert(1)>');
-    expect(list.children[0].children[1].children[0]._html).toBeUndefined();
+    expect(list.children[1].children).toHaveLength(3);
+    expect(list.children[1].children[1].children[0].textContent).toBe('<img src=x onerror=alert(1)>');
+    expect(list.children[1].children[1].children[0]._html).toBeUndefined();
   });
 
   it('routes between the player, local library and room setup views', () => {

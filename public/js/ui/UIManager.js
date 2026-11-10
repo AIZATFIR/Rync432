@@ -36,6 +36,10 @@ export class UIManager {
     this.youtubeSearchController = null;
     this.youtubeSearchDebounce = null;
     this.youtubeSearchSequence = 0;
+    this.youtubeSearchCache = new Map();
+    this.youtubeSearchCacheTtlMs = 60_000;
+    this.lastYoutubeSearchCacheState = 'network';
+    this.activeYoutubeSearchHandler = null;
     this.suppressQueueRowClickUntil = 0;
     this.pendingQueueUndo = null;
     this.pendingQueueUndoTimer = null;
@@ -678,7 +682,7 @@ export class UIManager {
     }
 
     // 5. Genuine Live YouTube Search & Stream
-    const handleYtSearchOrStream = async (queryOrUrl) => {
+    const handleYtSearchOrStream = async (queryOrUrl, refresh = false) => {
       if (!queryOrUrl) {
         this.renderSearchMessage('Ketik judul lagu atau tempel link YouTube.', 'info');
         return;
@@ -696,7 +700,7 @@ export class UIManager {
       this.renderSearchMessage('Mencari di YouTube…', 'loading');
 
       try {
-        const results = await this.fetchYoutubeSearch(queryOrUrl, controller.signal);
+        const results = await this.fetchYoutubeSearch(queryOrUrl, controller.signal, { refresh });
         if (requestId !== this.youtubeSearchSequence) return;
 
         if (results.length === 0) {
@@ -704,13 +708,19 @@ export class UIManager {
           return;
         }
 
-        this.renderSearchResults(results);
+        this.renderSearchResults(results, { query: queryOrUrl, cached: this.lastYoutubeSearchCacheState !== 'network' });
       } catch (err) {
         if (err.name === 'AbortError' || requestId !== this.youtubeSearchSequence) return;
+        if (err.staleResults) {
+          this.lastYoutubeSearchCacheState = 'stale';
+          this.renderSearchResults(err.staleResults, { query: queryOrUrl, cached: true, stale: true });
+          return;
+        }
         this.renderSearchMessage('Pencarian gagal. Periksa koneksi lalu coba lagi.', 'error');
       }
     };
 
+    this.activeYoutubeSearchHandler = handleYtSearchOrStream;
     if (elements.fetchYtAudioBtn) {
       elements.fetchYtAudioBtn.addEventListener('click', () => {
         clearTimeout(this.youtubeSearchDebounce);
@@ -1020,11 +1030,34 @@ export class UIManager {
     }
   }
 
-  async fetchYoutubeSearch(query, signal) {
-    const response = await fetch(`/api/yt-search?q=${encodeURIComponent(query)}`, { signal });
-    if (!response.ok) throw new Error(`Search failed (${response.status})`);
-    const data = await response.json();
-    return Array.isArray(data.results) ? data.results : [];
+  async fetchYoutubeSearch(query, signal, { refresh = false } = {}) {
+    const cacheKey = query.trim().toLowerCase();
+    const cached = this.youtubeSearchCache.get(cacheKey);
+    if (!refresh && cached && Date.now() - cached.storedAt < this.youtubeSearchCacheTtlMs) {
+      this.lastYoutubeSearchCacheState = 'fresh';
+      return [...cached.results];
+    }
+
+    try {
+      const response = await fetch(`/api/yt-search?q=${encodeURIComponent(query)}`, { signal });
+      if (!response.ok) throw new Error(`Search failed (${response.status})`);
+      const data = await response.json();
+      const results = Array.isArray(data.results) ? data.results : [];
+      this.youtubeSearchCache.delete(cacheKey);
+      this.youtubeSearchCache.set(cacheKey, { results, storedAt: Date.now() });
+      while (this.youtubeSearchCache.size > 20) {
+        this.youtubeSearchCache.delete(this.youtubeSearchCache.keys().next().value);
+      }
+      this.lastYoutubeSearchCacheState = 'network';
+      return results;
+    } catch (error) {
+      if (error.name === 'AbortError' || signal?.aborted) throw error;
+      if (cached?.results?.length) {
+        error.staleResults = [...cached.results];
+        this.lastYoutubeSearchCacheState = 'stale';
+      }
+      throw error;
+    }
   }
 
   renderSearchMessage(message, state = 'info') {
@@ -1039,10 +1072,24 @@ export class UIManager {
     list.appendChild(status);
   }
 
-  renderSearchResults(results) {
+  renderSearchResults(results, { query = '', cached = false, stale = false } = {}) {
     const list = this.elements.ytSearchResults;
     if (!list) return;
     list.innerHTML = '';
+    const resultHeader = document.createElement('div');
+    resultHeader.className = 'yt-search-result-header';
+    const resultStatus = document.createElement('span');
+    resultStatus.textContent = stale ? 'Koneksi gagal · hasil tersimpan' : cached ? 'Hasil tersimpan' : 'Hasil YouTube';
+    resultHeader.appendChild(resultStatus);
+    const refreshButton = document.createElement('button');
+    refreshButton.type = 'button';
+    refreshButton.className = 'yt-search-refresh';
+    refreshButton.textContent = 'Refresh';
+    refreshButton.setAttribute('aria-label', 'Segarkan hasil YouTube');
+    refreshButton.disabled = !query || !this.activeYoutubeSearchHandler;
+    refreshButton.addEventListener('click', () => this.activeYoutubeSearchHandler?.(query, true));
+    resultHeader.appendChild(refreshButton);
+    list.appendChild(resultHeader);
 
     results.forEach((item) => {
       const rawThumb = item.thumbnail;

@@ -829,6 +829,32 @@ canvas#visualizerCanvas {
   overflow-y: auto;
 }
 
+.yt-search-result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 2px;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.yt-search-refresh {
+  min-height: 36px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: 0 12px;
+  background: transparent;
+  color: var(--text-base);
+  font: inherit;
+  cursor: pointer;
+}
+
+.yt-search-refresh:focus-visible {
+  outline: 2px solid var(--spotify-green);
+  outline-offset: 2px;
+}
+
 .yt-result-item {
   display: flex;
   align-items: center;
