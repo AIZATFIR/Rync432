@@ -33,6 +33,53 @@ describe('room authority', () => {
     expect(result.body.queue).toEqual([]);
   });
 
+  it('keeps the host queue order when a poll carries a reorder', async () => {
+    const roomId = `R${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('add_queue', { roomId, peerId: 'guest-peer', items: [
+      { id: 'track-a', name: 'A' },
+      { id: 'track-b', name: 'B' },
+      { id: 'track-c', name: 'C' }
+    ] });
+
+    const result = await callRoom('poll', {
+      roomId,
+      peerId: 'host-peer',
+      isHost: true,
+      queue: [
+        { id: 'track-c', name: 'C' },
+        { id: 'track-a', name: 'A' },
+        { id: 'track-b', name: 'B' }
+      ]
+    });
+
+    expect(result.body.queue.map(item => item.id)).toEqual(['track-c', 'track-a', 'track-b']);
+  });
+
+  it('keeps tracks added by members while preserving the host reordered list', async () => {
+    const roomId = `S${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('add_queue', { roomId, peerId: 'guest-peer', items: [
+      { id: 'track-a', name: 'A' },
+      { id: 'track-b', name: 'B' },
+      { id: 'track-c', name: 'C' }
+    ] });
+    await callRoom('add_queue', { roomId, peerId: 'guest-peer', id: 'track-d', name: 'D' });
+
+    const result = await callRoom('poll', {
+      roomId,
+      peerId: 'host-peer',
+      isHost: true,
+      queue: [
+        { id: 'track-c', name: 'C' },
+        { id: 'track-a', name: 'A' },
+        { id: 'track-b', name: 'B' }
+      ]
+    });
+
+    expect(result.body.queue.map(item => item.id)).toEqual(['track-c', 'track-a', 'track-b', 'track-d']);
+  });
+
   it('rejects participant requests to advance the room track', async () => {
     const roomId = `A${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
     await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });

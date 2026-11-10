@@ -231,12 +231,18 @@ export default async function handler(req, res) {
       if (body.targetServerTime) room.targetServerTime = body.targetServerTime;
     }
 
-    // Merge incoming queue from client with server queue to avoid serverless fragmentation
+    // Keep host order, while retaining items added by peers since its last snapshot.
     if (isThisHost && Array.isArray(body.queue) && body.queue.length > 0) {
-      const map = new Map();
-      (room.queue || []).forEach(item => { if (item && item.id) map.set(item.id, item); });
-      body.queue.forEach(item => { if (item && item.id) map.set(item.id, item); });
-      room.queue = Array.from(map.values());
+      const deletedIds = new Set(Array.isArray(body.deletedQueueIds) ? body.deletedQueueIds : []);
+      const orderedQueue = body.queue.filter(item => item && item.id && !deletedIds.has(item.id));
+      const knownIds = new Set(orderedQueue.map(item => item.id));
+      (room.queue || []).forEach(item => {
+        if (item && item.id && !knownIds.has(item.id) && !deletedIds.has(item.id)) {
+          orderedQueue.push(item);
+          knownIds.add(item.id);
+        }
+      });
+      room.queue = orderedQueue;
     }
 
     if (isThisHost && Array.isArray(body.deletedQueueIds) && body.deletedQueueIds.length > 0) {
