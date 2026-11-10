@@ -225,4 +225,18 @@ describe('room authority', () => {
     expect(result.body.queue).toHaveLength(1);
     expect(result.body.track).toBeNull();
   });
+
+  it('prevents a room member from changing another peer device state', async () => {
+    const roomId = `M${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
+
+    const result = await callRoom('update_peer', {
+      roomId, peerId: 'guest-peer', targetPeerId: 'host-peer', volume: 0, role: 'muted'
+    });
+    const snapshot = await callRoom('poll', { roomId, peerId: 'guest-peer' });
+
+    expect(result.statusCode).toBe(403);
+    expect(snapshot.body.peers.find(peer => peer.id === 'host-peer')).toMatchObject({ volume: 1, role: 'stereo' });
+  });
 });

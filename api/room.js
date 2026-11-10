@@ -590,6 +590,10 @@ export default async function handler(req, res) {
   if (action === 'update_peer') {
     const room = rooms.get(roomId);
     const targetPeerId = body.targetPeerId || peerId;
+    if (!room || !room.peers?.[peerId]) {
+      return res.status(403).json({ success: false, error: 'ROOM_MEMBER_REQUIRED' });
+    }
+    if (targetPeerId !== peerId && !requireHost(room, body.hostToken)) return;
     if (room && room.peers[targetPeerId]) {
       if (body.role) room.peers[targetPeerId].role = body.role;
       if (body.volume !== undefined) room.peers[targetPeerId].volume = body.volume;
