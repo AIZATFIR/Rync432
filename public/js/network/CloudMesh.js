@@ -1093,43 +1093,40 @@ export class CloudMesh {
   }
 
   requestTrackBufferFromPeers(trackName, trackId) {
-    const now = Date.now();
-    this.lastRequestPeerTime = now;
-
-    let sent = false;
-    this.dataChannels.forEach(channel => {
-      if (channel.readyState === 'open') {
-        try {
-          channel.send(JSON.stringify({ type: 'REQUEST_AUDIO_BUFFER', trackName, trackId }));
-          sent = true;
-        } catch (e) { }
-      }
-    });
-
-    if (!sent) {
-      if (this.peerBufferRequestInterval) clearInterval(this.peerBufferRequestInterval);
-      let attempts = 0;
-      this.peerBufferRequestInterval = setInterval(() => {
-        attempts++;
-        const cached = trackId ? this.localAudioBufferCache.get(trackId) : this.localAudioBufferCache.get(trackName);
-        if (cached || attempts > 12) {
-          clearInterval(this.peerBufferRequestInterval);
-          this.peerBufferRequestInterval = null;
-          return;
+    const trackKey = trackId || trackName;
+    const sendRequest = () => {
+      let sent = false;
+      this.dataChannels.forEach(channel => {
+        if (channel.readyState === 'open') {
+          try {
+            channel.send(JSON.stringify({ type: 'REQUEST_AUDIO_BUFFER', trackName, trackId }));
+            sent = true;
+          } catch (e) { }
         }
-        this.dataChannels.forEach(channel => {
-          if (channel.readyState === 'open') {
-            try {
-              channel.send(JSON.stringify({ type: 'REQUEST_AUDIO_BUFFER', trackName, trackId }));
-              clearInterval(this.peerBufferRequestInterval);
-              this.peerBufferRequestInterval = null;
-            } catch (e) { }
-          }
-        });
-      }, 1000);
-    }
+      });
+      return sent;
+    };
 
-    return sent;
+    this.lastRequestPeerTime = Date.now();
+    const cached = trackId ? this.localAudioBufferCache.get(trackId) : this.localAudioBufferCache.get(trackName);
+    if (cached) return true;
+
+    sendRequest();
+    if (this.peerBufferRequestInterval && this.peerBufferRequestTrackKey === trackKey) return true;
+    if (this.peerBufferRequestInterval) clearInterval(this.peerBufferRequestInterval);
+    this.peerBufferRequestTrackKey = trackKey;
+    this.peerBufferRequestInterval = setInterval(() => {
+      const cached = trackId ? this.localAudioBufferCache.get(trackId) : this.localAudioBufferCache.get(trackName);
+      if (cached || !this.roomId) {
+        clearInterval(this.peerBufferRequestInterval);
+        this.peerBufferRequestInterval = null;
+        this.peerBufferRequestTrackKey = null;
+        return;
+      }
+      sendRequest();
+    }, 1000);
+
+    return true;
   }
 
   async fetchRemoteAudioUrl(url, trackName, trackId) {
@@ -1201,6 +1198,9 @@ export class CloudMesh {
       }
 
       this.localAudioBufferCache.set(trackName, arrayBuffer);
+      if (this.peerBufferRequestInterval) clearInterval(this.peerBufferRequestInterval);
+      this.peerBufferRequestInterval = null;
+      this.peerBufferRequestTrackKey = null;
       if (trackId) this.localAudioBufferCache.set(trackId, arrayBuffer);
       this.localAudioBufferCache.set(url, arrayBuffer);
       this.currentAudioArrayBuffer = arrayBuffer;
@@ -1519,6 +1519,9 @@ export class CloudMesh {
             const trackName = stream.name;
             const trackId = stream.id;
             this.incomingAudioChunks.delete(targetPeerId);
+            if (this.peerBufferRequestInterval) clearInterval(this.peerBufferRequestInterval);
+            this.peerBufferRequestInterval = null;
+            this.peerBufferRequestTrackKey = null;
             this.localAudioBufferCache.set(trackName, completeBuffer.buffer);
             if (trackId) this.localAudioBufferCache.set(trackId, completeBuffer.buffer);
             this.currentAudioArrayBuffer = completeBuffer.buffer;
@@ -1717,6 +1720,9 @@ export class CloudMesh {
     this.dataChannels.clear();
     this.pendingIceCandidates.clear();
     this.lastSentBufferPerPeer.clear();
+    if (this.peerBufferRequestInterval) clearInterval(this.peerBufferRequestInterval);
+    this.peerBufferRequestInterval = null;
+    this.peerBufferRequestTrackKey = null;
     this.incomingAudioChunks.clear();
     this.localPeersMap.clear();
     this.roomId = null;

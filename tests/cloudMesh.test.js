@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CloudMesh } from '../public/js/network/CloudMesh.js';
 import { SocketClient } from '../public/js/network/SocketClient.js';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 function makeChannel() {
   const sent = [];
@@ -15,6 +15,25 @@ function makeChannel() {
 }
 
 describe('CloudMesh audio transfer', () => {
+  it('retries P2P buffer requests while an open peer channel has no cached audio yet', () => {
+    vi.useFakeTimers();
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    const channel = makeChannel();
+    mesh.dataChannels.set('peer-2', channel);
+
+    mesh.requestTrackBufferFromPeers('Track', 'track-1');
+    expect(channel.sent).toHaveLength(1);
+
+    vi.advanceTimersByTime(1000);
+    expect(channel.sent).toHaveLength(2);
+    expect(JSON.parse(channel.sent[1])).toMatchObject({ type: 'REQUEST_AUDIO_BUFFER', trackId: 'track-1' });
+
+    mesh.localAudioBufferCache.set('track-1', new ArrayBuffer(4));
+    vi.advanceTimersByTime(1000);
+    expect(channel.sent).toHaveLength(2);
+    vi.useRealTimers();
+  });
   it('clears room peer transports and identity when leaving', () => {
     const mesh = new CloudMesh(() => {});
     mesh.roomId = 'ROOM';
