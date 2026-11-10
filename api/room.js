@@ -479,6 +479,46 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: false });
   }
 
+  if (action === 'clear_queue') {
+    const room = rooms.get(roomId);
+    if (!requireHost(room)) return;
+    if (!Array.isArray(body.queueIds) || body.queueIds.length > 200
+      || body.queueIds.some(id => typeof id !== 'string' || id.length > 160)) {
+      return res.status(400).json({ success: false, error: 'INVALID_QUEUE_IDS' });
+    }
+    const ids = new Set(body.queueIds);
+    const currentTrackId = room.track?.id;
+    const removed = [];
+    room.queue = (room.queue || []).filter((item, index) => {
+      if (ids.has(item.id) && item.id !== currentTrackId) {
+        removed.push({ item, index });
+        return false;
+      }
+      return true;
+    });
+    room.updatedAt = now;
+    return res.status(200).json({ success: true, queue: room.queue, removed });
+  }
+
+  if (action === 'restore_queue') {
+    const room = rooms.get(roomId);
+    if (!requireHost(room)) return;
+    if (!Array.isArray(body.removed) || body.removed.length > 200
+      || body.removed.some(entry => !entry?.item?.id || !Number.isInteger(entry.index) || entry.index < 0)) {
+      return res.status(400).json({ success: false, error: 'INVALID_QUEUE_RESTORE' });
+    }
+    const queue = [...(room.queue || [])];
+    const existingIds = new Set(queue.map(item => item.id));
+    for (const entry of [...body.removed].sort((a, b) => a.index - b.index)) {
+      if (existingIds.has(entry.item.id)) continue;
+      queue.splice(Math.min(entry.index, queue.length), 0, entry.item);
+      existingIds.add(entry.item.id);
+    }
+    room.queue = queue;
+    room.updatedAt = now;
+    return res.status(200).json({ success: true, queue: room.queue });
+  }
+
   if (action === 'next_track') {
     const room = rooms.get(roomId);
     if (!requireHost(room)) return;

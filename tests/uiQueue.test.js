@@ -4,7 +4,7 @@ vi.mock('../public/js/auth/FirebaseAuth.js', () => ({
   firebaseAuth: { onAuthStateChanged() {} }
 }));
 
-import { UIManager, moveQueueItem } from '../public/js/ui/UIManager.js';
+import { UIManager, moveQueueItem, upcomingQueueItems } from '../public/js/ui/UIManager.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -12,6 +12,12 @@ afterEach(() => {
 });
 
 describe('YouTube search queue UI', () => {
+  it('keeps the active track when computing items to clear', () => {
+    const queue = [{ id: 'current' }, { id: 'next-a' }, { id: 'next-b' }];
+
+    expect(upcomingQueueItems(queue, 'current').map(item => item.id)).toEqual(['next-a', 'next-b']);
+  });
+
   it('moves one queued track without changing the input order', () => {
     const original = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
 

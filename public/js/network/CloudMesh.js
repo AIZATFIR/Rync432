@@ -984,6 +984,69 @@ export class CloudMesh {
     } catch (e) { }
   }
 
+  async clearQueue(queueIds) {
+    if (!this.isHost || !Array.isArray(queueIds) || queueIds.length === 0) return { removed: [], queue: this.lastKnownQueue || [] };
+    const currentTrackId = this.lastKnownTrack?.id;
+    const ids = new Set(queueIds.filter(id => id && id !== currentTrackId));
+    const previousQueue = this.lastKnownQueue || [];
+    this.lastKnownQueue = previousQueue.filter(item => !ids.has(item.id));
+    ids.forEach(id => this.deletedQueueIds.add(id));
+    this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
+    this.saveLocalQueue(this.lastKnownQueue);
+    this.onEvent('QUEUE_UPDATED', { queue: this.lastKnownQueue });
+    this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
+    this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
+
+    try {
+      const res = await fetch('/api/room?action=clear_queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, queueIds: [...ids] })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'QUEUE_CLEAR_FAILED');
+      this.lastKnownQueue = data.queue || [];
+      this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
+      this.saveLocalQueue(this.lastKnownQueue);
+      this.onEvent('QUEUE_UPDATED', { queue: this.lastKnownQueue });
+      this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
+      return { removed: data.removed || [], queue: this.lastKnownQueue };
+    } catch (error) {
+      ids.forEach(id => this.deletedQueueIds.delete(id));
+      this.lastKnownQueue = previousQueue;
+      this.lastKnownQueueStr = JSON.stringify(previousQueue);
+      this.saveLocalQueue(previousQueue);
+      this.onEvent('QUEUE_UPDATED', { queue: previousQueue });
+      this.onEvent('QUEUE_SYNC_ERROR', { queue: previousQueue, message: 'Antrean tidak jadi dikosongkan. Coba lagi.' });
+      return { removed: [], queue: previousQueue };
+    }
+  }
+
+  async restoreQueue(removed) {
+    if (!this.isHost || !Array.isArray(removed) || removed.length === 0) return false;
+    removed.forEach(entry => this.deletedQueueIds.delete(entry.item?.id));
+    try {
+      const res = await fetch('/api/room?action=restore_queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, removed })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'QUEUE_RESTORE_FAILED');
+      this.lastKnownQueue = data.queue || [];
+      this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
+      this.saveLocalQueue(this.lastKnownQueue);
+      this.onEvent('QUEUE_UPDATED', { queue: this.lastKnownQueue });
+      this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
+      this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
+      return true;
+    } catch (error) {
+      removed.forEach(entry => this.deletedQueueIds.add(entry.item.id));
+      this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Undo gagal disinkronkan. Coba lagi.' });
+      return false;
+    }
+  }
+
   async nextTrack() {
     if (!this.isHost) return;
     try {

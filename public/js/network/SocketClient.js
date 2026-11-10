@@ -156,6 +156,14 @@ export class SocketClient {
     this.cloudMesh.removeFromQueue(queueId);
   }
 
+  clearQueue(queueIds) {
+    return this.cloudMesh.clearQueue(queueIds);
+  }
+
+  restoreQueue(removed) {
+    return this.cloudMesh.restoreQueue(removed);
+  }
+
   nextTrack() {
     this.cloudMesh.nextTrack();
   }

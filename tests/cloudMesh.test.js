@@ -53,6 +53,44 @@ describe('CloudMesh audio transfer', () => {
     expect(mesh.peerBufferRequestInterval).toBeNull();
   });
 
+  it('clears upcoming tracks optimistically while keeping the active track', async () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.isHost = true;
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'peer-1';
+    mesh.lastKnownTrack = { id: 'current' };
+    mesh.lastKnownQueue = [{ id: 'current' }, { id: 'next' }];
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({
+      success: true, queue: [{ id: 'current' }], removed: [{ item: { id: 'next' }, index: 1 }]
+    }) }));
+
+    const result = await mesh.clearQueue(['current', 'next']);
+
+    expect(result.removed).toEqual([{ item: { id: 'next' }, index: 1 }]);
+    expect(mesh.lastKnownQueue.map(item => item.id)).toEqual(['current']);
+    expect(mesh.deletedQueueIds.has('next')).toBe(true);
+    expect(events.some(event => event.type === 'QUEUE_UPDATED')).toBe(true);
+  });
+
+  it('restores a cleared queue snapshot and releases its deletion tombstones', async () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.isHost = true;
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'peer-1';
+    mesh.deletedQueueIds.add('next');
+    mesh.lastKnownQueue = [{ id: 'current' }];
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({
+      success: true, queue: [{ id: 'current' }, { id: 'next' }]
+    }) }));
+
+    const restored = await mesh.restoreQueue([{ item: { id: 'next' }, index: 1 }]);
+
+    expect(restored).toBe(true);
+    expect(mesh.deletedQueueIds.has('next')).toBe(false);
+    expect(mesh.lastKnownQueue.map(item => item.id)).toEqual(['current', 'next']);
+  });
+
   it('clears room peer transports and identity when leaving', () => {
     const mesh = new CloudMesh(() => {});
     mesh.roomId = 'ROOM';

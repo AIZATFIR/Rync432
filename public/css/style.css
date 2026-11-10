@@ -625,6 +625,44 @@ canvas#visualizerCanvas {
 }
 
 /* Queue List */
+.queue-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.queue-clear-btn,
+.queue-undo-bar button {
+  min-height: 36px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: 0 12px;
+  background: transparent;
+  color: var(--text-base);
+  font: inherit;
+  cursor: pointer;
+}
+
+.queue-undo-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--spotify-mid-surface);
+}
+
+.queue-undo-bar[hidden] {
+  display: none;
+}
+
+.queue-undo-bar button {
+  color: var(--spotify-green);
+  font-weight: 700;
+}
+
 .queue-list {
   display: flex;
   flex-direction: column;

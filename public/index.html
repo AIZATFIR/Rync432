@@ -245,12 +245,19 @@
           <!-- Collaborative Queue / Playlist Section -->
           <div class="spotify-card" id="queueCardSection">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-              <div style="font-weight: 700; font-size: 0.95rem; color: #fff;">Antrean Lagu (Queue)</div>
-              <span id="queueCountBadge" style="font-size: 0.72rem; color: var(--text-silver); font-weight: 600;">0 lagu</span>
+              <div style="font-weight: 700; font-size: 0.95rem; color: #fff;">Antrean Lagu</div>
+              <div class="queue-header-actions">
+                <span id="queueCountBadge" style="font-size: 0.72rem; color: var(--text-silver); font-weight: 600;">0 lagu</span>
+                <button id="clearUpcomingBtn" class="queue-clear-btn" type="button" hidden>Hapus berikutnya</button>
+              </div>
             </div>
 
             <div class="queue-list" id="queueListContainer">
               <div class="queue-empty-msg">Antrean kosong. Tambah lagu dari Direct URL, YouTube, atau upload file.</div>
+            </div>
+            <div id="queueUndoBar" class="queue-undo-bar" role="status" aria-live="polite" hidden>
+              <span>Lagu berikutnya dihapus.</span>
+              <button id="queueUndoBtn" type="button">Undo</button>
             </div>
           </div>
 

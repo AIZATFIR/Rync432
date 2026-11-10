@@ -4,6 +4,11 @@ import { QRScanner } from './QRScanner.js';
 import { MusicSourceManager } from '../music/MusicSourceManager.js';
 import { LocalLibrary } from '../library/LocalLibrary.js';
 
+export function upcomingQueueItems(queue, currentTrackId, currentTrackName) {
+  if (!Array.isArray(queue)) return [];
+  return queue.filter(item => currentTrackId ? item.id !== currentTrackId : !currentTrackName || item.name !== currentTrackName);
+}
+
 export function moveQueueItem(queue, fromIndex, toIndex) {
   if (!Array.isArray(queue) || !Number.isInteger(fromIndex) || !Number.isInteger(toIndex)
     || fromIndex < 0 || toIndex < 0 || fromIndex >= queue.length || toIndex >= queue.length) {
@@ -32,6 +37,8 @@ export class UIManager {
     this.youtubeSearchDebounce = null;
     this.youtubeSearchSequence = 0;
     this.suppressQueueRowClickUntil = 0;
+    this.pendingQueueUndo = null;
+    this.pendingQueueUndoTimer = null;
     this.musicSourceManager = new MusicSourceManager();
     this.localLibrary = new LocalLibrary();
   }
@@ -135,6 +142,9 @@ export class UIManager {
       queueCardSection: document.getElementById('queueCardSection'),
       queueListContainer: document.getElementById('queueListContainer'),
       queueCountBadge: document.getElementById('queueCountBadge'),
+      clearUpcomingBtn: document.getElementById('clearUpcomingBtn'),
+      queueUndoBar: document.getElementById('queueUndoBar'),
+      queueUndoBtn: document.getElementById('queueUndoBtn'),
       // Multi-Source Hub Tabs
       tabBtnDirectUrl: document.getElementById('tabBtnDirectUrl'),
       tabBtnYoutube: document.getElementById('tabBtnYoutube'),
@@ -240,6 +250,15 @@ export class UIManager {
     ].forEach(([button, view]) => button?.addEventListener('click', () => this.setView(view)));
 
     elements.miniPlayerOpenBtn?.addEventListener('click', () => this.setView('home'));
+    elements.clearUpcomingBtn?.addEventListener('click', () => this.clearUpcomingQueue());
+    elements.queueUndoBtn?.addEventListener('click', async () => {
+      if (!this.pendingQueueUndo) return;
+      const removed = this.pendingQueueUndo;
+      this.pendingQueueUndo = null;
+      clearTimeout(this.pendingQueueUndoTimer);
+      if (elements.queueUndoBar) elements.queueUndoBar.hidden = true;
+      await app.socketClient.restoreQueue(removed);
+    });
     elements.miniPlayerPlayBtn?.addEventListener('click', () => this.togglePlayback());
     elements.miniPlayerSeek?.addEventListener('input', () => { this.isMiniSeeking = true; });
     elements.miniPlayerSeek?.addEventListener('change', event => {
@@ -1152,6 +1171,23 @@ export class UIManager {
     return item;
   }
 
+  async clearUpcomingQueue() {
+    if (!this.app.socketClient?.isHost) return;
+    const currentTrack = this.app.socketClient.cloudMesh?.lastKnownTrack;
+    const upcoming = upcomingQueueItems(this.cachedQueue, currentTrack?.id, currentTrack?.name);
+    if (!upcoming.length) return;
+    const result = await this.app.socketClient.clearQueue(upcoming.map(item => item.id));
+    if (!result?.removed?.length) return;
+
+    clearTimeout(this.pendingQueueUndoTimer);
+    this.pendingQueueUndo = result.removed;
+    if (this.elements.queueUndoBar) this.elements.queueUndoBar.hidden = false;
+    this.pendingQueueUndoTimer = setTimeout(() => {
+      this.pendingQueueUndo = null;
+      if (this.elements.queueUndoBar) this.elements.queueUndoBar.hidden = true;
+    }, 8000);
+  }
+
   renderQueue(queue = []) {
     this.cachedQueue = queue;
     const container = this.elements.queueListContainer;
@@ -1159,6 +1195,11 @@ export class UIManager {
 
     if (this.elements.queueCountBadge) {
       this.elements.queueCountBadge.innerText = `${queue.length} lagu`;
+    }
+    const currentTrack = this.app.socketClient?.cloudMesh?.lastKnownTrack;
+    const upcoming = upcomingQueueItems(queue, currentTrack?.id, currentTrack?.name);
+    if (this.elements.clearUpcomingBtn) {
+      this.elements.clearUpcomingBtn.hidden = !this.app.socketClient?.isHost || upcoming.length === 0;
     }
 
     if (queue.length === 0) {

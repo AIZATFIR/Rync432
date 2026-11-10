@@ -80,6 +80,52 @@ describe('room authority', () => {
     expect(result.body.queue.map(item => item.id)).toEqual(['track-c', 'track-a', 'track-b', 'track-d']);
   });
 
+  it('clears only requested upcoming tracks and returns their original positions for undo', async () => {
+    const roomId = `T${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
+      { id: 'current', name: 'Current' },
+      { id: 'next-a', name: 'Next A' },
+      { id: 'next-b', name: 'Next B' }
+    ] });
+    await callRoom('track', { roomId, peerId: 'host-peer', track: { id: 'current', name: 'Current' } });
+
+    const result = await callRoom('clear_queue', {
+      roomId, peerId: 'host-peer', queueIds: ['next-a', 'next-b']
+    });
+
+    expect(result.statusCode).toBe(200);
+    expect(result.body.queue.map(item => item.id)).toEqual(['current']);
+    expect(result.body.removed.map(entry => [entry.item.id, entry.index])).toEqual([['next-a', 1], ['next-b', 2]]);
+  });
+
+  it('rejects a guest clear request', async () => {
+    const roomId = `U${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+
+    const result = await callRoom('clear_queue', { roomId, peerId: 'guest-peer', queueIds: ['track-a'] });
+
+    expect(result.statusCode).toBe(403);
+  });
+
+  it('restores cleared tracks into the current queue without dropping new additions', async () => {
+    const roomId = `V${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
+      { id: 'current', name: 'Current' },
+      { id: 'next-a', name: 'Next A' }
+    ] });
+    await callRoom('track', { roomId, peerId: 'host-peer', track: { id: 'current', name: 'Current' } });
+    const cleared = await callRoom('clear_queue', { roomId, peerId: 'host-peer', queueIds: ['next-a'] });
+    await callRoom('add_queue', { roomId, peerId: 'guest-peer', id: 'new-track', name: 'New' });
+
+    const restored = await callRoom('restore_queue', {
+      roomId, peerId: 'host-peer', removed: cleared.body.removed
+    });
+
+    expect(restored.body.queue.map(item => item.id)).toEqual(['current', 'next-a', 'new-track']);
+  });
+
   it('rejects participant requests to advance the room track', async () => {
     const roomId = `A${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
     await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
