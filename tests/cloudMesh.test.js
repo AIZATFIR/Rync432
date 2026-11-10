@@ -383,6 +383,16 @@ describe('CloudMesh audio transfer', () => {
 });
 
 describe('SocketClient room readiness', () => {
+  it('preserves the autoplay request when playing a queued item', () => {
+    const client = new SocketClient(() => {});
+    const play = vi.fn();
+    client.cloudMesh.playQueueItem = play;
+
+    client.playQueueItem('yt_track', true);
+
+    expect(play).toHaveBeenCalledWith('yt_track', true);
+  });
+
   it('clears pending room identity before forwarding a join error', () => {
     const events = [];
     const client = new SocketClient((type, payload) => events.push({ type, payload }));

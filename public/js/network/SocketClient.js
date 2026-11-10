@@ -137,8 +137,8 @@ export class SocketClient {
     return this.roomReady.then(() => this.cloudMesh.addToQueue(track));
   }
 
-  playQueueItem(queueId) {
-    this.cloudMesh.playQueueItem(queueId);
+  playQueueItem(queueId, autoplay = false) {
+    this.cloudMesh.playQueueItem(queueId, autoplay);
   }
 
   playNext(queueId) {
