@@ -118,7 +118,7 @@ describe('CloudMesh audio transfer', () => {
     const mesh = new CloudMesh(() => {});
     let finishCreate;
     vi.stubGlobal('fetch', () => new Promise(resolve => {
-      finishCreate = () => resolve({ ok: true, json: async () => ({ success: true }) });
+      finishCreate = () => resolve({ ok: true, json: async () => ({ success: true, hostToken: 'host-token-test-000000000000000000000000000000000000' }) });
     }));
 
     let settled = false;
@@ -129,6 +129,24 @@ describe('CloudMesh audio transfer', () => {
     finishCreate();
     await creating;
     expect(settled).toBe(true);
+  });
+
+  it('reclaims the host role on same-browser join using the stored private token', async () => {
+    const token = 'stored-host-token-test-000000000000000000000000000000000000';
+    vi.stubGlobal('localStorage', { getItem: vi.fn(() => token), setItem: vi.fn() });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({
+      room: { roomId: 'ROOM', isHost: true, queue: [] }
+    }) });
+    vi.stubGlobal('fetch', fetchMock);
+    const mesh = new CloudMesh(() => {});
+
+    const room = await mesh.joinRoom('ROOM', 'new-peer', 'Host');
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+
+    expect(requestBody.hostToken).toBe(token);
+    expect(mesh.isHost).toBe(true);
+    expect(room.isHost).toBe(true);
+    mesh.leaveRoom();
   });
 
   it('reports join failure and releases the room state', async () => {
@@ -353,6 +371,19 @@ describe('SocketClient room readiness', () => {
     await client.roomReady;
 
     expect(events.some(event => event.type === 'ROOM_CREATED')).toBe(true);
+  });
+
+  it('reports authenticated host status after rejoining a room', async () => {
+    const events = [];
+    const client = new SocketClient((type, payload) => events.push({ type, payload }));
+    client.cloudMesh.joinRoom = vi.fn().mockResolvedValue({ isHost: true });
+
+    await client.joinRoom('ROOM', 'Host');
+
+    expect(client.isHost).toBe(true);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'ROOM_JOINED', payload: expect.objectContaining({ isHost: true })
+    }));
   });
 
   it('does not submit a queue item before room creation completes', async () => {

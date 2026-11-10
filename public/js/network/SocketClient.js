@@ -95,11 +95,12 @@ export class SocketClient {
     this.isHost = false;
 
     this.roomReady = this.cloudMesh.joinRoom(this.roomId, this.peerId, deviceName);
-    this.roomReady.then(() => {
+    this.roomReady.then(room => {
+      this.isHost = room?.isHost === true;
       this.onEvent('ROOM_JOINED', {
         roomId: this.roomId,
         peerId: this.peerId,
-        isHost: false
+        isHost: this.isHost
       });
     }).catch(() => {
       this.roomId = null;

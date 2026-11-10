@@ -8,6 +8,7 @@ export class CloudMesh {
     this.peerId = null;
     this.deviceName = 'Speaker';
     this.isHost = false;
+    this.hostToken = null;
     this.pollInterval = null;
     this.broadcastChannel = null;
     this.localPeersMap = new Map();
@@ -34,6 +35,20 @@ export class CloudMesh {
     this.isMqttConnected = false;
     this.roomTopic = null;
     this.peerTopic = null;
+  }
+
+  hostTokenStorageKey(roomId) {
+    return `rync_host_token_${roomId}`;
+  }
+
+  loadHostToken(roomId) {
+    try { return localStorage.getItem(this.hostTokenStorageKey(roomId)); } catch (error) { return null; }
+  }
+
+  saveHostToken(roomId, token) {
+    try {
+      if (token) localStorage.setItem(this.hostTokenStorageKey(roomId), token);
+    } catch (error) { }
   }
 
   saveLocalQueue(queue) {
@@ -66,6 +81,7 @@ export class CloudMesh {
     this.peerId = peerId;
     this.deviceName = deviceName;
     this.isHost = true;
+    this.hostToken = null;
 
     // Restore cached queue from localStorage if available
     const savedQueue = this.loadLocalQueue(roomId);
@@ -91,13 +107,16 @@ export class CloudMesh {
       });
       if (!response.ok) throw new Error(`Room creation failed (${response.status})`);
       const result = await response.json();
-      if (!result.success) throw new Error(result.error || 'Room creation failed');
+      if (!result.success || typeof result.hostToken !== 'string') throw new Error(result.error || 'Room creation failed');
+      this.hostToken = result.hostToken;
+      this.saveHostToken(roomId, this.hostToken);
       this.startPolling();
       return result.room;
     } catch (error) {
       this.roomId = null;
       this.peerId = null;
       this.isHost = false;
+      this.hostToken = null;
       this.onEvent('ROOM_ERROR', { message: 'Room gagal dibuat. Coba lagi.' });
       throw error;
     }
@@ -108,6 +127,7 @@ export class CloudMesh {
     this.peerId = peerId;
     this.deviceName = deviceName;
     this.isHost = false;
+    this.hostToken = this.loadHostToken(roomId);
 
     this.initBroadcastChannel(roomId, deviceName);
     this.initMqttBus(roomId, deviceName);
@@ -116,11 +136,13 @@ export class CloudMesh {
       const response = await fetch('/api/room?action=join', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId, peerId, deviceName })
+        body: JSON.stringify({ roomId, peerId, deviceName, hostToken: this.hostToken || undefined })
       });
       const data = await response.json();
       if (!response.ok || !data.room) throw new Error(data.error || 'Room tidak ditemukan.');
       if (data.room.roomId && data.room.roomId !== roomId) throw new Error('Room response mismatch');
+      this.isHost = data.room.isHost === true;
+      if (!this.isHost) this.hostToken = null;
       this.applyRoomSnapshot(data.room);
       this.startPolling();
       return data.room;
@@ -129,6 +151,7 @@ export class CloudMesh {
       this.roomId = null;
       this.peerId = null;
       this.isHost = false;
+      this.hostToken = null;
       this.onEvent('ROOM_ERROR', { message: 'Room tidak bisa dimasuki. Periksa kode atau koneksi.' });
       throw error;
     }
@@ -533,6 +556,7 @@ export class CloudMesh {
         body: JSON.stringify({
           roomId: this.roomId,
           peerId: this.peerId,
+          hostToken: this.hostToken || undefined,
           deviceName: this.deviceName,
           isHost: this.isHost,
           hostId: this.isHost ? this.peerId : undefined,
@@ -770,6 +794,7 @@ export class CloudMesh {
       this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
       this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
     }
+    if (!this.roomId || !this.peerId) return;
 
     fetch('/api/room?action=add_queue', {
       method: 'POST',
@@ -846,7 +871,7 @@ export class CloudMesh {
       const res = await fetch('/api/room?action=play_queue_item', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, queueId })
+        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, queueId })
       });
       const data = await res.json();
       if (data.track) {
@@ -875,6 +900,7 @@ export class CloudMesh {
             body: JSON.stringify({
               roomId: this.roomId,
               peerId: this.peerId,
+              hostToken: this.hostToken,
               targetServerTime: payload.targetServerTime,
               startOffsetSec: payload.startOffsetSec,
               track: data.track
@@ -904,7 +930,7 @@ export class CloudMesh {
       const res = await fetch('/api/room?action=play_next', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, queueId })
+        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, queueId })
       });
       const data = await res.json();
       if (data.queue) {
@@ -938,7 +964,7 @@ export class CloudMesh {
       const res = await fetch('/api/room?action=reorder_queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, queue: newQueue })
+        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, queue: newQueue })
       });
       const data = await res.json();
       if (data.queue) {
@@ -972,6 +998,7 @@ export class CloudMesh {
         body: JSON.stringify({
           roomId: this.roomId,
           peerId: this.peerId,
+          hostToken: this.hostToken,
           queueId
         })
       });
@@ -1001,7 +1028,7 @@ export class CloudMesh {
       const res = await fetch('/api/room?action=clear_queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, queueIds: [...ids] })
+        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, queueIds: [...ids] })
       });
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'QUEUE_CLEAR_FAILED');
@@ -1029,7 +1056,7 @@ export class CloudMesh {
       const res = await fetch('/api/room?action=restore_queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, removed })
+        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, removed })
       });
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'QUEUE_RESTORE_FAILED');
@@ -1053,7 +1080,7 @@ export class CloudMesh {
       const res = await fetch('/api/room?action=next_track', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId })
+        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken })
       });
       const data = await res.json();
       if (data.track) {
@@ -1090,7 +1117,7 @@ export class CloudMesh {
       const res = await fetch('/api/room?action=prev_track', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId })
+        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken })
       });
       const data = await res.json();
       if (data.track) {
@@ -1351,6 +1378,7 @@ export class CloudMesh {
       body: JSON.stringify({
         roomId: this.roomId,
         peerId: this.peerId,
+        hostToken: this.hostToken,
         targetServerTime,
         startOffsetSec,
         track: trackPayload
@@ -1388,6 +1416,7 @@ export class CloudMesh {
       body: JSON.stringify({
         roomId: this.roomId,
         peerId: this.peerId,
+        hostToken: this.hostToken,
         currentOffsetSec
       })
     }).catch(() => {});
@@ -1420,6 +1449,7 @@ export class CloudMesh {
         body: JSON.stringify({
           roomId: this.roomId,
           peerId: this.peerId,
+          hostToken: this.hostToken,
           track: metadata
         })
       }).catch(() => {});
@@ -1760,7 +1790,7 @@ export class CloudMesh {
       fetch('/api/room?action=remove_peer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, targetPeerId })
+        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, targetPeerId })
       }).catch(() => {});
     } catch (e) { }
   }
@@ -1804,6 +1834,7 @@ export class CloudMesh {
     this.roomTopic = null;
     this.peerTopic = null;
     this.isHost = false;
+    this.hostToken = null;
   }
 
   unsubscribe() {

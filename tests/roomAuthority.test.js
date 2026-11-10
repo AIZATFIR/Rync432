@@ -35,7 +35,8 @@ describe('room authority', () => {
 
   it('keeps the host queue order when a poll carries a reorder', async () => {
     const roomId = `R${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
-    await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
     await callRoom('add_queue', { roomId, peerId: 'guest-peer', items: [
       { id: 'track-a', name: 'A' },
       { id: 'track-b', name: 'B' },
@@ -45,6 +46,7 @@ describe('room authority', () => {
     const result = await callRoom('poll', {
       roomId,
       peerId: 'host-peer',
+      hostToken: created.body.hostToken,
       isHost: true,
       queue: [
         { id: 'track-c', name: 'C' },
@@ -58,7 +60,8 @@ describe('room authority', () => {
 
   it('keeps tracks added by members while preserving the host reordered list', async () => {
     const roomId = `S${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
-    await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
     await callRoom('add_queue', { roomId, peerId: 'guest-peer', items: [
       { id: 'track-a', name: 'A' },
       { id: 'track-b', name: 'B' },
@@ -69,6 +72,7 @@ describe('room authority', () => {
     const result = await callRoom('poll', {
       roomId,
       peerId: 'host-peer',
+      hostToken: created.body.hostToken,
       isHost: true,
       queue: [
         { id: 'track-c', name: 'C' },
@@ -82,16 +86,16 @@ describe('room authority', () => {
 
   it('clears only requested upcoming tracks and returns their original positions for undo', async () => {
     const roomId = `T${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
-    await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
       { id: 'current', name: 'Current' },
       { id: 'next-a', name: 'Next A' },
       { id: 'next-b', name: 'Next B' }
     ] });
-    await callRoom('track', { roomId, peerId: 'host-peer', track: { id: 'current', name: 'Current' } });
+    await callRoom('track', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, track: { id: 'current', name: 'Current' } });
 
     const result = await callRoom('clear_queue', {
-      roomId, peerId: 'host-peer', queueIds: ['next-a', 'next-b']
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken, queueIds: ['next-a', 'next-b']
     });
 
     expect(result.statusCode).toBe(200);
@@ -110,20 +114,89 @@ describe('room authority', () => {
 
   it('restores cleared tracks into the current queue without dropping new additions', async () => {
     const roomId = `V${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
-    await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
       { id: 'current', name: 'Current' },
       { id: 'next-a', name: 'Next A' }
     ] });
-    await callRoom('track', { roomId, peerId: 'host-peer', track: { id: 'current', name: 'Current' } });
-    const cleared = await callRoom('clear_queue', { roomId, peerId: 'host-peer', queueIds: ['next-a'] });
+    await callRoom('track', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, track: { id: 'current', name: 'Current' } });
+    const cleared = await callRoom('clear_queue', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, queueIds: ['next-a'] });
+    await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
     await callRoom('add_queue', { roomId, peerId: 'guest-peer', id: 'new-track', name: 'New' });
 
     const restored = await callRoom('restore_queue', {
-      roomId, peerId: 'host-peer', removed: cleared.body.removed
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken, removed: cleared.body.removed
     });
 
     expect(restored.body.queue.map(item => item.id)).toEqual(['current', 'next-a', 'new-track']);
+  });
+
+  it('does not let a spoofed host peer poll overwrite the host membership', async () => {
+    const roomId = `Z${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+
+    const spoof = await callRoom('poll', {
+      roomId, peerId: 'host-peer', isHost: true, state: 'PLAYING'
+    });
+    const guestView = await callRoom('poll', { roomId, peerId: 'guest-peer' });
+
+    expect(spoof.statusCode).toBe(409);
+    expect(guestView.body.peers.find(peer => peer.id === 'host-peer').isHost).toBe(true);
+    expect(guestView.body.state).toBe('IDLE');
+  });
+
+  it('does not create an empty room from an unauthenticated poll', async () => {
+    const roomId = `0${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+
+    const result = await callRoom('poll', { roomId, peerId: 'guest-peer', isHost: true });
+
+    expect(result.statusCode).toBe(404);
+    expect(result.body.error).toBe('ROOM_NOT_FOUND');
+  });
+
+  it('returns the host token only at creation and restores host role on authenticated rejoin', async () => {
+    const roomId = `Y${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'old-host', deviceName: 'Host' });
+    await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
+
+    const rejoined = await callRoom('join', {
+      roomId, peerId: 'new-host', deviceName: 'Host', hostToken: created.body.hostToken
+    });
+    const poll = await callRoom('poll', {
+      roomId, peerId: 'new-host', hostToken: created.body.hostToken
+    });
+
+    expect(created.body.hostToken).toMatch(/^[A-Za-z0-9_-]{40,}$/);
+    expect(created.body.room.hostTokenHash).toBeUndefined();
+    expect(rejoined.body.room.isHost).toBe(true);
+    expect(poll.body.peers.find(peer => peer.id === 'new-host').isHost).toBe(true);
+  });
+
+  it('rejects host controls when a guest spoofs the host peer id', async () => {
+    const roomId = `W${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
+
+    const result = await callRoom('play', {
+      roomId, peerId: 'host-peer', state: 'PLAYING', targetServerTime: Date.now() + 800
+    });
+
+    expect(result.statusCode).toBe(403);
+    expect(result.body.error).toBe('HOST_ONLY');
+  });
+
+  it('authorizes host controls with the private token returned at room creation', async () => {
+    const roomId = `X${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
+
+    const result = await callRoom('play', {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken,
+      state: 'PLAYING', targetServerTime: Date.now() + 800
+    });
+
+    expect(result.statusCode).toBe(200);
+    expect(result.body.state).toBe('PLAYING');
   });
 
   it('rejects participant requests to advance the room track', async () => {
@@ -140,6 +213,7 @@ describe('room authority', () => {
     const roomId = `A${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
     await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
 
+    await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
     const result = await callRoom('add_queue', {
       roomId,
       peerId: 'guest-peer',

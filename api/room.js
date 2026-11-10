@@ -1,4 +1,5 @@
 // Serverless In-Memory & Edge Room Mesh Relay for Rync432
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 // Supports Multi-Device Sync, Binary Audio Relay, Democratic Queue, and WebRTC
 
 const rooms = globalThis.__rync_rooms || new Map();
@@ -43,8 +44,14 @@ export default async function handler(req, res) {
   }
 
   const now = Date.now();
-  const requireHost = (room) => {
-    if (room && peerId && room.hostId === peerId) return true;
+  const hostTokenMatches = (room, token) => {
+    if (typeof token !== 'string' || !room?.hostTokenHash) return false;
+    const candidateHash = createHash('sha256').update(token).digest();
+    const expectedHash = Buffer.from(room.hostTokenHash, 'hex');
+    return expectedHash.length === candidateHash.length && timingSafeEqual(expectedHash, candidateHash);
+  };
+  const requireHost = (room, token = body.hostToken) => {
+    if (room && peerId && room.hostId === peerId && hostTokenMatches(room, token)) return true;
     res.status(403).json({ success: false, error: 'HOST_ONLY' });
     return false;
   };
@@ -65,6 +72,8 @@ export default async function handler(req, res) {
     const targetQueueId = body.id || body.queueId;
 
     if (audioBase64 && roomId) {
+      const room = rooms.get(roomId);
+      if (!requireHost(room, body.hostToken)) return;
       const audioId = 'aud_' + Math.random().toString(36).substring(2, 9);
       const audioEntry = {
         audioId,
@@ -77,23 +86,6 @@ export default async function handler(req, res) {
 
       audioStore.set(audioId, audioEntry);
       audioStore.set(roomId, audioEntry); // fallback for room
-
-      let room = rooms.get(roomId);
-      if (!room) {
-        room = {
-          roomId,
-          hostId: peerId,
-          state: 'IDLE',
-          track: null,
-          targetServerTime: 0,
-          startOffsetSec: 0,
-          updatedAt: now,
-          queue: [],
-          peers: {},
-          signals: []
-        };
-        rooms.set(roomId, room);
-      }
 
       const audioUrl = `/api/room?action=get_audio&audioId=${audioId}&roomId=${encodeURIComponent(roomId)}&v=${now}`;
       
@@ -148,9 +140,12 @@ export default async function handler(req, res) {
   }
 
   if (action === 'create') {
+    if (rooms.has(roomId)) return res.status(409).json({ success: false, error: 'ROOM_EXISTS' });
+    const hostToken = randomBytes(32).toString('base64url');
     const newRoom = {
       roomId,
       hostId: peerId,
+      hostTokenHash: createHash('sha256').update(hostToken).digest('hex'),
       state: 'IDLE',
       track: null,
       targetServerTime: 0,
@@ -171,17 +166,25 @@ export default async function handler(req, res) {
       signals: []
     };
     rooms.set(roomId, newRoom);
-    return res.status(200).json({ success: true, room: newRoom });
+    const { hostTokenHash, ...publicRoom } = newRoom;
+    return res.status(200).json({ success: true, room: publicRoom, hostToken });
   }
 
   if (action === 'join') {
     const room = rooms.get(roomId);
     if (!room) return res.status(404).json({ success: false, error: 'ROOM_NOT_FOUND' });
 
+    const isReturningHost = hostTokenMatches(room, body.hostToken);
+    if (isReturningHost) {
+      room.hostId = peerId;
+      Object.values(room.peers).forEach(peer => { peer.isHost = false; });
+    } else if (room.peers[peerId]) {
+      return res.status(409).json({ success: false, error: 'PEER_ID_IN_USE' });
+    }
     room.peers[peerId] = {
       id: peerId,
       deviceName,
-      isHost: room.hostId === peerId || Object.keys(room.peers).length === 0,
+      isHost: isReturningHost,
       role: 'stereo',
       volume: 1.0,
       latencyOffset: 0,
@@ -193,6 +196,7 @@ export default async function handler(req, res) {
       success: true,
       room: {
         roomId,
+        isHost: isReturningHost,
         state: room.state,
         track: room.track,
         queue: room.queue || [],
@@ -205,25 +209,17 @@ export default async function handler(req, res) {
   }
 
   if (action === 'poll') {
-    let room = rooms.get(roomId);
-    const claimsHost = body.isHost === true || query.isHost === 'true';
-
-    if (!room) {
-      room = {
-        roomId,
-        hostId: claimsHost ? peerId : (body.hostId || null),
-        state: claimsHost ? (body.state || 'IDLE') : 'IDLE',
-        track: claimsHost ? (body.track || null) : null,
-        targetServerTime: claimsHost ? (body.targetServerTime || 0) : 0,
-        startOffsetSec: claimsHost ? (body.startOffsetSec || 0) : 0,
-        updatedAt: now,
-        queue: claimsHost && Array.isArray(body.queue) ? body.queue : [],
-        peers: {},
-        signals: []
-      };
-      rooms.set(roomId, room);
+    const room = rooms.get(roomId);
+    if (!room) return res.status(404).json({ exists: false, error: 'ROOM_NOT_FOUND' });
+    const claimsHost = hostTokenMatches(room, body.hostToken);
+    const isThisHost = !!peerId && claimsHost;
+    if (!isThisHost && room.peers?.[peerId]?.isHost) {
+      return res.status(409).json({ exists: true, error: 'HOST_AUTH_REQUIRED' });
     }
-    const isThisHost = !!peerId && room.hostId === peerId;
+    if (isThisHost) {
+      room.hostId = peerId;
+      Object.entries(room.peers || {}).forEach(([id, peer]) => { peer.isHost = id === peerId; });
+    }
 
     if (isThisHost) {
       if (body.track) room.track = body.track;
@@ -305,7 +301,7 @@ export default async function handler(req, res) {
 
   if (action === 'update_playback') {
     let room = rooms.get(roomId);
-    if (!requireHost(room)) return;
+    if (!requireHost(room, body.hostToken)) return;
     if (!room) {
       room = {
         roomId,
@@ -332,7 +328,7 @@ export default async function handler(req, res) {
 
   if (action === 'play') {
     const room = rooms.get(roomId);
-    if (!requireHost(room)) return;
+    if (!requireHost(room, body.hostToken)) return;
     room.state = 'PLAYING';
     room.targetServerTime = body.targetServerTime || now + 800;
     room.startOffsetSec = body.startOffsetSec || 0;
@@ -343,7 +339,7 @@ export default async function handler(req, res) {
 
   if (action === 'pause') {
     const room = rooms.get(roomId);
-    if (!requireHost(room)) return;
+    if (!requireHost(room, body.hostToken)) return;
     room.state = 'PAUSED';
     room.targetServerTime = null;
     room.startOffsetSec = body.currentOffsetSec || 0;
@@ -353,30 +349,16 @@ export default async function handler(req, res) {
 
   if (action === 'track') {
     const room = rooms.get(roomId);
-    if (!requireHost(room)) return;
+    if (!requireHost(room, body.hostToken)) return;
     if (body.track) room.track = body.track;
     room.updatedAt = now;
     return res.status(200).json({ success: true, track: room.track });
   }
 
   if (action === 'add_queue') {
-    let room = rooms.get(roomId);
-    if (!room) {
-      room = {
-        roomId,
-        hostId: peerId,
-        state: 'IDLE',
-        track: null,
-        targetServerTime: 0,
-        startOffsetSec: 0,
-        updatedAt: now,
-        queue: [],
-        peers: {},
-        signals: []
-      };
-      rooms.set(roomId, room);
-    }
-
+    const room = rooms.get(roomId);
+    if (!room) return res.status(404).json({ success: false, error: 'ROOM_NOT_FOUND' });
+    if (!peerId || !room.peers?.[peerId]) return res.status(403).json({ success: false, error: 'ROOM_MEMBER_REQUIRED' });
     if (!room.queue) room.queue = [];
 
     if (Array.isArray(body.items)) {
@@ -415,7 +397,7 @@ export default async function handler(req, res) {
 
   if (action === 'reorder_queue') {
     const room = rooms.get(roomId);
-    if (!requireHost(room)) return;
+    if (!requireHost(room, body.hostToken)) return;
     if (room && Array.isArray(body.queue)) {
       room.queue = body.queue;
       room.updatedAt = now;
@@ -426,7 +408,7 @@ export default async function handler(req, res) {
 
   if (action === 'play_next') {
     const room = rooms.get(roomId);
-    if (!requireHost(room)) return;
+    if (!requireHost(room, body.hostToken)) return;
     if (room && room.queue) {
       const qId = body.queueId;
       const targetIdx = room.queue.findIndex(q => q.id === qId);
@@ -444,7 +426,7 @@ export default async function handler(req, res) {
 
   if (action === 'play_queue_item') {
     const room = rooms.get(roomId);
-    if (!requireHost(room)) return;
+    if (!requireHost(room, body.hostToken)) return;
     if (room && room.queue) {
       const qId = body.queueId;
       const target = room.queue.find(q => q.id === qId);
@@ -469,7 +451,7 @@ export default async function handler(req, res) {
 
   if (action === 'remove_queue') {
     const room = rooms.get(roomId);
-    if (!requireHost(room)) return;
+    if (!requireHost(room, body.hostToken)) return;
     if (room && room.queue) {
       const qId = body.queueId;
       room.queue = room.queue.filter(q => q.id !== qId);
@@ -481,7 +463,7 @@ export default async function handler(req, res) {
 
   if (action === 'clear_queue') {
     const room = rooms.get(roomId);
-    if (!requireHost(room)) return;
+    if (!requireHost(room, body.hostToken)) return;
     if (!Array.isArray(body.queueIds) || body.queueIds.length > 200
       || body.queueIds.some(id => typeof id !== 'string' || id.length > 160)) {
       return res.status(400).json({ success: false, error: 'INVALID_QUEUE_IDS' });
@@ -502,7 +484,7 @@ export default async function handler(req, res) {
 
   if (action === 'restore_queue') {
     const room = rooms.get(roomId);
-    if (!requireHost(room)) return;
+    if (!requireHost(room, body.hostToken)) return;
     if (!Array.isArray(body.removed) || body.removed.length > 200
       || body.removed.some(entry => !entry?.item?.id || !Number.isInteger(entry.index) || entry.index < 0)) {
       return res.status(400).json({ success: false, error: 'INVALID_QUEUE_RESTORE' });
@@ -521,7 +503,7 @@ export default async function handler(req, res) {
 
   if (action === 'next_track') {
     const room = rooms.get(roomId);
-    if (!requireHost(room)) return;
+    if (!requireHost(room, body.hostToken)) return;
     if (room) {
       if (room.queue && room.queue.length > 0) {
         const currentIndex = room.track ? room.queue.findIndex(q => q.id === room.track.id) : -1;
@@ -550,7 +532,7 @@ export default async function handler(req, res) {
 
   if (action === 'prev_track') {
     const room = rooms.get(roomId);
-    if (!requireHost(room)) return;
+    if (!requireHost(room, body.hostToken)) return;
     if (room) {
       if (room.queue && room.queue.length > 0) {
         const currentIndex = room.track ? room.queue.findIndex(q => q.id === room.track.id) : 0;
@@ -589,7 +571,7 @@ export default async function handler(req, res) {
 
   if (action === 'remove_peer') {
     const room = rooms.get(roomId);
-    if (!requireHost(room)) return;
+    if (!requireHost(room, body.hostToken)) return;
     const targetPeerId = body.targetPeerId || query.targetPeerId;
     if (room && targetPeerId) {
       if (!room.kickedPeers) room.kickedPeers = [];

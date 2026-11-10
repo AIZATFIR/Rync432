@@ -1274,12 +1274,10 @@ export class UIManager {
             <circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/>
           </svg>
         </div>
-        <div style="font-weight:700; color:${isCurrent ? 'var(--spotify-green)' : 'var(--text-silver)'}; font-size:0.75rem; width:16px;">
-          ${isCurrent ? '▶' : index + 1}
-        </div>
+        <div class="queue-item-position" style="font-weight:700; font-size:0.75rem; width:16px;"></div>
         <div class="queue-item-info">
-          <div class="queue-item-title" style="color:${isCurrent ? 'var(--spotify-green)' : 'var(--text-base)'};">${item.name}</div>
-          <div class="queue-item-meta">${item.artist || 'Artist'} • ${this.formatTime(item.duration)} • Oleh ${item.addedBy || 'Member'}</div>
+          <div class="queue-item-title"></div>
+          <div class="queue-item-meta"></div>
         </div>
         
         <div class="queue-item-actions">
@@ -1292,7 +1290,12 @@ export class UIManager {
           </div>
         </div>
       `;
-      div.querySelector('.queue-item-title').textContent = item.name || 'Untitled';
+      const position = div.querySelector('.queue-item-position');
+      position.textContent = isCurrent ? '▶' : String(index + 1);
+      position.style.color = isCurrent ? 'var(--spotify-green)' : 'var(--text-silver)';
+      const title = div.querySelector('.queue-item-title');
+      title.textContent = item.name || 'Untitled';
+      title.style.color = isCurrent ? 'var(--spotify-green)' : 'var(--text-base)';
       div.querySelector('.queue-item-meta').textContent = `${item.artist || 'Artist'} • ${this.formatTime(item.duration)} • Oleh ${item.addedBy || 'Member'}`;
 
       const menuBtn = div.querySelector('.queue-menu-btn');
