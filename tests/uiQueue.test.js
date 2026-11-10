@@ -4,7 +4,7 @@ vi.mock('../public/js/auth/FirebaseAuth.js', () => ({
   firebaseAuth: { onAuthStateChanged() {} }
 }));
 
-import { UIManager } from '../public/js/ui/UIManager.js';
+import { UIManager, moveQueueItem } from '../public/js/ui/UIManager.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -12,6 +12,22 @@ afterEach(() => {
 });
 
 describe('YouTube search queue UI', () => {
+  it('moves one queued track without changing the input order', () => {
+    const original = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+
+    const moved = moveQueueItem(original, 2, 0);
+
+    expect(moved.map(item => item.id)).toEqual(['c', 'a', 'b']);
+    expect(original.map(item => item.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('leaves queue order intact for an invalid drag destination', () => {
+    const original = [{ id: 'a' }, { id: 'b' }];
+
+    expect(moveQueueItem(original, 0, 4)).toEqual(original);
+    expect(moveQueueItem(original, -1, 1)).toEqual(original);
+  });
+
   it('fetches search results without creating or joining an audio room', async () => {
     const ui = new UIManager({ socketClient: { createRoom: vi.fn(), joinRoom: vi.fn() } });
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ results: [{ id: 'video-1' }] }) });

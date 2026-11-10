@@ -4,6 +4,17 @@ import { QRScanner } from './QRScanner.js';
 import { MusicSourceManager } from '../music/MusicSourceManager.js';
 import { LocalLibrary } from '../library/LocalLibrary.js';
 
+export function moveQueueItem(queue, fromIndex, toIndex) {
+  if (!Array.isArray(queue) || !Number.isInteger(fromIndex) || !Number.isInteger(toIndex)
+    || fromIndex < 0 || toIndex < 0 || fromIndex >= queue.length || toIndex >= queue.length) {
+    return Array.isArray(queue) ? [...queue] : [];
+  }
+  const reordered = [...queue];
+  const [item] = reordered.splice(fromIndex, 1);
+  reordered.splice(toIndex, 0, item);
+  return reordered;
+}
+
 export class UIManager {
   constructor(app) {
     this.app = app;
@@ -20,6 +31,7 @@ export class UIManager {
     this.youtubeSearchController = null;
     this.youtubeSearchDebounce = null;
     this.youtubeSearchSequence = 0;
+    this.suppressQueueRowClickUntil = 0;
     this.musicSourceManager = new MusicSourceManager();
     this.localLibrary = new LocalLibrary();
   }
@@ -1263,7 +1275,7 @@ export class UIManager {
 
       // Click row to select/load track (with autoplay)
       div.addEventListener('click', (e) => {
-        if (e.target.closest('.queue-item-actions') || e.target.closest('.drag-handle')) return;
+        if (Date.now() < this.suppressQueueRowClickUntil || e.target.closest('.queue-item-actions') || e.target.closest('.drag-handle')) return;
         if (!this.app.socketClient.isHost) {
           this.app.socketClient.requestControl('play_queue_item', { queueId: item.id, name: item.name });
           return;
@@ -1310,13 +1322,24 @@ export class UIManager {
         }
       });
 
-      // Mobile Touch Long-Press Drag Sorting
+      // Mobile long-press sorting: preview during drag, commit exactly once on drop.
       let touchTimer = null;
       let startY = 0;
       let isDraggingTouch = false;
+      let touchTargetIndex = index;
+
+      const clearTouchDrag = () => {
+        clearTimeout(touchTimer);
+        div.classList.remove('dragging');
+        container.querySelectorAll('.queue-item.drop-target').forEach(row => row.classList.remove('drop-target'));
+        isDraggingTouch = false;
+        touchTargetIndex = index;
+      };
 
       div.addEventListener('touchstart', (e) => {
+        if (!this.app.socketClient.isHost || !e.target.closest('.drag-handle')) return;
         startY = e.touches[0].clientY;
+        touchTargetIndex = index;
         touchTimer = setTimeout(() => {
           isDraggingTouch = true;
           div.classList.add('dragging');
@@ -1326,33 +1349,33 @@ export class UIManager {
 
       div.addEventListener('touchmove', (e) => {
         if (!isDraggingTouch) {
-          const moveY = Math.abs(e.touches[0].clientY - startY);
-          if (moveY > 10) clearTimeout(touchTimer);
+          if (Math.abs(e.touches[0].clientY - startY) > 10) clearTimeout(touchTimer);
           return;
         }
         e.preventDefault();
-        const touchY = e.touches[0].clientY;
-        const targetEl = document.elementFromPoint(e.touches[0].clientX, touchY)?.closest('.queue-item');
-        if (targetEl && targetEl !== div && targetEl.dataset.index !== undefined) {
-          const toIndex = parseInt(targetEl.dataset.index, 10);
-          const fromIndex = parseInt(div.dataset.index, 10);
-          if (!isNaN(toIndex) && !isNaN(fromIndex) && fromIndex !== toIndex) {
-            const newQueue = [...this.cachedQueue];
-            const [moved] = newQueue.splice(fromIndex, 1);
-            newQueue.splice(toIndex, 0, moved);
-            this.renderQueue(newQueue);
-            this.app.socketClient.reorderQueue(newQueue);
-          }
-        }
+        const targetEl = document.elementFromPoint(e.touches[0].clientX, e.touches[0].clientY)?.closest('.queue-item');
+        if (!targetEl || targetEl === div || targetEl.dataset.index === undefined) return;
+        const nextIndex = Number.parseInt(targetEl.dataset.index, 10);
+        if (!Number.isInteger(nextIndex)) return;
+        container.querySelectorAll('.queue-item.drop-target').forEach(row => row.classList.remove('drop-target'));
+        targetEl.classList.add('drop-target');
+        touchTargetIndex = nextIndex;
       }, { passive: false });
 
       div.addEventListener('touchend', () => {
         clearTimeout(touchTimer);
-        if (isDraggingTouch) {
-          isDraggingTouch = false;
-          div.classList.remove('dragging');
-        }
+        if (!isDraggingTouch) return;
+        this.suppressQueueRowClickUntil = Date.now() + 400;
+        const fromIndex = index;
+        const toIndex = touchTargetIndex;
+        clearTouchDrag();
+        if (fromIndex === toIndex) return;
+        const newQueue = moveQueueItem(this.cachedQueue, fromIndex, toIndex);
+        this.renderQueue(newQueue);
+        this.app.socketClient.reorderQueue(newQueue);
       });
+
+      div.addEventListener('touchcancel', clearTouchDrag);
 
       container.appendChild(div);
     });

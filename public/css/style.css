@@ -664,6 +664,11 @@ canvas#visualizerCanvas {
   transform: scale(0.98);
 }
 
+.queue-item.drop-target {
+  outline: 2px dashed var(--spotify-green);
+  outline-offset: 2px;
+}
+
 .drag-handle {
   display: flex;
   align-items: center;
