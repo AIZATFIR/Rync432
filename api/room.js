@@ -399,7 +399,22 @@ export default async function handler(req, res) {
     const room = rooms.get(roomId);
     if (!requireHost(room, body.hostToken)) return;
     if (room && Array.isArray(body.queue)) {
-      room.queue = body.queue;
+      const currentQueue = room.queue || [];
+      const currentById = new Map(currentQueue.filter(item => item?.id).map(item => [item.id, item]));
+      const reorderedQueue = [];
+      const includedIds = new Set();
+      body.queue.forEach(item => {
+        if (!item?.id || includedIds.has(item.id) || !currentById.has(item.id)) return;
+        reorderedQueue.push(currentById.get(item.id));
+        includedIds.add(item.id);
+      });
+      currentQueue.forEach(item => {
+        if (item?.id && !includedIds.has(item.id)) {
+          reorderedQueue.push(item);
+          includedIds.add(item.id);
+        }
+      });
+      room.queue = reorderedQueue;
       room.updatedAt = now;
       return res.status(200).json({ success: true, queue: room.queue });
     }

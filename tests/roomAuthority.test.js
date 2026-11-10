@@ -84,6 +84,39 @@ describe('room authority', () => {
     expect(result.body.queue.map(item => item.id)).toEqual(['track-c', 'track-a', 'track-b', 'track-d']);
   });
 
+  it('preserves a member addition that races with a host reorder', async () => {
+    const roomId = `N${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
+    await callRoom('add_queue', { roomId, peerId: 'guest-peer', items: [
+      { id: 'track-a', name: 'A' }, { id: 'track-b', name: 'B' }
+    ] });
+    await callRoom('add_queue', { roomId, peerId: 'guest-peer', id: 'track-c', name: 'C' });
+
+    const result = await callRoom('reorder_queue', {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken,
+      queue: [{ id: 'track-b' }, { id: 'track-a' }]
+    });
+
+    expect(result.body.queue.map(item => item.id)).toEqual(['track-b', 'track-a', 'track-c']);
+  });
+
+  it('does not resurrect a removed item from a stale host reorder snapshot', async () => {
+    const roomId = `P${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
+      { id: 'track-a', name: 'A' }, { id: 'track-b', name: 'B' }
+    ] });
+    await callRoom('remove_queue', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, queueId: 'track-b' });
+
+    const result = await callRoom('reorder_queue', {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken,
+      queue: [{ id: 'track-b' }, { id: 'track-a' }]
+    });
+
+    expect(result.body.queue.map(item => item.id)).toEqual(['track-a']);
+  });
+
   it('clears only requested upcoming tracks and returns their original positions for undo', async () => {
     const roomId = `T${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
