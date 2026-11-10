@@ -1108,6 +1108,7 @@ export class CloudMesh {
     };
 
     this.lastRequestPeerTime = Date.now();
+    let attempts = 0;
     const cached = trackId ? this.localAudioBufferCache.get(trackId) : this.localAudioBufferCache.get(trackName);
     if (cached) return true;
 
@@ -1121,6 +1122,16 @@ export class CloudMesh {
         clearInterval(this.peerBufferRequestInterval);
         this.peerBufferRequestInterval = null;
         this.peerBufferRequestTrackKey = null;
+        return;
+      }
+      attempts++;
+      if (attempts >= 30) {
+        clearInterval(this.peerBufferRequestInterval);
+        this.peerBufferRequestInterval = null;
+        this.peerBufferRequestTrackKey = null;
+        this.updateLoadingState(false, 'Audio P2P tidak tersedia');
+        this.broadcastReadiness('FAILED', trackId);
+        this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status: 'Audio P2P tidak tersedia. Coba sumber lain.' });
         return;
       }
       sendRequest();

@@ -34,6 +34,25 @@ describe('CloudMesh audio transfer', () => {
     expect(channel.sent).toHaveLength(2);
     vi.useRealTimers();
   });
+  it('ends a missing P2P audio wait with a visible failure after 30 seconds', () => {
+    vi.useFakeTimers();
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'peer-1';
+    mesh.localPeersMap.set('peer-1', { id: 'peer-1' });
+    mesh.dataChannels.set('peer-2', makeChannel());
+
+    mesh.requestTrackBufferFromPeers('Track', 'track-1');
+    vi.advanceTimersByTime(30_000);
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'AUDIO_TRANSFER_PROGRESS',
+      payload: expect.objectContaining({ status: expect.stringContaining('tidak tersedia') })
+    }));
+    expect(mesh.peerBufferRequestInterval).toBeNull();
+  });
+
   it('clears room peer transports and identity when leaving', () => {
     const mesh = new CloudMesh(() => {});
     mesh.roomId = 'ROOM';
