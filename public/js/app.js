@@ -107,7 +107,8 @@ class App {
         break;
 
       case 'ROOM_ERROR':
-        alert(payload.message || 'Room error');
+        uiManager.setView('room');
+        uiManager.showUrlFeedback(payload.message || 'Room gagal diakses. Periksa kode atau koneksi.', 'error');
         break;
 
       case 'ROOM_LEFT':

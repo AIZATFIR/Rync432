@@ -67,6 +67,16 @@
       <button type="button" class="primary-nav-item" id="navRoomBtn" data-view="room">Listen together</button>
     </nav>
 
+    <section class="mini-player" id="miniPlayerBar" aria-label="Pemutar mini" hidden>
+      <button type="button" class="mini-player-track" id="miniPlayerOpenBtn" aria-label="Buka pemutar penuh">
+        <span class="mini-player-art" id="miniPlayerArtwork" aria-hidden="true">♫</span>
+        <span class="mini-player-copy"><strong id="miniPlayerTitle">Belum ada lagu</strong><small id="miniPlayerArtist">Pilih lagu untuk mulai</small></span>
+      </button>
+      <span class="mini-player-time" id="miniPlayerTime">0:00</span>
+      <input type="range" class="mini-player-seek" id="miniPlayerSeek" min="0" max="1000" value="0" aria-label="Posisi lagu" aria-valuetext="0:00 dari 0:00">
+      <button type="button" class="mini-player-play" id="miniPlayerPlayBtn" aria-label="Putar">▶</button>
+    </section>
+
     <!-- Hidden File Input for Batch Music Audio Selection -->
     <input type="file" id="audioFileInput" accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac" multiple style="display: none;">
 

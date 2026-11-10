@@ -154,6 +154,20 @@ describe('CloudMesh audio transfer', () => {
     await add;
   });
 
+  it('deduplicates repeated adds of the same stable queue id', async () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'peer-1';
+    mesh.deviceName = 'Host';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, queue: [{ id: 'demo_synthwave', name: 'Demo' }] }) }));
+
+    await mesh.addToQueue({ id: 'demo_synthwave', name: 'Demo', isSynthetic: true });
+    await mesh.addToQueue({ id: 'demo_synthwave', name: 'Demo', isSynthetic: true });
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(mesh.lastKnownQueue.map(track => track.id)).toEqual(['demo_synthwave']);
+  });
+
   it('keeps a queued item visible and reports a server rejection', async () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
@@ -237,6 +251,20 @@ describe('CloudMesh audio transfer', () => {
 });
 
 describe('SocketClient room readiness', () => {
+  it('clears pending room identity before forwarding a join error', () => {
+    const events = [];
+    const client = new SocketClient((type, payload) => events.push({ type, payload }));
+    client.roomId = 'MISS';
+    client.peerId = 'peer-1';
+    client.isHost = false;
+
+    client.handleCloudMeshEvent('ROOM_ERROR', { message: 'Room tidak bisa dimasuki.' });
+
+    expect(client.roomId).toBeNull();
+    expect(client.peerId).toBeNull();
+    expect(events).toContainEqual({ type: 'ROOM_ERROR', payload: { message: 'Room tidak bisa dimasuki.' } });
+  });
+
   it('announces a room only after the server confirms creation', async () => {
     const events = [];
     const client = new SocketClient((type, payload) => events.push({ type, payload }));

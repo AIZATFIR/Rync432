@@ -218,6 +218,12 @@ export class SocketClient {
       this.onEvent('AUDIO_TRANSFER_PROGRESS', payload);
     } else if (event === 'REMOTE_DEVICE_UPDATED') {
       this.onEvent('REMOTE_DEVICE_UPDATED', payload);
+    } else if (event === 'ROOM_ERROR') {
+      this.roomId = null;
+      this.peerId = null;
+      this.isHost = false;
+      this.roomReady = Promise.resolve();
+      this.onEvent('ROOM_ERROR', payload);
     } else if (event === 'ROOM_LEFT') {
       this.roomId = null;
       this.peerId = null;

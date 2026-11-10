@@ -12,6 +12,19 @@ afterEach(() => {
 });
 
 describe('YouTube search queue UI', () => {
+  it('fetches search results without creating or joining an audio room', async () => {
+    const ui = new UIManager({ socketClient: { createRoom: vi.fn(), joinRoom: vi.fn() } });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ results: [{ id: 'video-1' }] }) });
+    vi.stubGlobal('fetch', fetchMock);
+    const controller = new AbortController();
+
+    const results = await ui.fetchYoutubeSearch('ambient music', controller.signal);
+
+    expect(results).toEqual([{ id: 'video-1' }]);
+    expect(fetchMock).toHaveBeenCalledWith('/api/yt-search?q=ambient%20music', { signal: controller.signal });
+    expect(ui.app.socketClient.createRoom).not.toHaveBeenCalled();
+  });
+
   it('renders untrusted search metadata as text, not markup', () => {
     const makeElement = () => ({
       children: [], className: '', style: {}, dataset: {}, textContent: '',
@@ -69,6 +82,55 @@ describe('YouTube search queue UI', () => {
     ui.setView('home');
     expect(ui.elements.activeRoomSection.style.display).toBe('flex');
     expect(ui.elements.librarySection.hidden).toBe(true);
+  });
+
+  it('keeps a compact player available on Library and room setup views', () => {
+    const node = () => ({ hidden: false, style: {}, attributes: {}, classList: { toggle() {} }, setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name) { delete this.attributes[name]; } });
+    const ui = new UIManager({ socketClient: { roomId: null } });
+    ui.elements = {
+      activeRoomSection: node(), roomHeroSection: node(), librarySection: node(), sourceHubSection: node(), miniPlayerBar: node(),
+      navHomeBtn: node(), navSearchBtn: node(), navLibraryBtn: node(), navRoomBtn: node()
+    };
+    ui.currentTrack = { name: 'Saved song' };
+
+    ui.setView('library');
+    expect(ui.elements.activeRoomSection.style.display).toBe('none');
+    expect(ui.elements.miniPlayerBar.hidden).toBe(false);
+    ui.setView('room');
+    expect(ui.elements.miniPlayerBar.hidden).toBe(false);
+    ui.setView('home');
+    expect(ui.elements.activeRoomSection.style.display).toBe('flex');
+    expect(ui.elements.miniPlayerBar.hidden).toBe(true);
+  });
+
+  it('mirrors playback state into the mini player control', () => {
+    const button = { textContent: '', attributes: {}, setAttribute(name, value) { this.attributes[name] = value; } };
+    const ui = new UIManager({});
+    ui.elements = { miniPlayerPlayBtn: button };
+
+    ui.setPlayState(true);
+    expect(button.textContent).toBe('Ⅱ');
+    expect(button.attributes['aria-label']).toBe('Jeda');
+    ui.setPlayState(false);
+    expect(button.textContent).toBe('▶');
+    expect(button.attributes['aria-pressed']).toBe('false');
+  });
+
+  it('keeps the selected screen when room creation finishes asynchronously', () => {
+    const node = () => ({ hidden: false, style: {}, classList: { toggle() {}, add() {}, remove() {} }, setAttribute() {}, removeAttribute() {}, innerText: '' });
+    vi.stubGlobal('document', { body: { classList: { add() {}, remove() {} } } });
+    const ui = new UIManager({ socketClient: { roomId: 'ABCD', isHost: true } });
+    ui.currentView = 'library';
+    ui.elements = {
+      activeRoomSection: node(), roomHeroSection: node(), librarySection: node(), sourceHubSection: node(), miniPlayerBar: node(),
+      navHomeBtn: node(), navSearchBtn: node(), navLibraryBtn: node(), navRoomBtn: node(), roomCodeDisplay: node(), userRoleBadge: node()
+    };
+
+    ui.setRoomState('ABCD', true);
+
+    expect(ui.currentView).toBe('library');
+    expect(ui.elements.librarySection.hidden).toBe(false);
+    expect(ui.elements.activeRoomSection.style.display).toBe('none');
   });
 
   it('records the active track in history without reading an uninitialized track', async () => {

@@ -17,6 +17,9 @@ export class UIManager {
     this.isPlayingState = false;
     this.currentView = 'home';
     this.currentTrack = null;
+    this.youtubeSearchController = null;
+    this.youtubeSearchDebounce = null;
+    this.youtubeSearchSequence = 0;
     this.musicSourceManager = new MusicSourceManager();
     this.localLibrary = new LocalLibrary();
   }
@@ -34,6 +37,14 @@ export class UIManager {
       navSearchBtn: document.getElementById('navSearchBtn'),
       navLibraryBtn: document.getElementById('navLibraryBtn'),
       navRoomBtn: document.getElementById('navRoomBtn'),
+      miniPlayerBar: document.getElementById('miniPlayerBar'),
+      miniPlayerOpenBtn: document.getElementById('miniPlayerOpenBtn'),
+      miniPlayerTitle: document.getElementById('miniPlayerTitle'),
+      miniPlayerArtist: document.getElementById('miniPlayerArtist'),
+      miniPlayerArtwork: document.getElementById('miniPlayerArtwork'),
+      miniPlayerTime: document.getElementById('miniPlayerTime'),
+      miniPlayerSeek: document.getElementById('miniPlayerSeek'),
+      miniPlayerPlayBtn: document.getElementById('miniPlayerPlayBtn'),
       favoriteTrackBtn: document.getElementById('favoriteTrackBtn'),
       createPlaylistBtn: document.getElementById('createPlaylistBtn'),
       playlistList: document.getElementById('playlistList'),
@@ -215,6 +226,18 @@ export class UIManager {
       [elements.navLibraryBtn, 'library'],
       [elements.navRoomBtn, 'room']
     ].forEach(([button, view]) => button?.addEventListener('click', () => this.setView(view)));
+
+    elements.miniPlayerOpenBtn?.addEventListener('click', () => this.setView('home'));
+    elements.miniPlayerPlayBtn?.addEventListener('click', () => this.togglePlayback());
+    elements.miniPlayerSeek?.addEventListener('input', () => { this.isMiniSeeking = true; });
+    elements.miniPlayerSeek?.addEventListener('change', event => {
+      this.isMiniSeeking = false;
+      const duration = this.app.audioEngine?.currentTrackDuration || 0;
+      const target = (Number(event.target.value) / 1000) * duration;
+      if (!duration) return;
+      if (!this.app.socketClient.isHost) this.app.socketClient.requestControl('seek', { position: target });
+      else this.app.socketClient.schedulePlay(800, target);
+    });
 
     elements.favoriteTrackBtn?.addEventListener('click', async () => {
       const track = this.currentTrack || this.app.socketClient?.cloudMesh?.lastKnownTrack;
@@ -611,7 +634,7 @@ export class UIManager {
         app.audioEngine.ensureContext();
         if (!app.socketClient.roomId) app.socketClient.createRoom(this.getDeviceName());
         const synthTrack = {
-          id: 'public_synth_' + Date.now(),
+          id: 'demo_cyber_synth',
           name: 'Neon Cyber Synth',
           artist: 'Rync Synth Lab',
           duration: 20,
@@ -626,12 +649,8 @@ export class UIManager {
     // 5. Genuine Live YouTube Search & Stream
     const handleYtSearchOrStream = async (queryOrUrl) => {
       if (!queryOrUrl) {
-        alert('Masukkan judul lagu atau link YouTube');
+        this.renderSearchMessage('Ketik judul lagu atau tempel link YouTube.', 'info');
         return;
-      }
-      app.audioEngine.ensureContext();
-      if (!app.socketClient.roomId) {
-        app.socketClient.createRoom(this.getDeviceName());
       }
 
       if (/^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be|music\.youtube\.com)/i.test(queryOrUrl)) {
@@ -639,54 +658,67 @@ export class UIManager {
         return;
       }
 
-      if (elements.ytSearchResults) {
-        elements.ytSearchResults.style.display = 'flex';
-        elements.ytSearchResults.innerHTML = `
-          <div style="font-size: 0.78rem; color: var(--text-silver); text-align: center; padding: 10px;">
-            Mencari "${queryOrUrl}" di YouTube...
-          </div>
-        `;
-      }
+      this.youtubeSearchController?.abort();
+      const controller = new AbortController();
+      const requestId = ++this.youtubeSearchSequence;
+      this.youtubeSearchController = controller;
+      this.renderSearchMessage('Mencari di YouTube…', 'loading');
 
       try {
-        const res = await fetch(`/api/yt-search?q=${encodeURIComponent(queryOrUrl)}`);
-        const data = await res.json();
-        const results = data.results || [];
+        const results = await this.fetchYoutubeSearch(queryOrUrl, controller.signal);
+        if (requestId !== this.youtubeSearchSequence) return;
 
         if (results.length === 0) {
-          if (elements.ytSearchResults) {
-            elements.ytSearchResults.innerHTML = `
-              <div style="font-size: 0.78rem; color: var(--text-silver); text-align: center; padding: 8px;">
-                Lagu tidak ditemukan di YouTube. Coba kata kunci lain.
-              </div>
-            `;
-          }
+          this.renderSearchMessage('Lagu tidak ditemukan. Coba kata kunci lain.', 'empty');
           return;
         }
 
         this.renderSearchResults(results);
       } catch (err) {
-        console.error('Search error:', err);
-        if (elements.ytSearchResults) {
-          elements.ytSearchResults.innerHTML = `
-            <div style="font-size: 0.78rem; color: var(--text-negative); text-align: center; padding: 8px;">
-              Gagal mencari lagu.
-            </div>
-          `;
-        }
+        if (err.name === 'AbortError' || requestId !== this.youtubeSearchSequence) return;
+        this.renderSearchMessage('Pencarian gagal. Periksa koneksi lalu coba lagi.', 'error');
       }
     };
 
     if (elements.fetchYtAudioBtn) {
       elements.fetchYtAudioBtn.addEventListener('click', () => {
+        clearTimeout(this.youtubeSearchDebounce);
         const q = elements.ytUrlInput?.value.trim() || '';
         handleYtSearchOrStream(q);
       });
     }
 
     if (elements.ytUrlInput) {
-      elements.ytUrlInput.addEventListener('keyup', (e) => {
-        if (e.key === 'Enter') elements.fetchYtAudioBtn.click();
+      elements.ytUrlInput.addEventListener('input', () => {
+        const query = elements.ytUrlInput.value.trim();
+        this.youtubeSearchController?.abort();
+        this.youtubeSearchSequence++;
+        clearTimeout(this.youtubeSearchDebounce);
+        if (!query) {
+          if (elements.ytSearchResults) elements.ytSearchResults.style.display = 'none';
+          return;
+        }
+        if (/^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be|music\.youtube\.com)/i.test(query)) {
+          if (elements.ytSearchResults) elements.ytSearchResults.style.display = 'none';
+          return;
+        }
+        if (query.length < 2) {
+          this.renderSearchMessage('Ketik minimal 2 karakter.', 'info');
+          return;
+        }
+        this.renderSearchMessage('Menyiapkan pencarian…', 'loading');
+        this.youtubeSearchDebounce = setTimeout(() => handleYtSearchOrStream(query), 350);
+      });
+      elements.ytUrlInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          clearTimeout(this.youtubeSearchDebounce);
+          elements.fetchYtAudioBtn.click();
+        } else if (e.key === 'Escape') {
+          clearTimeout(this.youtubeSearchDebounce);
+          this.youtubeSearchController?.abort();
+          this.youtubeSearchSequence++;
+          if (elements.ytSearchResults) elements.ytSearchResults.style.display = 'none';
+        }
       });
     }
 
@@ -831,7 +863,7 @@ export class UIManager {
         }
         const sampleUrl = `${window.location.origin}/test_music_sample.wav`;
         const item = {
-          id: 'q_' + Math.random().toString(36).substring(2, 9),
+          id: 'demo_acoustic_wav',
           name: 'Acoustic WAV',
           artist: 'Acoustic Sample',
           duration: 30,
@@ -865,7 +897,7 @@ export class UIManager {
           app.socketClient.createRoom(this.getDeviceName());
         }
         const item = {
-          id: 'q_' + Math.random().toString(36).substring(2, 9),
+          id: 'demo_synthwave',
           name: 'Neon Groove Synthwave',
           artist: 'Rync432 Synth',
           duration: 20,
@@ -955,6 +987,25 @@ export class UIManager {
     if (elements.activeEqNameTag) {
       elements.activeEqNameTag.innerText = labelMap[preset] || 'Studio Master';
     }
+  }
+
+  async fetchYoutubeSearch(query, signal) {
+    const response = await fetch(`/api/yt-search?q=${encodeURIComponent(query)}`, { signal });
+    if (!response.ok) throw new Error(`Search failed (${response.status})`);
+    const data = await response.json();
+    return Array.isArray(data.results) ? data.results : [];
+  }
+
+  renderSearchMessage(message, state = 'info') {
+    const list = this.elements.ytSearchResults;
+    if (!list) return;
+    list.style.display = 'flex';
+    list.replaceChildren();
+    const status = document.createElement('p');
+    status.className = `search-status ${state}`;
+    status.setAttribute('role', 'status');
+    status.textContent = message;
+    list.appendChild(status);
   }
 
   renderSearchResults(results) {
@@ -1554,6 +1605,7 @@ export class UIManager {
       thumbnail: thumbnail || sourceTrack.thumbnail || ''
     };
     this.currentTrack = currentTrack;
+    this.updateMiniPlayer();
     if (duration > 0 && this.app?.audioEngine) {
       this.app.audioEngine.currentTrackDuration = duration;
     }
@@ -1656,6 +1708,10 @@ export class UIManager {
 
     if (this.elements.activeRoomSection) {
       this.elements.activeRoomSection.style.display = showLibrary || showRoomSetup ? 'none' : 'flex';
+    }
+    if (this.elements.miniPlayerBar) {
+      const hasTrack = !!this.currentTrack && this.currentTrack.name !== 'Pilih trek lagu';
+      this.elements.miniPlayerBar.hidden = !hasTrack || view === 'home';
     }
     if (this.elements.roomHeroSection) {
       this.elements.roomHeroSection.hidden = !showRoomSetup;
@@ -1816,13 +1872,7 @@ export class UIManager {
 
   setRoomState(roomId, isHost) {
     document.body?.classList.add('in-room');
-    this.currentView = 'home';
-    this.elements.navHomeBtn?.classList.add('active');
-    this.elements.navHomeBtn?.setAttribute('aria-current', 'page');
-    this.elements.navRoomBtn?.classList.remove('active');
-    this.elements.navRoomBtn?.removeAttribute('aria-current');
-    if (this.elements.roomHeroSection) this.elements.roomHeroSection.style.display = 'none';
-    if (this.elements.activeRoomSection) this.elements.activeRoomSection.style.display = 'flex';
+    this.setView(this.currentView === 'room' ? 'home' : this.currentView);
     if (this.elements.roomCodeDisplay) this.elements.roomCodeDisplay.innerText = roomId;
 
     if (isHost) {
@@ -1856,6 +1906,54 @@ export class UIManager {
         this.elements.togglePauseIcon.style.display = 'none';
       }
     }
+    if (this.elements.miniPlayerPlayBtn) {
+      this.elements.miniPlayerPlayBtn.textContent = isPlaying ? 'Ⅱ' : '▶';
+      this.elements.miniPlayerPlayBtn.setAttribute('aria-label', isPlaying ? 'Jeda' : 'Putar');
+      this.elements.miniPlayerPlayBtn.setAttribute('aria-pressed', String(isPlaying));
+    }
+  }
+
+  updateMiniPlayer() {
+    const track = this.currentTrack;
+    if (!track) return;
+    if (this.elements.miniPlayerTitle) this.elements.miniPlayerTitle.textContent = track.name || 'Untitled';
+    if (this.elements.miniPlayerArtist) this.elements.miniPlayerArtist.textContent = track.artist || 'Rync';
+    if (this.elements.miniPlayerArtwork) {
+      let artwork = '';
+      try {
+        const url = new URL(track.thumbnail, window.location.origin);
+        if (url.protocol === 'https:' || url.origin === window.location.origin) {
+          artwork = `url("${encodeURI(url.href).replace(/["'()\\\s]/g, encodeURIComponent)}")`;
+        }
+      } catch (error) { }
+      this.elements.miniPlayerArtwork.textContent = artwork ? '' : '♫';
+      this.elements.miniPlayerArtwork.style.backgroundImage = artwork;
+    }
+    if (this.elements.miniPlayerBar && this.currentView !== 'home') this.elements.miniPlayerBar.hidden = false;
+  }
+
+  togglePlayback() {
+    const { audioEngine, socketClient } = this.app;
+    if (!socketClient.isHost) {
+      socketClient.requestControl(this.isPlayingState ? 'pause' : 'play');
+      return;
+    }
+    audioEngine.ensureContext();
+    if (this.isPlayingState) {
+      const position = audioEngine.getCurrentPlaybackPosition();
+      audioEngine.stopLocalPlayback();
+      audioEngine.pauseOffsetSec = position;
+      this.setPlayState(false);
+      socketClient.pausePlayback(position);
+      return;
+    }
+    if (!audioEngine.audioBuffer) {
+      if (socketClient.roomId) socketClient.schedulePlay(800, 0);
+      else if (this.cachedQueue.length) socketClient.nextTrack();
+      else this.showUrlFeedback('Pilih lagu dari Search untuk mulai memutar.', 'info');
+      return;
+    }
+    socketClient.schedulePlay(800, audioEngine.pauseOffsetSec || 0);
   }
 
   renderPeerList(peers = []) {
@@ -2014,6 +2112,12 @@ export class UIManager {
         const dur = app.audioEngine.currentTrackDuration || 0;
         const cur = app.audioEngine.getCurrentPlaybackPosition();
         if (this.elements.currentTimeText) this.elements.currentTimeText.innerText = this.formatTime(cur);
+        if (this.elements.miniPlayerTime) this.elements.miniPlayerTime.textContent = `${this.formatTime(cur)} / ${this.formatTime(dur)}`;
+        if (this.elements.miniPlayerSeek && !this.isMiniSeeking) {
+          const progress = dur > 0 ? Math.min(1000, Math.max(0, Math.round((cur / dur) * 1000))) : 0;
+          this.elements.miniPlayerSeek.value = String(progress);
+          this.elements.miniPlayerSeek.setAttribute('aria-valuetext', `${this.formatTime(cur)} dari ${this.formatTime(dur)}`);
+        }
 
         if (dur > 0 && this.elements.progressFill) {
           const pct = (cur / dur) * 100;
