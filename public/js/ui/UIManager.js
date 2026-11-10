@@ -1038,8 +1038,18 @@ export class UIManager {
       return [...cached.results];
     }
 
+    const controller = new AbortController();
+    let timedOut = false;
+    const abortFromCaller = () => controller.abort();
+    if (signal?.aborted) controller.abort();
+    else signal?.addEventListener('abort', abortFromCaller, { once: true });
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 8000);
+
     try {
-      const response = await fetch(`/api/yt-search?q=${encodeURIComponent(query)}`, { signal });
+      const response = await fetch(`/api/yt-search?q=${encodeURIComponent(query)}`, { signal: controller.signal });
       if (!response.ok) throw new Error(`Search failed (${response.status})`);
       const data = await response.json();
       const results = Array.isArray(data.results) ? data.results : [];
@@ -1051,12 +1061,16 @@ export class UIManager {
       this.lastYoutubeSearchCacheState = 'network';
       return results;
     } catch (error) {
-      if (error.name === 'AbortError' || signal?.aborted) throw error;
+      if (signal?.aborted || (error.name === 'AbortError' && !timedOut)) throw error;
+      if (timedOut) error = new Error('Search timeout');
       if (cached?.results?.length) {
         error.staleResults = [...cached.results];
         this.lastYoutubeSearchCacheState = 'stale';
       }
       throw error;
+    } finally {
+      clearTimeout(timeout);
+      signal?.removeEventListener('abort', abortFromCaller);
     }
   }
 

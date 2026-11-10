@@ -63,6 +63,27 @@ describe('YouTube search queue UI', () => {
     expect(ui.lastYoutubeSearchCacheState).toBe('stale');
   });
 
+  it('aborts a stalled YouTube search and serves the stale cache', async () => {
+    vi.useFakeTimers();
+    const ui = new UIManager({});
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [{ id: 'cached' }] }) })
+      .mockImplementationOnce((_url, { signal }) => new Promise((resolve, reject) => {
+        signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    await ui.fetchYoutubeSearch('Ambient');
+    await vi.advanceTimersByTimeAsync(ui.youtubeSearchCacheTtlMs + 1);
+
+    const refresh = ui.fetchYoutubeSearch('Ambient', undefined, { refresh: true });
+    const rejectedRefresh = expect(refresh).rejects.toMatchObject({ staleResults: [{ id: 'cached' }] });
+    await vi.advanceTimersByTimeAsync(8_000);
+
+    await rejectedRefresh;
+    expect(fetchMock.mock.calls[1][1].signal.aborted).toBe(true);
+    expect(ui.lastYoutubeSearchCacheState).toBe('stale');
+  });
+
   it('fetches search results without creating or joining an audio room', async () => {
     const ui = new UIManager({ socketClient: { createRoom: vi.fn(), joinRoom: vi.fn() } });
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ results: [{ id: 'video-1' }] }) });
@@ -72,7 +93,7 @@ describe('YouTube search queue UI', () => {
     const results = await ui.fetchYoutubeSearch('ambient music', controller.signal);
 
     expect(results).toEqual([{ id: 'video-1' }]);
-    expect(fetchMock).toHaveBeenCalledWith('/api/yt-search?q=ambient%20music', { signal: controller.signal });
+    expect(fetchMock).toHaveBeenCalledWith('/api/yt-search?q=ambient%20music', { signal: expect.any(AbortSignal) });
     expect(ui.app.socketClient.createRoom).not.toHaveBeenCalled();
   });
 
