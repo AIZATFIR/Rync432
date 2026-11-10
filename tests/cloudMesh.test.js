@@ -53,6 +53,44 @@ describe('CloudMesh audio transfer', () => {
     expect(mesh.peerBufferRequestInterval).toBeNull();
   });
 
+  it('falls back to P2P when a remote audio response stalls past its deadline', async () => {
+    vi.useFakeTimers();
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.roomId = 'ROOM';
+    mesh.updateLoadingState = vi.fn();
+    mesh.requestTrackBufferFromPeers = vi.fn();
+    vi.stubGlobal('fetch', vi.fn((_url, { signal }) => new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+    })));
+
+    const loading = mesh.fetchRemoteAudioUrl('/api/yt-stream?id=slow', 'Slow track', 'slow-track');
+    await vi.advanceTimersByTimeAsync(15_000);
+    await loading;
+
+    expect(mesh.requestTrackBufferFromPeers).toHaveBeenCalledWith('Slow track', 'slow-track');
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'AUDIO_TRANSFER_PROGRESS',
+      payload: expect.objectContaining({ status: 'Menunggu audio...' })
+    }));
+  });
+
+  it('authenticates host updates to a remote speaker', async () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.isHost = true;
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'host-peer';
+    mesh.hostToken = 'private-host-token';
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await mesh.updateRemotePeerSettings('speaker-2', 'left', 0.5);
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+      roomId: 'ROOM', peerId: 'host-peer', hostToken: 'private-host-token', targetPeerId: 'speaker-2', role: 'left', volume: 0.5
+    });
+  });
+
   it('clears upcoming tracks optimistically while keeping the active track', async () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));

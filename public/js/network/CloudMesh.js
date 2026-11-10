@@ -1177,7 +1177,14 @@ export class CloudMesh {
       await fetch('/api/room?action=update_peer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: this.roomId, targetPeerId, role, volume })
+        body: JSON.stringify({
+          roomId: this.roomId,
+          peerId: this.peerId,
+          hostToken: this.hostToken,
+          targetPeerId,
+          role,
+          volume
+        })
       });
     } catch (e) { }
   }
@@ -1236,6 +1243,11 @@ export class CloudMesh {
     }
     this.activeAudioAbortController = new AbortController();
     const signal = this.activeAudioAbortController.signal;
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      this.activeAudioAbortController?.abort();
+    }, 15_000);
 
     if (!this.incomingAudioChunks.size) {
       this.updateLoadingState(true, `Mengunduh ${trackName} (0%)...`);
@@ -1249,7 +1261,8 @@ export class CloudMesh {
           throw new Error('DIRECT_FETCH_FAILED');
         }
       } catch (fetchErr) {
-        if (signal.aborted) return;
+        if (signal.aborted && !timedOut) return;
+        if (timedOut) throw new Error('AUDIO_FETCH_TIMEOUT');
         if (url.startsWith('http') && !url.includes('/api/stream') && !url.includes('/api/room')) {
           const proxyUrl = `/api/stream?url=${encodeURIComponent(url)}`;
           response = await fetch(proxyUrl, { signal });
@@ -1258,7 +1271,8 @@ export class CloudMesh {
         }
       }
 
-      if (signal.aborted) return;
+      if (signal.aborted && !timedOut) return;
+      if (timedOut) throw new Error('AUDIO_FETCH_TIMEOUT');
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
       const contentLength = response.headers.get('content-length');
@@ -1271,7 +1285,8 @@ export class CloudMesh {
         let receivedBytes = 0;
 
         while (true) {
-          if (signal.aborted) return;
+          if (signal.aborted && !timedOut) return;
+          if (timedOut) throw new Error('AUDIO_FETCH_TIMEOUT');
           const { done, value } = await reader.read();
           if (done) break;
           chunks.push(value);
@@ -1313,6 +1328,7 @@ export class CloudMesh {
       this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 100, status: 'Audio siap!' });
       this.onEvent('BINARY_AUDIO_RECEIVED', { arrayBuffer, trackName, trackId });
     } catch (err) {
+      if (signal.aborted && !timedOut) return;
       this.currentFetchingTrackKey = null;
       this.broadcastReadiness('FAILED', trackId);
       console.warn('Remote fetch notice, awaiting WebRTC stream:', err.message);
@@ -1321,6 +1337,8 @@ export class CloudMesh {
         this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status: 'Menunggu audio...' });
       }
       this.requestTrackBufferFromPeers(trackName, trackId);
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
