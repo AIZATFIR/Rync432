@@ -8,6 +8,7 @@ async function callRoom(action, body) {
     setHeader() {},
     status(code) { statusCode = code; return this; },
     json(value) { result = value; return this; },
+    send(value) { result = value; return this; },
     end() { return this; }
   };
   await roomHandler({ method: 'POST', query: { action }, body }, response);
@@ -234,6 +235,64 @@ describe('room authority', () => {
     expect(overflow.body.error).toBe('QUEUE_LIMIT_REACHED');
     expect(duplicate.statusCode).toBe(200);
     expect(duplicate.body.queue).toHaveLength(500);
+  });
+
+  it('rejects oversized host snapshots before changing room state', async () => {
+    const roomId = `B${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    const oversizedQueue = Array.from({ length: 501 }, (_, index) => ({ id: `track-${index}`, name: `Track ${index}` }));
+
+    const rejected = await callRoom('poll', {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken, queue: oversizedQueue
+    });
+    const snapshot = await callRoom('poll', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken });
+
+    expect(rejected.statusCode).toBe(413);
+    expect(snapshot.body.queue).toEqual([]);
+  });
+
+  it('does not let queue undo exceed the room limit', async () => {
+    const roomId = `E${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    const fullQueue = Array.from({ length: 500 }, (_, index) => ({ id: `track-${index}`, name: `Track ${index}` }));
+    await callRoom('add_queue', { roomId, peerId: 'host-peer', items: fullQueue });
+
+    const restored = await callRoom('restore_queue', {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken,
+      removed: [{ item: { id: 'removed-track', name: 'Removed' }, index: 0 }]
+    });
+
+    expect(restored.statusCode).toBe(413);
+    expect(restored.body.error).toBe('QUEUE_LIMIT_REACHED');
+  });
+
+  it('does not let uploaded audio bypass the queue limit', async () => {
+    const roomId = `C${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    const fullQueue = Array.from({ length: 500 }, (_, index) => ({ id: `track-${index}`, name: `Track ${index}` }));
+    await callRoom('add_queue', { roomId, peerId: 'host-peer', items: fullQueue });
+
+    const upload = await callRoom('upload_audio', {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken,
+      audioBase64: 'YQ==', trackName: 'New file', duration: 1
+    });
+
+    expect(upload.statusCode).toBe(413);
+    expect(upload.body.error).toBe('QUEUE_LIMIT_REACHED');
+  });
+
+  it('does not return another uploaded file when an audio id is missing or unknown', async () => {
+    const roomId = `F${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('upload_audio', {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken,
+      audioBase64: 'YQ==', trackName: 'Uploaded file', duration: 1
+    });
+
+    const unknown = await callRoom('get_audio', { roomId, audioId: 'missing-audio-id' });
+
+    expect(unknown.statusCode).toBe(404);
+    expect(unknown.body.error).toContain('Audio not found');
   });
 
   it('does not create an empty room from an unauthenticated poll', async () => {

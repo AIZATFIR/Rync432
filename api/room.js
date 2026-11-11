@@ -100,6 +100,15 @@ export default async function handler(req, res) {
     if (audioBase64 && roomId) {
       const room = rooms.get(roomId);
       if (!requireHost(room, body.hostToken)) return;
+      if (!room.queue) room.queue = [];
+      let item = targetQueueId ? room.queue.find(q => q.id === targetQueueId) : null;
+      if (!item) {
+        item = room.queue.find(q => q.name === trackName && Math.abs((q.duration || 0) - duration) < 1);
+      }
+      if (!item && room.queue.length >= MAX_QUEUE_ITEMS) {
+        return res.status(413).json({ success: false, error: 'QUEUE_LIMIT_REACHED', maxItems: MAX_QUEUE_ITEMS });
+      }
+
       const audioId = 'aud_' + Math.random().toString(36).substring(2, 9);
       const audioEntry = {
         audioId,
@@ -111,12 +120,8 @@ export default async function handler(req, res) {
       };
 
       audioStore.set(audioId, audioEntry);
-      audioStore.set(roomId, audioEntry); // fallback for room
 
       const audioUrl = `/api/room?action=get_audio&audioId=${audioId}&roomId=${encodeURIComponent(roomId)}&v=${now}`;
-      
-      if (!room.queue) room.queue = [];
-      let item = targetQueueId ? room.queue.find(q => q.id === targetQueueId) : null;
       if (item) {
         item.audioId = audioId;
         item.audioUrl = audioUrl;
@@ -130,10 +135,7 @@ export default async function handler(req, res) {
           audioUrl,
           addedBy: deviceName
         };
-        const exists = room.queue.some(q => q.id === item.id || (q.name === item.name && Math.abs((q.duration || 0) - (item.duration || 0)) < 1));
-        if (!exists) {
-          room.queue.push(item);
-        }
+        room.queue.push(item);
       }
 
       if (!room.track) {
@@ -153,7 +155,7 @@ export default async function handler(req, res) {
 
   if (action === 'get_audio') {
     const audioId = query.audioId || body.audioId;
-    const audioData = (audioId && audioStore.get(audioId)) || audioStore.get(roomId);
+    const audioData = audioId && audioStore.get(audioId);
     if (audioData && audioData.base64) {
       const buffer = Buffer.from(audioData.base64, 'base64');
       res.setHeader('Content-Type', audioData.contentType || 'audio/mpeg');
@@ -264,6 +266,15 @@ export default async function handler(req, res) {
     }
 
     if (isThisHost) {
+      if (Array.isArray(body.queue) && body.queue.length > MAX_QUEUE_ITEMS) {
+        return res.status(413).json({ exists: true, error: 'QUEUE_LIMIT_REACHED', maxItems: MAX_QUEUE_ITEMS });
+      }
+      if (Array.isArray(body.queue) && body.queue.some(item => !item || typeof item.id !== 'string' || !item.id || item.id.length > 160)) {
+        return res.status(400).json({ exists: true, error: 'INVALID_QUEUE_ITEMS' });
+      }
+      if (Array.isArray(body.deletedQueueIds) && body.deletedQueueIds.length > MAX_QUEUE_ITEMS) {
+        return res.status(400).json({ exists: true, error: 'INVALID_QUEUE_ITEMS' });
+      }
       if (body.track) {
         room.track = body.track;
         if (room.shuffle) room.shufflePlayedIds = [body.track.id];
@@ -345,6 +356,9 @@ export default async function handler(req, res) {
   if (action === 'update_playback') {
     let room = rooms.get(roomId);
     if (!requireHost(room, body.hostToken)) return;
+    if (Array.isArray(body.queue) && body.queue.length > MAX_QUEUE_ITEMS) {
+      return res.status(413).json({ success: false, error: 'QUEUE_LIMIT_REACHED', maxItems: MAX_QUEUE_ITEMS });
+    }
     if (!room) {
       room = {
         roomId,
@@ -603,10 +617,16 @@ export default async function handler(req, res) {
     }
     const queue = [...(room.queue || [])];
     const existingIds = new Set(queue.map(item => item.id));
-    for (const entry of [...body.removed].sort((a, b) => a.index - b.index)) {
-      if (existingIds.has(entry.item.id)) continue;
-      queue.splice(Math.min(entry.index, queue.length), 0, entry.item);
+    const additions = body.removed.filter(entry => {
+      if (existingIds.has(entry.item.id)) return false;
       existingIds.add(entry.item.id);
+      return true;
+    });
+    if (queue.length + additions.length > MAX_QUEUE_ITEMS) {
+      return res.status(413).json({ success: false, error: 'QUEUE_LIMIT_REACHED', maxItems: MAX_QUEUE_ITEMS });
+    }
+    for (const entry of [...additions].sort((a, b) => a.index - b.index)) {
+      queue.splice(Math.min(entry.index, queue.length), 0, entry.item);
     }
     room.queue = queue;
     room.updatedAt = now;
