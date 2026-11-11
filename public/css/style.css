@@ -1995,3 +1995,78 @@ body:not(.is-playing) .visualizer-container { display: none; }
   line-height: 1.55;
 }
 .home-empty-state button { min-height: 46px; margin-top: 5px; padding-inline: 22px; }
+
+@media (min-width: 761px) {
+  .app-container {
+    display: grid;
+    grid-template-columns: 232px minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+    width: 100%;
+    max-width: none;
+    min-height: 100dvh;
+    margin: 0;
+    padding: 0 0 104px;
+    gap: 0;
+  }
+
+  .app-header {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    min-height: 76px;
+    padding: 14px 30px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .primary-nav {
+    position: sticky;
+    top: 76px;
+    grid-column: 1;
+    grid-row: 2;
+    align-self: start;
+    flex-direction: column;
+    width: auto;
+    height: calc(100dvh - 76px);
+    padding: 22px 14px;
+    gap: 6px;
+    background: #10120e;
+    border: 0;
+    border-right: 1px solid var(--border-subtle);
+    border-radius: 0;
+  }
+
+  .primary-nav-item {
+    justify-content: flex-start;
+    min-height: 48px;
+    padding: 0 16px;
+    border-radius: 9px;
+    text-align: left;
+  }
+
+  .primary-nav-item.active { color: var(--spotify-green); background: rgba(216, 255, 69, 0.09); }
+
+  #activeRoomSection,
+  #librarySection,
+  #roomHeroSection {
+    grid-column: 2;
+    grid-row: 2;
+    width: min(100%, 1320px);
+    margin-inline: auto;
+    padding: 26px 34px;
+  }
+
+  #roomHeroSection { width: min(100%, 900px); }
+
+  .mini-player {
+    position: fixed;
+    right: 24px;
+    bottom: 18px;
+    left: 256px;
+    width: auto;
+    max-width: 1080px;
+    margin: 0 auto;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-container { display: flex; min-height: 100dvh; }
+}
