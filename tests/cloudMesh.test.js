@@ -100,6 +100,40 @@ describe('CloudMesh audio transfer', () => {
     expect(mesh.peerConnections.get('guest')).toBe(peer);
   });
 
+  it('processes WebRTC signals returned by HTTP room polling', async () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'host';
+    mesh.isHost = true;
+    mesh.localPeersMap.set('guest', { id: 'guest', role: 'speaker' });
+    mesh.initiateWebRTCOffer = vi.fn();
+    mesh.handleIncomingSignal = vi.fn();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ peers: [{ id: 'host' }, { id: 'guest', role: 'speaker' }], signals: [{ from: 'guest', data: { type: 'answer' } }] })
+    }));
+
+    await mesh.pollLoop();
+
+    expect(mesh.handleIncomingSignal).toHaveBeenCalledWith('guest', { type: 'answer' });
+  });
+
+  it('does not start WebRTC offers when the browser has no WebRTC support', async () => {
+    vi.stubGlobal('RTCPeerConnection', undefined);
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'host';
+    mesh.isHost = true;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ peers: [{ id: 'host' }, { id: 'guest', role: 'speaker' }] })
+    }));
+
+    await mesh.pollLoop();
+
+    expect(mesh.peerConnections.size).toBe(0);
+  });
+
   it('bounds a stalled next-track preview instead of waiting forever', async () => {
     vi.useFakeTimers();
     const mesh = new CloudMesh(() => {});

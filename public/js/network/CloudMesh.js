@@ -711,6 +711,7 @@ export class CloudMesh {
 
   async pollLoop() {
     if (!this.roomId || !this.peerId) return true;
+    const supportsWebRTC = typeof RTCPeerConnection === 'function';
 
     try {
       const res = await fetch('/api/room?action=poll', {
@@ -738,6 +739,12 @@ export class CloudMesh {
       this.rememberQueueRevision(data);
       this.setHostDisconnected(data.hostDisconnected === true);
       this.applyPlaybackOptions(data);
+
+      if (Array.isArray(data.signals)) {
+        for (const signal of data.signals) {
+          if (signal.from && signal.data) await this.handleIncomingSignal(signal.from, signal.data);
+        }
+      }
 
       if (data.kicked && !this.isHost) {
         this.unsubscribe();
@@ -768,7 +775,7 @@ export class CloudMesh {
           }
           this.localPeersMap.set(p.id, p);
 
-          if (this.isHost && p.id !== this.peerId) {
+          if (supportsWebRTC && this.isHost && p.id !== this.peerId) {
             const pc = this.peerConnections.get(p.id);
             if (!pc) {
               this.initiateWebRTCOffer(p.id);
