@@ -756,6 +756,41 @@ describe('YouTube search queue UI', () => {
     expect(ui.elements.roomReadinessIndicator.className).toBe('readiness-indicator buffering');
   });
 
+  it('renders untrusted room device names and roles as text in both device views', () => {
+    const makeElement = () => ({
+      children: [], className: '', style: {}, dataset: '', innerHTML: '',
+      appendChild(child) { this.children.push(child); },
+      addEventListener() {},
+      querySelector() { return { addEventListener() {} }; }
+    });
+    vi.stubGlobal('document', { createElement: makeElement });
+    const ui = new UIManager({ socketClient: { peerId: 'host', isHost: false } });
+    const devicesList = makeElement();
+    const devicesMatrixList = makeElement();
+    ui.elements = {
+      devicesList,
+      devicesMatrixList,
+      activeSpeakerCount: null,
+      roomReadinessIndicator: null,
+      roomReadinessText: null,
+      peerLoadingNotice: null
+    };
+
+    ui.renderPeerList([
+      { id: 'guest', deviceName: '<img src=x onerror=alert(1)>', role: '<svg onload=alert(2)>' },
+      { id: 'malformed', deviceName: {}, role: { toUpperCase: 'not a function' } }
+    ]);
+
+    for (const list of [devicesList, devicesMatrixList]) {
+      expect(list.children[0].innerHTML).not.toContain('<img src=x');
+      expect(list.children[0].innerHTML).not.toContain('<svg onload=');
+      expect(list.children[0].innerHTML).toContain('&lt;img src=x onerror=alert(1)&gt;');
+      expect(list.children[0].innerHTML).toContain('&lt;SVG ONLOAD=ALERT(2)&gt;');
+      expect(list.children[1].innerHTML).toContain('[object Object]');
+      expect(list.children[1].innerHTML).toContain('STEREO');
+    }
+  });
+
   it('loads an empty solo queue when browser storage is unavailable', () => {
     vi.stubGlobal('localStorage', undefined);
     const ui = new UIManager({});

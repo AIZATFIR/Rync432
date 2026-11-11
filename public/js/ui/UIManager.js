@@ -5,6 +5,9 @@ import { MusicSourceManager } from '../music/MusicSourceManager.js';
 import { LocalLibrary } from '../library/LocalLibrary.js';
 
 const YOUTUBE_SEARCH_DEBOUNCE_MS = 250;
+const escapeHtml = value => String(value).replace(/[&<>"']/g, char => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+})[char]);
 
 export function upcomingQueueItems(queue, currentTrackId, currentTrackName) {
   if (!Array.isArray(queue)) return [];
@@ -2811,7 +2814,8 @@ export class UIManager {
       const div = document.createElement('div');
       div.className = 'device-item';
 
-      const roleStr = peer.role ? peer.role.toUpperCase() : 'STEREO';
+      const roleStr = escapeHtml(typeof peer.role === 'string' && peer.role ? peer.role.toUpperCase() : 'STEREO');
+      const deviceName = escapeHtml(peer.deviceName || 'Speaker');
       const readinessLabels = {
         PREPARING: 'Menyiapkan audio…',
         READY: 'Siap',
@@ -2828,7 +2832,7 @@ export class UIManager {
             ${peer.isHost ? '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>' : '<rect width="16" height="20" x="4" y="2" rx="2"/><circle cx="12" cy="14" r="4"/>'}
           </svg>
           <div>
-            <div class="device-name">${peer.deviceName || 'Speaker'} ${isSelf ? '<span style="color:var(--spotify-green);font-size:0.7rem;">(You)</span>' : ''}</div>
+            <div class="device-name">${deviceName} ${isSelf ? '<span style="color:var(--spotify-green);font-size:0.7rem;">(You)</span>' : ''}</div>
             <div class="device-latency-tag">${statusText}</div>
           </div>
         </div>
@@ -2872,6 +2876,8 @@ export class UIManager {
 
     this.cachedPeers.forEach(peer => {
       const isSelf = peer.id === this.app.socketClient.peerId;
+      const deviceName = escapeHtml(peer.deviceName || 'Speaker');
+      const role = escapeHtml(typeof peer.role === 'string' && peer.role ? peer.role.toUpperCase() : 'STEREO');
       const div = document.createElement('div');
       div.className = 'device-item';
       div.innerHTML = `
@@ -2880,8 +2886,8 @@ export class UIManager {
             <rect width="16" height="20" x="4" y="2" rx="2"/><circle cx="12" cy="14" r="4"/>
           </svg>
           <div>
-            <div class="device-name">${peer.deviceName || 'Speaker'} ${isSelf ? '<span style="color:var(--spotify-green);font-size:0.7rem;">(You)</span>' : ''}</div>
-            <div class="device-latency-tag">Channel: ${(peer.role || 'stereo').toUpperCase()}</div>
+            <div class="device-name">${deviceName} ${isSelf ? '<span style="color:var(--spotify-green);font-size:0.7rem;">(You)</span>' : ''}</div>
+            <div class="device-latency-tag">Channel: ${role}</div>
           </div>
         </div>
         <div style="display: flex; gap: 6px; align-items: center;">
