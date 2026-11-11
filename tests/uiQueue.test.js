@@ -1184,6 +1184,44 @@ describe('YouTube search queue UI', () => {
     expect(list.children[1].children[1].children[0]._html).toBeUndefined();
   });
 
+  it('reuses the same queue item id after a failed add retry and stays added after acknowledgement', async () => {
+    const makeElement = () => ({
+      children: [], className: '', style: {}, textContent: '', disabled: false,
+      setAttribute() {}, addEventListener(name, handler) { this[`on${name}`] = handler; },
+      appendChild(child) { this.children.push(child); },
+      set innerHTML(value) { this._html = value; this.children = []; },
+      get innerHTML() { return this._html || ''; },
+      querySelector(selector) {
+        for (const child of this.children) {
+          if (child.className?.includes(selector.slice(1))) return child;
+          const nested = child.querySelector?.(selector);
+          if (nested) return nested;
+        }
+        return null;
+      }
+    });
+    vi.stubGlobal('document', { createElement: makeElement });
+    const ui = new UIManager({});
+    const results = makeElement();
+    ui.elements = { ytSearchResults: results };
+    ui.addYoutubeTrackToQueue = vi.fn().mockRejectedValueOnce(new Error('ack timeout')).mockResolvedValueOnce(true);
+
+    ui.renderSearchResults([{
+      id: 'yt_abcdefghijk', sourceId: 'abcdefghijk', sourceType: 'youtube',
+      sourceUrl: 'https://youtu.be/abcdefghijk', name: 'Song', artist: 'Artist', duration: 180
+    }]);
+    const button = results.children[1].children[2].children[1];
+    await button.onclick({ stopPropagation() {} });
+    expect(button.textContent).toBe('Coba lagi');
+    expect(button.disabled).toBe(false);
+    const firstQueueItemId = ui.addYoutubeTrackToQueue.mock.calls[0][5];
+
+    await button.onclick({ stopPropagation() {} });
+    expect(ui.addYoutubeTrackToQueue.mock.calls[1][5]).toBe(firstQueueItemId);
+    expect(button.textContent).toBe('✓ Ditambah');
+    expect(button.disabled).toBe(true);
+  });
+
   it('renders an actionable retry that reuses the failed search query', () => {
     const makeElement = () => ({
       children: [], className: '', style: {}, textContent: '', disabled: false,

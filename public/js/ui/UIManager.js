@@ -1315,6 +1315,7 @@ export class UIManager {
       queueButton.type = 'button';
       queueButton.className = 'btn-spotify btn-spotify-primary add-yt-queue-btn';
       queueButton.textContent = '+ Queue';
+      const queueItemId = createQueueItemId();
       const playButton = document.createElement('button');
       playButton.type = 'button';
       playButton.className = 'btn-spotify btn-spotify-dark play-yt-result-btn';
@@ -1334,22 +1335,17 @@ export class UIManager {
           e.stopPropagation();
           if (queueBtn.disabled) return;
           queueBtn.disabled = true;
-          queueBtn.innerText = '✓ Ditambah';
-          queueBtn.style.backgroundColor = 'var(--spotify-green)';
-          queueBtn.style.color = '#000';
+          queueBtn.textContent = 'Menambahkan…';
           try {
-            await this.addYoutubeTrackToQueue(itemUrl, itemTitle, itemArtist, item.duration, thumbSrc);
+            await this.addYoutubeTrackToQueue(itemUrl, itemTitle, itemArtist, item.duration, thumbSrc, queueItemId);
+            queueBtn.textContent = '✓ Ditambah';
+            queueBtn.style.backgroundColor = 'var(--spotify-green)';
+            queueBtn.style.color = '#000';
           } catch (error) {
+            queueBtn.disabled = false;
+            queueBtn.textContent = 'Coba lagi';
             this.showUrlFeedback('Lagu gagal ditambahkan ke antrean. Coba lagi.', 'error');
           }
-          setTimeout(() => {
-            if (queueBtn) {
-              queueBtn.disabled = false;
-              queueBtn.innerText = '+ Queue';
-              queueBtn.style.backgroundColor = '';
-              queueBtn.style.color = '';
-            }
-          }, 2000);
         });
       }
 
@@ -1517,7 +1513,7 @@ export class UIManager {
     return item;
   }
 
-  async addYoutubeTrackToQueue(url, trackTitle, artist = 'YouTube', duration = 210, thumbnail = '') {
+  async addYoutubeTrackToQueue(url, trackTitle, artist = 'YouTube', duration = 210, thumbnail = '', queueItemId = createQueueItemId()) {
     const match = url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([a-zA-Z0-9_-]{11})/);
     const videoId = match?.[1];
     const thumbUrl = thumbnail && thumbnail !== 'NA' && thumbnail.startsWith('http')
@@ -1529,11 +1525,20 @@ export class UIManager {
       artist,
       duration: duration || 210,
       thumbnail: thumbUrl,
+      queueItemId,
       sourceType: 'youtube',
       sourceId: videoId,
       sourceUrl: `https://www.youtube.com/watch?v=${videoId}`
     };
-    if (this.app.socketClient.roomId) await this.app.socketClient.addToQueue(item);
+    if (this.app.socketClient.roomId) {
+      const socketClient = this.app.socketClient;
+      const added = await socketClient.addToQueue(item);
+      if (added === false) throw new Error('Queue item rejected');
+      const waitForAck = socketClient.cloudMesh?.waitForQueueItemAcknowledgement;
+      if (waitForAck && await waitForAck.call(socketClient.cloudMesh, queueItemId) === false) {
+        throw new Error('Queue item was not acknowledged');
+      }
+    }
     else this.addToSoloQueue(item);
     return item;
   }
