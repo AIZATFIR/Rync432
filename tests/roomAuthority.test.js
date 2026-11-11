@@ -421,10 +421,12 @@ describe('room authority', () => {
       duration: 9
     });
     const retrieved = await callRoom('get_audio', { roomId, audioId: uploaded.body.item.audioId });
+    const crossRoom = await callRoom('get_audio', { roomId: 'ZZZZ', audioId: uploaded.body.item.audioId });
 
     expect(uploaded.statusCode).toBe(200);
     expect(uploaded.body.item).toMatchObject({ id: 'local-file-1', audioUrl: expect.stringContaining('get_audio') });
     expect(retrieved.statusCode).toBe(200);
+    expect(crossRoom.statusCode).toBe(404);
 
     const forbidden = await callRoom('upload_audio', {
       roomId,
@@ -437,6 +439,56 @@ describe('room authority', () => {
       expectedQueueRevision: -1
     });
     expect(forbidden.statusCode).toBe(409);
+  });
+
+  it('removes relay audio bytes when their inactive room expires', async () => {
+    const roomId = `T${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    const uploaded = await callRoom('upload_audio', {
+      roomId,
+      peerId: 'host-peer',
+      hostToken: created.body.hostToken,
+      id: 'expiring-audio',
+      audioBase64: 'AQID',
+      trackName: 'Expiring audio',
+      duration: 9
+    });
+    const audioId = uploaded.body.item.audioId;
+    const room = globalThis.__rync_rooms.get(roomId);
+    room.updatedAt = Date.now() - (4 * 60 * 60 * 1000);
+
+    await callRoom('poll', { roomId, peerId: 'host-peer' });
+
+    expect(globalThis.__rync_audio_store.has(audioId)).toBe(false);
+  });
+
+  it('deletes the previous relay blob when a room track is uploaded again', async () => {
+    const roomId = `U${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    const first = await callRoom('upload_audio', {
+      roomId,
+      peerId: 'host-peer',
+      hostToken: created.body.hostToken,
+      id: 'replace-audio',
+      audioBase64: 'AQID',
+      trackName: 'Replace me',
+      duration: 9
+    });
+    const oldAudioId = first.body.item.audioId;
+
+    const second = await callRoom('upload_audio', {
+      roomId,
+      peerId: 'host-peer',
+      hostToken: created.body.hostToken,
+      id: 'replace-audio',
+      audioBase64: 'BAUG',
+      trackName: 'Replace me',
+      duration: 9
+    });
+
+    expect(second.statusCode).toBe(200);
+    expect(globalThis.__rync_audio_store.has(oldAudioId)).toBe(false);
+    expect(globalThis.__rync_audio_store.has(second.body.item.audioId)).toBe(true);
   });
 
   it('rejects room audio uploads above the relay size limit', async () => {

@@ -54,6 +54,16 @@ const audioStore = globalThis.__rync_audio_store || new Map();
 globalThis.__rync_rooms = rooms;
 globalThis.__rync_audio_store = audioStore;
 
+function removeRoomAudio(roomId, room) {
+  const audioIds = new Set([
+    room?.track?.audioId,
+    ...(Array.isArray(room?.queue) ? room.queue.map(item => item?.audioId) : [])
+  ].filter(Boolean));
+  for (const [audioId, audio] of audioStore) {
+    if (audio.roomId === roomId || audioIds.has(audioId)) audioStore.delete(audioId);
+  }
+}
+
 export const config = {
   api: {
     bodyParser: {
@@ -120,9 +130,17 @@ export default async function handler(req, res) {
   // Cleanup old inactive rooms & audio after the documented room TTL.
   for (const [id, room] of rooms.entries()) {
     if (now - (room.updatedAt || 0) > ROOM_TTL_MS) {
+      removeRoomAudio(id, room);
       rooms.delete(id);
-      audioStore.delete(id);
     }
+  }
+  const referencedAudioIds = new Set();
+  for (const room of rooms.values()) {
+    if (room.track?.audioId) referencedAudioIds.add(room.track.audioId);
+    for (const item of room.queue || []) if (item?.audioId) referencedAudioIds.add(item.audioId);
+  }
+  for (const [audioId, audio] of audioStore) {
+    if (now - (audio.uploadedAt || 0) > ROOM_TTL_MS && !referencedAudioIds.has(audioId)) audioStore.delete(audioId);
   }
 
   // 1. Binary Audio Relay for Uploaded Files (MP3 / WAV / FLAC)
@@ -152,6 +170,7 @@ export default async function handler(req, res) {
       const audioId = 'aud_' + Math.random().toString(36).substring(2, 9);
       const audioEntry = {
         audioId,
+        roomId,
         base64: audioBase64,
         contentType: body.contentType || 'audio/mpeg',
         trackName,
@@ -159,6 +178,7 @@ export default async function handler(req, res) {
         uploadedAt: now
       };
 
+      if (item?.audioId) audioStore.delete(item.audioId);
       audioStore.set(audioId, audioEntry);
 
       const audioUrl = `/api/room?action=get_audio&audioId=${audioId}&roomId=${encodeURIComponent(roomId)}&v=${now}`;
@@ -199,7 +219,11 @@ export default async function handler(req, res) {
   if (action === 'get_audio') {
     const audioId = query.audioId || body.audioId;
     const audioData = audioId && audioStore.get(audioId);
-    if (audioData && audioData.base64) {
+    const requestedRoomId = (query.roomId || body.roomId || '').toUpperCase();
+    const owningRoomId = audioData?.roomId || [...rooms.entries()].find(([id, room]) =>
+      room.track?.audioId === audioId || (room.queue || []).some(item => item?.audioId === audioId)
+    )?.[0];
+    if (audioData?.base64 && owningRoomId && owningRoomId === requestedRoomId) {
       const buffer = Buffer.from(audioData.base64, 'base64');
       res.setHeader('Content-Type', audioData.contentType || 'audio/mpeg');
       res.setHeader('Content-Length', buffer.length);
