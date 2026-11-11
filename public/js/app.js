@@ -10,6 +10,14 @@ function youtubeVideoId(track) {
   return /^[A-Za-z0-9_-]{11}$/.test(sourceId || '') ? sourceId : null;
 }
 
+export async function joinRoomFromInvite(socketClient, roomId, deviceName) {
+  try {
+    return await socketClient.joinRoom(roomId, deviceName);
+  } catch {
+    return undefined;
+  }
+}
+
 class App {
   constructor() {
     this.socketClient = null;
@@ -53,7 +61,7 @@ class App {
     // Global User Gesture Unlock for iOS Safari and Android Chrome
     const unlockAudio = () => {
       if (this.audioEngine) {
-        this.audioEngine.ensureContext();
+        this.audioEngine.ensureContext().catch(() => {});
       }
     };
     ['touchstart', 'touchend', 'click', 'keydown'].forEach(evt => {
@@ -64,8 +72,8 @@ class App {
     const roomParam = urlParams.get('room')?.trim().toUpperCase();
     if (/^[A-Z0-9]{4}$/.test(roomParam || '')) {
       setTimeout(() => {
-        this.audioEngine.ensureContext();
-        this.socketClient.joinRoom(roomParam.toUpperCase(), this.uiManager.getDeviceName());
+        this.audioEngine.ensureContext().catch(() => {});
+        joinRoomFromInvite(this.socketClient, roomParam, this.uiManager.getDeviceName());
       }, 0);
     }
   }
