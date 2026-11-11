@@ -1648,14 +1648,15 @@ export class CloudMesh {
     if (this.activeAudioAbortController) {
       try { this.activeAudioAbortController.abort(); } catch (e) { }
     }
-    this.activeAudioAbortController = new AbortController();
-    const signal = this.activeAudioAbortController.signal;
+    const controller = new AbortController();
+    this.activeAudioAbortController = controller;
+    const signal = controller.signal;
     const audioRoute = url.startsWith('/api/') ? 'relay' : 'direct';
     this.broadcastReadiness('PREPARING', trackId, audioRoute);
     let timedOut = false;
     const timeout = setTimeout(() => {
       timedOut = true;
-      this.activeAudioAbortController?.abort();
+      controller.abort();
     }, 15_000);
 
     if (!this.incomingAudioChunks.size) {

@@ -409,6 +409,34 @@ describe('CloudMesh audio transfer', () => {
     }));
   });
 
+  it('does not let an expired old fetch abort the newly selected track', async () => {
+    vi.useFakeTimers();
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.broadcastReadiness = vi.fn();
+    mesh.updateLoadingState = vi.fn();
+    const signals = [];
+    vi.stubGlobal('fetch', vi.fn((_url, { signal }) => {
+      signals.push(signal);
+      if (signals.length === 1) return new Promise(() => {});
+      return Promise.resolve({
+        ok: true,
+        headers: { get: () => null },
+        body: null,
+        arrayBuffer: async () => new ArrayBuffer(8)
+      });
+    }));
+
+    const oldFetch = mesh.fetchRemoteAudioUrl('/old.mp3', 'Old', 'old-track');
+    await vi.advanceTimersByTimeAsync(5_000);
+    await mesh.fetchRemoteAudioUrl('/new.mp3', 'New', 'new-track');
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(signals[0].aborted).toBe(true);
+    expect(signals[1].aborted).toBe(false);
+    void oldFetch;
+  });
+
   it('reports the server relay as the route after a room audio download completes', async () => {
     const mesh = new CloudMesh(() => {});
     mesh.broadcastReadiness = vi.fn();
