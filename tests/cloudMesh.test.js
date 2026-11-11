@@ -24,6 +24,80 @@ function makeAudioChunkFrame(sequence, timestamp, bytes) {
 }
 
 describe('CloudMesh audio transfer', () => {
+  it('ignores delayed realtime queue snapshots older than the applied room revision', () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.roomId = 'ROOM';
+    mesh.queueRevision = 8;
+    mesh.queueRevisionRoomId = 'ROOM';
+    mesh.lastKnownQueue = [{ id: 'latest' }];
+    mesh.lastKnownQueueStr = JSON.stringify(mesh.lastKnownQueue);
+
+    const applied = mesh.applyRealtimeQueue([{ id: 'stale' }], 7, 'ROOM');
+
+    expect(applied).toBe(false);
+    expect(mesh.lastKnownQueue).toEqual([{ id: 'latest' }]);
+    expect(events).toEqual([]);
+  });
+
+  it('rejects unversioned or conflicting queue snapshots after a room revision is known', () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.queueRevision = 8;
+    mesh.queueRevisionRoomId = 'ROOM';
+    mesh.lastKnownQueue = [{ id: 'latest' }];
+    mesh.lastKnownQueueStr = JSON.stringify(mesh.lastKnownQueue);
+
+    expect(mesh.applyRealtimeQueue([{ id: 'stale' }], undefined, 'ROOM')).toBe(false);
+    expect(mesh.applyRealtimeQueue([{ id: 'stale' }], 8, 'ROOM')).toBe(false);
+    expect(mesh.applyRealtimeQueue([{ id: 'newer' }], 9, 'ROOM')).toBe(true);
+    expect(mesh.queueRevision).toBe(9);
+    expect(mesh.lastKnownQueue).toEqual([{ id: 'newer' }]);
+  });
+
+  it('never treats an unversioned realtime queue as room authority before the first snapshot', () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.lastKnownQueue = [{ id: 'snapshot' }];
+    mesh.lastKnownQueueStr = JSON.stringify(mesh.lastKnownQueue);
+
+    expect(mesh.applyRealtimeQueue([{ id: 'optimistic-from-peer' }], undefined, 'ROOM')).toBe(false);
+    expect(mesh.lastKnownQueue).toEqual([{ id: 'snapshot' }]);
+  });
+
+  it('does not let an unversioned room snapshot replace a revisioned queue', () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.queueRevision = 4;
+    mesh.queueRevisionRoomId = 'ROOM';
+    mesh.lastKnownQueue = [{ id: 'canonical' }];
+    mesh.lastKnownQueueStr = JSON.stringify(mesh.lastKnownQueue);
+
+    mesh.applyRoomSnapshot({ queue: [{ id: 'stale' }], track: null }, 'ROOM');
+
+    expect(mesh.lastKnownQueue).toEqual([{ id: 'canonical' }]);
+  });
+
+  it('includes the authoritative queue revision on every realtime transport', () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'host';
+    mesh.roomTopic = 'room/ROOM';
+    mesh.queueRevision = 12;
+    mesh.publishMqtt = vi.fn();
+    mesh.broadcastDataChannelMessage = vi.fn();
+    mesh.broadcastChannel = { postMessage: vi.fn() };
+    const queue = [{ id: 'track' }];
+
+    mesh.broadcastRoomQueue(queue);
+
+    expect(mesh.publishMqtt).toHaveBeenCalledWith('room/ROOM', expect.objectContaining({ queue, queueRevision: 12 }));
+    expect(mesh.broadcastDataChannelMessage).toHaveBeenCalledWith(expect.objectContaining({ queue, queueRevision: 12 }));
+    expect(mesh.broadcastChannel.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      payload: { queue, queueRevision: 12 }
+    }));
+  });
+
   it('applies a signaling message only once when MQTT and HTTP deliver the same signal', async () => {
     class FakePeerConnection {
       signalingState = 'stable';
@@ -1968,6 +2042,7 @@ describe('CloudMesh audio transfer', () => {
     const snapshot = {
       track: { id: 'track-new', name: 'New track' },
       queue: [{ id: 'track-new', name: 'New track' }],
+      queueRevision: 0,
       state: 'PLAYING',
       targetServerTime: Date.now() - 5000,
       startOffsetSec: 12

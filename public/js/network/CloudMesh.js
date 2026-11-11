@@ -365,7 +365,7 @@ export class CloudMesh {
     if (responseRoomId !== this.roomId) return false;
     const hasRevision = Number.isSafeInteger(snapshot.queueRevision) && snapshot.queueRevision >= 0;
     const staleRevision = hasRevision && this.queueRevisionRoomId === responseRoomId && snapshot.queueRevision < this.queueRevision;
-    if (staleRevision) return false;
+    if (staleRevision || (Array.isArray(snapshot.queue) && this.queueRevisionRoomId === responseRoomId && !hasRevision)) return false;
     if (Array.isArray(snapshot.queue)) this.confirmedQueueItemIds = new Set(snapshot.queue.map(queueItemKey).filter(Boolean));
     if (hasRevision) {
       if (this.queueRevisionRoomId !== responseRoomId) {
@@ -376,6 +376,36 @@ export class CloudMesh {
       }
     }
     return true;
+  }
+
+  applyRealtimeQueue(queue, queueRevision, responseRoomId = this.roomId) {
+    if (!Array.isArray(queue) || responseRoomId !== this.roomId) return false;
+    const hasRevision = Number.isSafeInteger(queueRevision) && queueRevision >= 0;
+    const revisionKnown = this.queueRevisionRoomId === responseRoomId;
+    const currentRevision = this.queueRevision;
+    if (!hasRevision) return false;
+    if (hasRevision) {
+      if (!this.rememberQueueRevision({ queueRevision }, responseRoomId)) return false;
+      const sameRevision = revisionKnown && queueRevision === currentRevision;
+      if (sameRevision && JSON.stringify(queue) !== this.lastKnownQueueStr) return false;
+    }
+    const queueStr = JSON.stringify(queue);
+    if (queueStr === this.lastKnownQueueStr) return true;
+    this.lastKnownQueue = queue;
+    this.lastKnownQueueStr = queueStr;
+    this.saveLocalQueue(queue);
+    this.onEvent('QUEUE_UPDATED', { queue });
+    return true;
+  }
+
+  broadcastRoomQueue(queue) {
+    const message = { type: 'QUEUE_UPDATED', queue, queueRevision: this.queueRevision };
+    this.publishMqtt(this.roomTopic, message);
+    this.broadcastDataChannelMessage(message);
+    this.broadcastChannel?.postMessage({
+      type: 'QUEUE_UPDATED',
+      payload: { queue, queueRevision: this.queueRevision }
+    });
   }
 
   resetQueueMutationState() {
@@ -495,7 +525,8 @@ export class CloudMesh {
                     hostId: this.peerId,
                     track: this.lastKnownTrack,
                     queue: this.lastKnownQueue || [],
-      state: this.isPaused ? 'PAUSED' : 'PLAYING',
+                    queueRevision: this.queueRevision,
+                    state: this.isPaused ? 'PAUSED' : 'PLAYING',
                     targetServerTime: this.lastKnownState,
                     startOffsetSec: this.lastKnownOffsetSec,
                     repeatMode: this.repeatMode,
@@ -550,10 +581,7 @@ export class CloudMesh {
             case 'QUEUE_UPDATED':
               if (Array.isArray(msg.queue || msg.payload?.queue)) {
                 const q = msg.queue || msg.payload?.queue;
-                this.lastKnownQueue = q;
-                this.lastKnownQueueStr = JSON.stringify(q);
-                this.saveLocalQueue(q);
-                this.onEvent('QUEUE_UPDATED', { queue: q });
+                this.applyRealtimeQueue(q, msg.queueRevision ?? msg.payload?.queueRevision);
               }
               break;
 
@@ -659,6 +687,7 @@ export class CloudMesh {
                 type: 'ROOM_SNAPSHOT',
                 track: this.lastKnownTrack,
                 queue: this.lastKnownQueue || [],
+                queueRevision: this.queueRevision,
                 state: this.isPaused ? 'PAUSED' : 'PLAYING',
                 targetServerTime: this.isPaused ? null : this.lastKnownState,
                 startOffsetSec: this.lastKnownOffsetSec,
@@ -717,7 +746,7 @@ export class CloudMesh {
           break;
 
         case 'QUEUE_UPDATED':
-          this.onEvent('QUEUE_UPDATED', msg.payload);
+          this.applyRealtimeQueue(msg.queue || msg.payload?.queue, msg.queueRevision ?? msg.payload?.queueRevision);
           break;
 
         case 'PLAYBACK_OPTIONS_UPDATED':
@@ -1110,8 +1139,7 @@ export class CloudMesh {
     this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
     this.saveLocalQueue(this.lastKnownQueue);
     this.onEvent('QUEUE_UPDATED', { queue: this.lastKnownQueue });
-    this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
-    this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
+    this.broadcastRoomQueue(this.lastKnownQueue);
     if (!this.roomId || !this.peerId) return true;
 
     const submit = async (expectedQueueRevision, conflictRetries = 0) => {
@@ -1149,8 +1177,7 @@ export class CloudMesh {
         this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
         this.saveLocalQueue(this.lastKnownQueue);
         this.onEvent('QUEUE_UPDATED', { queue: this.lastKnownQueue });
-        this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
-        this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
+        this.broadcastRoomQueue(this.lastKnownQueue);
       }
       return true;
     };
@@ -1201,8 +1228,7 @@ export class CloudMesh {
       this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
       this.saveLocalQueue(this.lastKnownQueue);
       this.onEvent('QUEUE_UPDATED', { queue: this.lastKnownQueue });
-      this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
-      this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
+      this.broadcastRoomQueue(this.lastKnownQueue);
     }
     if (!this.roomId || !this.peerId) return true;
 
@@ -1247,14 +1273,7 @@ export class CloudMesh {
         this.lastKnownQueueStr = JSON.stringify(mergedQueue);
         this.saveLocalQueue(mergedQueue);
         this.onEvent('QUEUE_UPDATED', { queue: mergedQueue });
-        this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: mergedQueue });
-        this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: mergedQueue });
-        if (this.broadcastChannel) {
-          this.broadcastChannel.postMessage({
-            type: 'QUEUE_UPDATED',
-            payload: { queue: mergedQueue }
-          });
-        }
+        this.broadcastRoomQueue(data.queue);
       }
       recordLocalMetric('queue_ack_ms', (globalThis.performance?.now?.() ?? Date.now()) - queueMutationStartedAt);
       return true;
@@ -1403,9 +1422,7 @@ export class CloudMesh {
         this.lastKnownQueueStr = JSON.stringify(data.queue);
         this.saveLocalQueue(data.queue);
         this.onEvent('QUEUE_UPDATED', { queue: data.queue });
-        this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: data.queue });
-        this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: data.queue });
-        this.broadcastChannel?.postMessage({ type: 'QUEUE_UPDATED', payload: { queue: data.queue } });
+        this.broadcastRoomQueue(data.queue);
       }
       return data.track || false;
     } catch (error) {
@@ -1443,8 +1460,7 @@ export class CloudMesh {
         this.lastKnownQueueStr = JSON.stringify(data.queue);
         this.saveLocalQueue(data.queue);
         this.onEvent('QUEUE_UPDATED', { queue: data.queue });
-        this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: data.queue });
-        this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: data.queue });
+        this.broadcastRoomQueue(data.queue);
       }
       return true;
     } catch (error) {
@@ -1467,14 +1483,7 @@ export class CloudMesh {
     this.lastKnownQueueStr = JSON.stringify(newQueue);
     this.saveLocalQueue(newQueue);
     this.onEvent('QUEUE_UPDATED', { queue: newQueue });
-    this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: newQueue });
-    this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: newQueue });
-    if (this.broadcastChannel) {
-      this.broadcastChannel.postMessage({
-        type: 'QUEUE_UPDATED',
-        payload: { queue: newQueue }
-      });
-    }
+    this.broadcastRoomQueue(newQueue);
 
     try {
       const res = await fetchQueueMutation('/api/room?action=reorder_queue', {
@@ -1510,9 +1519,7 @@ export class CloudMesh {
       }
       if (queueSnapshotCurrent && data.queue) {
         this.applyCanonicalQueue(data.queue, data.queueRevision);
-        this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: data.queue });
-        this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: data.queue });
-        this.broadcastChannel?.postMessage({ type: 'QUEUE_UPDATED', payload: { queue: data.queue } });
+        this.broadcastRoomQueue(data.queue);
       }
       return true;
     } catch (error) {
@@ -1543,8 +1550,7 @@ export class CloudMesh {
       this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
       this.saveLocalQueue(this.lastKnownQueue);
       this.onEvent('QUEUE_UPDATED', { queue: this.lastKnownQueue });
-      this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
-      this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
+      this.broadcastRoomQueue(this.lastKnownQueue);
     }
 
     try {
@@ -1600,8 +1606,7 @@ export class CloudMesh {
     this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
     this.saveLocalQueue(this.lastKnownQueue);
     this.onEvent('QUEUE_UPDATED', { queue: this.lastKnownQueue });
-    this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
-    this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
+    this.broadcastRoomQueue(this.lastKnownQueue);
 
     try {
       const res = await fetchQueueMutation('/api/room?action=clear_queue', {
@@ -1624,7 +1629,7 @@ export class CloudMesh {
         this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
         this.saveLocalQueue(this.lastKnownQueue);
         this.onEvent('QUEUE_UPDATED', { queue: this.lastKnownQueue });
-        this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
+        this.broadcastRoomQueue(this.lastKnownQueue);
       }
       return { removed: data.removed || [], queue: this.lastKnownQueue };
     } catch (error) {
@@ -1666,8 +1671,7 @@ export class CloudMesh {
         this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
         this.saveLocalQueue(this.lastKnownQueue);
         this.onEvent('QUEUE_UPDATED', { queue: this.lastKnownQueue });
-        this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
-        this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
+        this.broadcastRoomQueue(this.lastKnownQueue);
       }
       return true;
     } catch (error) {
@@ -1705,6 +1709,7 @@ export class CloudMesh {
         body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, automatic, preparedTrackId: preparedTrackId || undefined })
       });
       const data = await res.json();
+      const queueSnapshotCurrent = this.rememberQueueRevision(data, this.roomId);
       if (res.status === 409) {
         this.applyCanonicalQueue(data.queue);
         this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Antrean berubah saat menyiapkan lagu. Tekan Next lagi.' });
@@ -1733,11 +1738,12 @@ export class CloudMesh {
           this.broadcastDataChannelMessage({ type: 'SCHEDULED_PLAY', ...payload });
         }
       }
-      if (data.queue) {
+      if (queueSnapshotCurrent && data.queue) {
         this.lastKnownQueue = data.queue;
         this.lastKnownQueueStr = JSON.stringify(data.queue);
+        this.saveLocalQueue(data.queue);
         this.onEvent('QUEUE_UPDATED', { queue: data.queue });
-        this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: data.queue });
+        this.broadcastRoomQueue(data.queue);
       }
       if (data.state === 'PAUSED') {
         this.isPaused = true;
@@ -1769,6 +1775,7 @@ export class CloudMesh {
         body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken })
       });
       const data = await res.json();
+      const queueSnapshotCurrent = this.rememberQueueRevision(data, this.roomId);
       if (data.track) {
         this.lastKnownTrack = data.track;
         this.isPaused = (data.state === 'PAUSED');
@@ -1788,13 +1795,12 @@ export class CloudMesh {
           this.broadcastDataChannelMessage({ type: 'SCHEDULED_PLAY', ...payload });
         }
       }
-      if (data.queue) {
+      if (queueSnapshotCurrent && data.queue) {
         this.lastKnownQueue = data.queue;
         this.lastKnownQueueStr = JSON.stringify(data.queue);
+        this.saveLocalQueue(data.queue);
         this.onEvent('QUEUE_UPDATED', { queue: data.queue });
-        this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: data.queue });
-        this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: data.queue });
-        this.broadcastChannel?.postMessage({ type: 'QUEUE_UPDATED', payload: { queue: data.queue } });
+        this.broadcastRoomQueue(data.queue);
       }
     } catch (e) { }
   }
@@ -2288,6 +2294,7 @@ export class CloudMesh {
           type: 'ROOM_SNAPSHOT',
           track: targetTrack,
           queue: this.lastKnownQueue || [],
+          queueRevision: this.queueRevision,
           state: this.isPaused ? 'PAUSED' : 'PLAYING',
           targetServerTime: this.isPaused ? null : this.lastKnownState,
           startOffsetSec: this.lastKnownOffsetSec,
@@ -2412,9 +2419,7 @@ export class CloudMesh {
             });
           } else if (msg.type === 'QUEUE_UPDATED') {
             if (Array.isArray(msg.queue)) {
-              this.lastKnownQueue = msg.queue;
-              this.lastKnownQueueStr = JSON.stringify(msg.queue);
-              this.onEvent('QUEUE_UPDATED', { queue: msg.queue });
+              this.applyRealtimeQueue(msg.queue, msg.queueRevision);
             }
           } else if (msg.type === 'PLAYBACK_OPTIONS_UPDATED') {
             this.applyPlaybackOptions(msg.payload || msg);
