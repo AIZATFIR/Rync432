@@ -361,45 +361,6 @@
             </div>
           </div>
 
-          <!-- Bottom Audio Tuning & DSP Mastering Card -->
-          <details class="spotify-card audio-tuning-card" id="audioTuningSection">
-            <summary class="audio-tuning-summary">
-              <span>Penyetelan Audio & DSP</span>
-              <span id="activeEqNameTag" style="font-size: 0.72rem; color: var(--spotify-green); font-weight: 700;">Studio Master</span>
-            </summary>
-
-            <!-- Studio DSP Mastering & Equalizer Presets -->
-            <div style="margin-bottom: 14px;">
-              <div style="font-size: 0.74rem; color: var(--text-silver); font-weight: 600; margin-bottom: 6px;">Sound Mastering:</div>
-              <div class="preset-chips">
-                <button class="chip-btn active" id="eqStudioBtn" data-eq="studio">Studio Master</button>
-                <button class="chip-btn" id="eqBassBtn" data-eq="bassboost">Bass Boost</button>
-                <button class="chip-btn" id="eqVocalBtn" data-eq="vocal">Vocal / Clear</button>
-                <button class="chip-btn" id="eqFlatBtn" data-eq="flat">Flat (Raw)</button>
-              </div>
-            </div>
-
-            <!-- Dedicated Delay Tuner for THIS Device (Independent Tuning) -->
-            <div style="padding-top: 10px; border-top: 1px solid var(--border-subtle);">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <span style="font-size: 0.74rem; color: var(--text-silver); font-weight: 600;">Kompensasi Delay Speaker:</span>
-                <span class="current-offset-display" id="latencyDisplay" style="font-size: 0.85rem;">0 ms</span>
-              </div>
-              
-              <div class="preset-chips" style="margin-bottom: 8px;">
-                <button class="chip-btn active" id="presetWired">Speaker HP (0ms)</button>
-                <button class="chip-btn" id="presetInternal">Laptop (+15ms)</button>
-                <button class="chip-btn" id="presetBt">Bluetooth (+120ms)</button>
-              </div>
-
-              <div class="precision-step-group" style="padding: 2px 6px;">
-                <button class="step-btn" id="stepMinus1" style="width: 24px; height: 24px; font-size: 0.9rem;">−</button>
-                <input type="range" class="range-slider" id="latencySlider" min="-100" max="300" step="1" value="0" style="margin: 0 8px; flex: 1;">
-                <button class="step-btn" id="stepPlus1" style="width: 24px; height: 24px; font-size: 0.9rem;">+</button>
-              </div>
-            </div>
-          </details>
-
         </div>
 
         <!-- Right: Connected Devices List -->
@@ -575,40 +536,46 @@
         </div>
       </div>
 
-      <!-- Feature: Latency Delay Tuner -->
-      <div class="settings-box">
-        <div class="tuner-header">
-          <div>
-            <div style="font-weight: 700; font-size: 0.9rem; color: #fff;">Delay Tuner (±1ms)</div>
-            <div style="font-size: 0.75rem; color: var(--text-silver);">Kompensasi hardware speaker</div>
+      <details class="spotify-card audio-tuning-card" id="audioTuningSection">
+        <summary class="audio-tuning-summary">
+          <span>Audio &amp; sinkronisasi</span>
+          <span id="activeEqNameTag" style="font-size: 0.72rem; color: var(--spotify-green); font-weight: 700;">Studio Master</span>
+        </summary>
+        <div style="margin-bottom: 14px;">
+          <div style="font-size: 0.74rem; color: var(--text-silver); font-weight: 600; margin-bottom: 6px;">Equalizer</div>
+          <div class="preset-chips">
+            <button class="chip-btn active" id="eqStudioBtn" data-eq="studio">Studio</button>
+            <button class="chip-btn" id="eqBassBtn" data-eq="bassboost">Bass</button>
+            <button class="chip-btn" id="eqVocalBtn" data-eq="vocal">Vokal</button>
+            <button class="chip-btn" id="eqFlatBtn" data-eq="flat">Flat</button>
           </div>
-          <div class="current-offset-display" id="latencyDisplay">0 ms</div>
         </div>
-
-        <!-- Precision Step Controls -->
-        <div class="precision-step-group" style="margin-top: 8px;">
-          <button class="step-btn" id="stepMinus1">−</button>
-          <span style="font-size: 0.78rem; font-weight: 600; color: var(--text-silver);">Fine Tune</span>
-          <button class="step-btn" id="stepPlus1">+</button>
+        <div style="padding-top: 10px; border-top: 1px solid var(--border-subtle);">
+          <div class="tuner-header">
+            <div>
+              <div style="font-weight: 700; font-size: 0.9rem; color: #fff;">Kompensasi latency perangkat</div>
+              <div style="font-size: 0.75rem; color: var(--text-silver);">Atur per speaker bila output berbeda waktu.</div>
+            </div>
+            <div class="current-offset-display" id="latencyDisplay">0 ms</div>
+          </div>
+          <div class="preset-chips" style="margin-top: 8px;">
+            <button class="chip-btn active" id="presetWired">Headphone (0 ms)</button>
+            <button class="chip-btn" id="presetInternal">Laptop (+15 ms)</button>
+            <button class="chip-btn" id="presetBt">Bluetooth (+120 ms)</button>
+          </div>
+          <div class="precision-step-group" style="margin-top: 10px;">
+            <button class="step-btn" id="stepMinus1" aria-label="Kurangi latency 1 milidetik">−</button>
+            <input type="range" class="range-slider" id="latencySlider" min="-100" max="300" step="1" value="0" aria-label="Kompensasi latency audio">
+            <button class="step-btn" id="stepPlus1" aria-label="Tambah latency 1 milidetik">+</button>
+          </div>
+          <div class="nudge-buttons" style="margin-top: 8px;">
+            <button class="nudge-btn" id="nudgeMinus10">−10 ms</button>
+            <button class="nudge-btn" id="nudgeMinus2">−2 ms</button>
+            <button class="nudge-btn" id="nudgePlus2">+2 ms</button>
+            <button class="nudge-btn" id="nudgePlus10">+10 ms</button>
+          </div>
         </div>
-
-        <div class="slider-container" style="margin-top: 10px;">
-          <input type="range" class="range-slider" id="latencySlider" min="-100" max="300" step="1" value="0">
-        </div>
-
-        <div class="nudge-buttons" style="margin-top: 8px;">
-          <button class="nudge-btn" id="nudgeMinus10">-10ms</button>
-          <button class="nudge-btn" id="nudgeMinus2">-2ms</button>
-          <button class="nudge-btn" id="nudgePlus2">+2ms</button>
-          <button class="nudge-btn" id="nudgePlus10">+10ms</button>
-        </div>
-
-        <div class="preset-chips" style="margin-top: 8px;">
-          <button class="chip-btn active" id="presetWired">Wired (0ms)</button>
-          <button class="chip-btn" id="presetInternal">Phone (+15ms)</button>
-          <button class="chip-btn" id="presetBt">Bluetooth (+120ms)</button>
-        </div>
-      </div>
+      </details>
 
     </div>
   </div>

@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 vi.mock('../public/js/auth/FirebaseAuth.js', () => ({
   firebaseAuth: { onAuthStateChanged() {} }
@@ -9,6 +11,20 @@ import { UIManager, moveQueueItem, upcomingQueueItems } from '../public/js/ui/UI
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
+});
+
+describe('Rync page structure', () => {
+  it('uses unique HTML ids so settings controls bind to their own elements', () => {
+    const htmlPath = fileURLToPath(new URL('../public/index.html', import.meta.url));
+    const html = readFileSync(htmlPath, 'utf8');
+    const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
+    const activeRoom = html.slice(html.indexOf('id="activeRoomSection"'), html.indexOf('id="librarySection"'));
+    const settingsModal = html.slice(html.indexOf('id="authModal"'), html.indexOf('<!-- Scripts -->'));
+
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(activeRoom).not.toContain('audioTuningSection');
+    expect(settingsModal).toContain('audioTuningSection');
+  });
 });
 
 describe('YouTube search queue UI', () => {
@@ -1307,7 +1323,7 @@ describe('YouTube search queue UI', () => {
     ui.elements = {
       activeRoomSection: node(), roomHeroSection: node(), librarySection: node(),
       homeEmptyState: node(),
-      sourceHubSection: node(), sourceSearchSection: node(), queueCardSection: node(), audioTuningSection: node(),
+      sourceHubSection: node(), sourceSearchSection: node(), queueCardSection: node(),
       navHomeBtn: node(), navSearchBtn: node(), navLibraryBtn: node(), navRoomBtn: node()
     };
 
@@ -1316,7 +1332,6 @@ describe('YouTube search queue UI', () => {
     expect(ui.elements.sourceHubSection.style.display).toBe('');
     expect(ui.elements.sourceSearchSection.style.display).toBe('none');
     expect(ui.elements.queueCardSection.style.display).toBe('');
-    expect(ui.elements.audioTuningSection.style.display).toBe('');
 
     ui.currentTrack = { name: 'Song' };
     ui.setView('home');
@@ -1326,7 +1341,6 @@ describe('YouTube search queue UI', () => {
     expect(ui.elements.sourceHubSection.style.display).toBe('none');
     expect(ui.elements.sourceSearchSection.style.display).toBe('');
     expect(ui.elements.queueCardSection.style.display).toBe('none');
-    expect(ui.elements.audioTuningSection.style.display).toBe('none');
   });
 
   it('shows and clears the host-disconnected room notice', () => {

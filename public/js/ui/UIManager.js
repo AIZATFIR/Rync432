@@ -2339,7 +2339,6 @@ export class UIManager {
     }
     if (this.elements.sourceSearchSection) this.elements.sourceSearchSection.style.display = showSearch ? '' : 'none';
     if (this.elements.queueCardSection) this.elements.queueCardSection.style.display = showSearch ? 'none' : '';
-    if (this.elements.audioTuningSection) this.elements.audioTuningSection.style.display = showSearch ? 'none' : '';
 
     const navButtons = [
       [this.elements.navHomeBtn, 'home'],

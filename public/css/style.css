@@ -1807,7 +1807,6 @@ body:not(.in-room) #activeRoomSection:not(.search-mode) .player-stage {
 }
 body:not(.in-room) #activeRoomSection:not(.search-mode) #sourceHubSection { grid-column: 1; grid-row: 1 / span 2; }
 body:not(.in-room) #activeRoomSection:not(.search-mode) #queueCardSection { grid-column: 2; grid-row: 1; }
-body:not(.in-room) #activeRoomSection:not(.search-mode) #audioTuningSection { grid-column: 2; grid-row: 2; }
 .audio-tuning-card { padding: 0; overflow: visible; }
 .audio-tuning-summary { display: flex; min-height: 52px; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; color: var(--text-base); font-size: 0.88rem; font-weight: 700; cursor: pointer; }
 .audio-tuning-summary::marker { color: var(--spotify-green); }
@@ -1819,7 +1818,6 @@ body:not(.in-room) #activeRoomSection:not(.search-mode) #audioTuningSection { gr
   body:not(.in-room) #activeRoomSection:not(.search-mode) .player-stage { grid-template-columns: minmax(0, 1fr); }
   body:not(.in-room) #activeRoomSection:not(.search-mode) #sourceHubSection,
   body:not(.in-room) #activeRoomSection:not(.search-mode) #queueCardSection,
-  body:not(.in-room) #activeRoomSection:not(.search-mode) #audioTuningSection { grid-column: 1; grid-row: auto; }
 }
 @media (min-width: 901px) {
   #activeRoomSection.search-mode .player-stage { grid-template-columns: minmax(0, 1fr); }
