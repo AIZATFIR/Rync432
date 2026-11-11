@@ -247,7 +247,7 @@ export class UIManager {
     this.app.audioEngine.onPlaybackEnded = () => {
       this.setPlayState(false);
       if (this.app.socketClient?.isHost) {
-        this.app.socketClient.nextTrack(true);
+        this.goToNextTrack({ automatic: true });
       }
     };
   }
@@ -2209,8 +2209,8 @@ export class UIManager {
       return;
     }
 
-    if (tracks.some(track => track.sourceType === 'local-file')) {
-      this.showUrlFeedback('Playlist berisi file lokal. Di room, bagikan file satu per satu dari perangkat host.', 'error');
+    if (tracks.some(track => track.sourceType === 'local-file') && !socketClient.isHost) {
+      this.showUrlFeedback('Playlist dengan file lokal hanya bisa diputar dari perangkat host.', 'error');
       return;
     }
     try {
@@ -2225,7 +2225,13 @@ export class UIManager {
         }
       }
       if (socketClient.isHost) {
-        const selected = await socketClient.playQueueItem(tracks[0].id, true);
+        const firstTrack = tracks[0];
+        if (firstTrack.sourceType === 'local-file') {
+          const localTrack = await this.localLibrary.getLocalAudio(firstTrack.id);
+          if (!localTrack?.audioData) throw new Error(`File ${firstTrack.name} tidak tersedia di perangkat ini.`);
+          await this.uploadLocalTrackToRoom(firstTrack, localTrack.audioData);
+        }
+        const selected = await socketClient.playQueueItem(firstTrack.id, true);
         if (!selected) throw new Error('Room gagal memulai playlist. Refresh antrean lalu coba lagi.');
       } else if (!socketClient.requestControl('play_queue_item', { queueId: tracks[0].id, name: tracks[0].name })) {
         throw new Error('Permintaan putar playlist tidak terkirim. Coba lagi.');
@@ -2424,7 +2430,7 @@ export class UIManager {
     return this.app.socketClient.prevTrack();
   }
 
-  async goToNextTrack() {
+  async goToNextTrack(options = {}) {
     if (!this.app.socketClient.roomId) {
       const index = this.soloQueue.findIndex(track => track.id === this.currentTrack?.id);
       if (this.repeatMode === 'one' && this.currentTrack?.sourceType === 'youtube') {
@@ -2441,7 +2447,40 @@ export class UIManager {
       return this.showUrlFeedback('Antrean kosong. Tambahkan lagu dari Search.', 'info');
     }
     if (!this.app.socketClient.isHost) return this.app.socketClient.requestControl('next');
-    return this.app.socketClient.nextTrack();
+    return this.advanceRoomTrack(options);
+  }
+
+  async advanceRoomTrack({ automatic = false } = {}) {
+    const room = this.app.socketClient;
+    if (!room?.isHost) return false;
+    const mesh = room.cloudMesh;
+    const queue = mesh?.lastKnownQueue || this.cachedQueue || [];
+    const current = mesh?.lastKnownTrack || this.currentTrack;
+    let next = null;
+    if (automatic && this.repeatMode === 'one') next = current;
+    else if (mesh?.shuffle || this.shuffle) {
+      const played = new Set(mesh?.shufflePlayedIds || [current?.id]);
+      const candidates = queue.filter(item => !played.has(item.id));
+      if (candidates.length === 1) next = candidates[0];
+      else if (candidates.some(item => item.sourceType === 'local-file')) {
+        this.showUrlFeedback('Matikan Acak sebentar agar host bisa menyiapkan file lokal berikutnya.', 'error');
+        return false;
+      }
+    } else {
+      const index = queue.findIndex(item => item.id === current?.id);
+      next = queue[index < 0 ? 0 : index + 1] || ((this.repeatMode === 'all' || mesh?.repeatMode === 'all') ? queue[0] : null);
+    }
+    if (next?.sourceType === 'local-file' && !mesh?.localAudioBufferCache?.has(next.id)) {
+      try {
+        const localTrack = await this.localLibrary.getLocalAudio(next.id);
+        if (!localTrack?.audioData) throw new Error(`File ${next.name} tidak tersedia di perangkat host.`);
+        await this.uploadLocalTrackToRoom(next, localTrack.audioData);
+      } catch (error) {
+        this.showUrlFeedback(error.message || 'File lokal gagal disiapkan untuk room.', 'error');
+        return false;
+      }
+    }
+    return room.nextTrack(automatic);
   }
 
   async syncLocalQueueToRoom() {

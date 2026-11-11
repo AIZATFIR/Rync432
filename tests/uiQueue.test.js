@@ -78,6 +78,58 @@ describe('YouTube search queue UI', () => {
     expect(socketClient.playQueueItem).toHaveBeenCalledWith('yt_first', true);
   });
 
+  it('queues a room playlist with local tracks and shares only its first track before playback', async () => {
+    const tracks = [
+      { id: 'local-a', name: 'Local A', sourceType: 'local-file' },
+      { id: 'yt-b', name: 'Online B', sourceType: 'youtube' },
+      { id: 'local-c', name: 'Local C', sourceType: 'local-file' }
+    ];
+    const mesh = { lastKnownQueue: [], waitForQueueItemAcknowledgement: vi.fn().mockResolvedValue(true) };
+    const socketClient = {
+      roomId: 'ROOM', isHost: true, cloudMesh: mesh,
+      addToQueue: vi.fn().mockResolvedValue(true),
+      playQueueItem: vi.fn().mockResolvedValue(tracks[0])
+    };
+    const ui = new UIManager({ socketClient });
+    ui.getDeviceName = () => 'Host';
+    ui.setView = vi.fn();
+    ui.showUrlFeedback = vi.fn();
+    ui.localLibrary.getLocalAudio = vi.fn().mockResolvedValue({ audioData: new ArrayBuffer(8) });
+    ui.uploadLocalTrackToRoom = vi.fn().mockImplementation(async track => {
+      mesh.lastKnownQueue.push(track);
+      return track;
+    });
+
+    await ui.playPlaylist({ id: 'mix', tracks });
+
+    expect(socketClient.addToQueue.mock.calls.map(([track]) => track.id)).toEqual(['local-a', 'yt-b', 'local-c']);
+    expect(ui.uploadLocalTrackToRoom).toHaveBeenCalledOnce();
+    expect(ui.uploadLocalTrackToRoom).toHaveBeenCalledWith(tracks[0], expect.any(ArrayBuffer));
+    expect(socketClient.playQueueItem).toHaveBeenCalledWith('local-a', true);
+    expect(ui.showUrlFeedback).not.toHaveBeenCalled();
+  });
+
+  it('shares the next local room track before asking the server to advance', async () => {
+    const current = { id: 'online-current', sourceType: 'youtube' };
+    const next = { id: 'local-next', name: 'Local next', sourceType: 'local-file' };
+    const order = [];
+    const room = {
+      roomId: 'ROOM', isHost: true, nextTrack: vi.fn(async automatic => { order.push(['next', automatic]); }),
+      cloudMesh: { lastKnownTrack: current, lastKnownQueue: [current, next], localAudioBufferCache: new Map() }
+    };
+    const ui = new UIManager({ socketClient: room });
+    const bytes = new ArrayBuffer(8);
+    ui.localLibrary.getLocalAudio = vi.fn().mockResolvedValue({ audioData: bytes });
+    ui.uploadLocalTrackToRoom = vi.fn(async (track, buffer) => {
+      order.push(['upload', track.id, buffer]);
+      room.cloudMesh.localAudioBufferCache.set(track.id, buffer);
+    });
+
+    await ui.advanceRoomTrack({ automatic: true });
+
+    expect(order).toEqual([['upload', 'local-next', bytes], ['next', true]]);
+  });
+
   it('keeps solo YouTube selections in the local queue without creating a room', async () => {
     const mesh = { lastKnownTrack: null, loadTrackBuffer: vi.fn() };
     const socketClient = { roomId: null, cloudMesh: mesh };

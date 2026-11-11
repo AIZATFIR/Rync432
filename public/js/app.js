@@ -106,7 +106,7 @@ class App {
       this.uiManager.setYouTubePlayerStatus('Memuat video YouTube…');
     } else if (state === YT?.PlayerState?.ENDED || state === 0) {
       this.uiManager.setPlayState(false);
-      if (this.socketClient?.roomId && this.socketClient.isHost) this.socketClient.nextTrack(true);
+      if (this.socketClient?.roomId && this.socketClient.isHost) this.uiManager.goToNextTrack({ automatic: true });
       else if (!this.socketClient?.roomId && this.uiManager.repeatMode === 'one' && this.uiManager.currentTrack?.sourceId) {
         this.audioEngine.pauseOffsetSec = 0;
         this.youtubePlayer.playAt(this.uiManager.currentTrack.sourceId, Date.now() + 50, 0)
@@ -281,7 +281,7 @@ class App {
             socketClient.pausePlayback(offset);
             break;
           }
-          case 'next': socketClient.nextTrack(); break;
+          case 'next': uiManager.goToNextTrack(); break;
           case 'previous': socketClient.prevTrack(); break;
           case 'play_queue_item': socketClient.playQueueItem(payload.details?.queueId, true); break;
           case 'play_next': socketClient.playNext(payload.details?.queueId); break;
