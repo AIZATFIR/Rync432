@@ -245,6 +245,8 @@ export class SocketClient {
       this.onEvent('PAUSED', payload);
     } else if (event === 'CONTROL_REQUEST') {
       this.onEvent('CONTROL_REQUEST', payload);
+    } else if (event === 'CONTROL_REQUEST_FAILED') {
+      this.onEvent('CONTROL_REQUEST_FAILED', payload);
     } else if (event === 'BINARY_AUDIO_RECEIVED') {
       this.onEvent('BINARY_AUDIO_RECEIVED', payload);
     } else if (event === 'AUDIO_TRANSFER_PROGRESS') {

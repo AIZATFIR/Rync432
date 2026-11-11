@@ -446,6 +446,30 @@ describe('room authority', () => {
     expect(valid.statusCode).toBe(200);
   });
 
+  it('delivers guest control requests to the host through the room poll queue', async () => {
+    const roomId = `C${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
+    const request = {
+      type: 'CONTROL_REQUEST',
+      requestId: 'request-1',
+      signalId: 'request-1',
+      action: 'play',
+      peerId: 'guest-peer',
+      requestedBy: 'Guest'
+    };
+
+    const queued = await callRoom('signal', {
+      roomId, peerId: 'guest-peer', to: 'host-peer', data: request
+    });
+    const delivered = await callRoom('poll', {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken
+    });
+
+    expect(queued.statusCode).toBe(200);
+    expect(delivered.body.signals).toContainEqual({ from: 'guest-peer', to: 'host-peer', data: request, timestamp: expect.any(Number) });
+  });
+
   it('rejects queue additions atomically when they exceed the room limit', async () => {
     const roomId = `K${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
     await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });

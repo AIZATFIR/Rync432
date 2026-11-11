@@ -1297,6 +1297,8 @@ export class CloudMesh {
 
   requestControl(action, details = {}) {
     if (this.isHost || this.hostDisconnected) return false;
+    const requestRoomId = this.roomId;
+    const host = Array.from(this.localPeersMap.values()).find(peer => peer.isHost && peer.id !== this.peerId);
     const request = {
       type: 'CONTROL_REQUEST',
       requestId: `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -1311,6 +1313,13 @@ export class CloudMesh {
     } else {
       this.broadcastDataChannelMessage(request);
       this.broadcastChannel?.postMessage(request);
+      if (!host) return false;
+      const hostChannel = this.dataChannels.get(host.id);
+      this.sendSignal(host.id, { ...request, signalId: request.requestId }).then(delivered => {
+        if (!delivered && hostChannel?.readyState !== 'open' && this.roomId === requestRoomId) {
+          this.onEvent('CONTROL_REQUEST_FAILED', { requestId: request.requestId });
+        }
+      });
     }
     return true;
   }
@@ -2576,7 +2585,7 @@ export class CloudMesh {
     });
 
     try {
-      fetch('/api/room?action=signal', {
+      const response = await fetch('/api/room?action=signal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2585,8 +2594,11 @@ export class CloudMesh {
           to: targetPeerId,
           data: signal
         })
-      }).catch(() => {});
-    } catch (e) { }
+      });
+      return response.ok;
+    } catch (error) {
+      return false;
+    }
   }
 
   async drainPendingIceCandidates(peerId, pc) {
@@ -2610,6 +2622,10 @@ export class CloudMesh {
       if (this.seenSignalIds.size > SIGNAL_DEDUPE_MAX_ITEMS) {
         this.seenSignalIds.delete(this.seenSignalIds.values().next().value);
       }
+    }
+    if (signalData.type === 'CONTROL_REQUEST') {
+      if (this.isHost && signalData.peerId === fromPeerId) this.receiveControlRequest(signalData);
+      return;
     }
     let pc = this.peerConnections.get(fromPeerId);
     if (!pc) {

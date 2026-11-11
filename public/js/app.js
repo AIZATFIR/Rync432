@@ -335,6 +335,10 @@ class App {
         break;
       }
 
+      case 'CONTROL_REQUEST_FAILED':
+        uiManager.showUrlFeedback('Permintaan putar gagal terkirim. Coba lagi.', 'error');
+        break;
+
       case 'TRACK_METADATA':
       case 'TRACK_LOADED':
         if (payload?.sourceType === 'youtube' && !payload.sourceId) {

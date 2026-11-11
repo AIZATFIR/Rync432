@@ -1323,6 +1323,100 @@ describe('CloudMesh audio transfer', () => {
     expect(mesh.broadcastDataChannelMessage).not.toHaveBeenCalled();
   });
 
+  it('delivers guest playback requests through room signaling before the host data channel opens', () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'guest-peer';
+    mesh.deviceName = 'Guest';
+    mesh.isHost = false;
+    mesh.localPeersMap.set('host-peer', { id: 'host-peer', isHost: true });
+    mesh.broadcastDataChannelMessage = vi.fn();
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(mesh.requestControl('play_queue_item', { queueId: 'queue-1', name: 'Track' })).toBe(true);
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/room?action=signal', expect.objectContaining({
+      method: 'POST',
+      body: expect.any(String)
+    }));
+    const signalRequest = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(signalRequest).toMatchObject({ roomId: 'ROOM', peerId: 'guest-peer', to: 'host-peer' });
+    expect(signalRequest.data).toMatchObject({
+      type: 'CONTROL_REQUEST',
+      action: 'play_queue_item',
+      details: { queueId: 'queue-1', name: 'Track' },
+      peerId: 'guest-peer',
+      requestedBy: 'Guest',
+      signalId: expect.any(String)
+    });
+  });
+
+  it('keeps a server-delivered copy when the host data channel appears open', () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'guest-peer';
+    mesh.isHost = false;
+    mesh.localPeersMap.set('host-peer', { id: 'host-peer', isHost: true });
+    mesh.dataChannels.set('host-peer', { readyState: 'open' });
+    mesh.broadcastDataChannelMessage = vi.fn();
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(mesh.requestControl('play')).toBe(true);
+
+    const signalRequest = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(signalRequest.to).toBe('host-peer');
+    expect(signalRequest.data.type).toBe('CONTROL_REQUEST');
+  });
+
+  it('reports when a guest control request has no server delivery path', async () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'guest-peer';
+    mesh.isHost = false;
+    mesh.localPeersMap.set('host-peer', { id: 'host-peer', isHost: true });
+    mesh.broadcastDataChannelMessage = vi.fn();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 429 }));
+
+    expect(mesh.requestControl('play')).toBe(true);
+    await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({
+      type: 'CONTROL_REQUEST_FAILED'
+    })));
+  });
+
+  it('forwards a failed control request to the app for visible feedback', () => {
+    const events = [];
+    const client = new SocketClient((type, payload) => events.push({ type, payload }));
+
+    client.handleCloudMeshEvent('CONTROL_REQUEST_FAILED', { requestId: 'request-1' });
+
+    expect(events).toContainEqual({ type: 'CONTROL_REQUEST_FAILED', payload: { requestId: 'request-1' } });
+  });
+
+  it('handles relayed control requests without creating a WebRTC connection', async () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.isHost = true;
+    mesh.createPeerConnection = vi.fn(() => { throw new Error('unexpected peer connection'); });
+
+    await mesh.handleIncomingSignal('guest-peer', {
+      type: 'CONTROL_REQUEST',
+      signalId: 'request-1',
+      requestId: 'request-1',
+      action: 'play',
+      peerId: 'guest-peer',
+      requestedBy: 'Guest'
+    });
+
+    expect(mesh.createPeerConnection).not.toHaveBeenCalled();
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'CONTROL_REQUEST',
+      payload: expect.objectContaining({ requestId: 'request-1', action: 'play' })
+    }));
+  });
+
   it('polls an established guest room frequently enough to detect a host loss', () => {
     vi.stubGlobal('document', { hidden: false });
     const guest = new CloudMesh(() => {});
