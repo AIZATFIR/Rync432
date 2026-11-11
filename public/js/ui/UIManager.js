@@ -869,9 +869,7 @@ export class UIManager {
           clearTimeout(this.youtubeSearchDebounce);
           elements.fetchYtAudioBtn.click();
         } else if (e.key === 'Escape') {
-          clearTimeout(this.youtubeSearchDebounce);
-          this.youtubeSearchController?.abort();
-          this.youtubeSearchSequence++;
+          this.cancelYoutubeSearch();
           if (elements.ytSearchResults) elements.ytSearchResults.style.display = 'none';
         }
       });
@@ -1305,6 +1303,24 @@ export class UIManager {
     status.setAttribute('role', 'status');
     status.textContent = message;
     list.appendChild(status);
+    if (state === 'loading') {
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.className = 'yt-search-refresh';
+      cancel.textContent = 'Batalkan';
+      cancel.setAttribute('aria-label', 'Batalkan pencarian YouTube');
+      cancel.addEventListener('click', () => this.cancelYoutubeSearch());
+      list.appendChild(cancel);
+    }
+  }
+
+  cancelYoutubeSearch() {
+    clearTimeout(this.youtubeSearchDebounce);
+    this.youtubeSearchDebounce = null;
+    this.youtubeSearchController?.abort();
+    this.youtubeSearchController = null;
+    this.youtubeSearchSequence++;
+    this.renderSearchMessage('Pencarian dibatalkan. Kata kunci tetap ada.', 'info');
   }
 
   renderSearchError(message, query, retryable = true, offerExternalSearch = false) {

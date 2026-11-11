@@ -1683,6 +1683,32 @@ describe('YouTube search queue UI', () => {
     expect(retry).toHaveBeenCalledWith('ambient focus', true);
   });
 
+  it('shows a visible cancel action that aborts search and preserves the query', () => {
+    const makeElement = () => ({
+      children: [], className: '', style: {}, textContent: '',
+      setAttribute() {}, addEventListener(name, handler) { this[`on${name}`] = handler; },
+      appendChild(child) { this.children.push(child); }, replaceChildren() { this.children = []; }
+    });
+    vi.stubGlobal('document', { createElement: makeElement });
+    const controller = new AbortController();
+    const ui = new UIManager({});
+    const results = makeElement();
+    ui.elements = { ytSearchResults: results, ytUrlInput: { value: 'ambient focus' } };
+    ui.youtubeSearchController = controller;
+    ui.youtubeSearchSequence = 3;
+    ui.youtubeSearchDebounce = setTimeout(() => {}, 60_000);
+
+    ui.renderSearchMessage('Mencari di YouTube…', 'loading');
+
+    const cancel = results.children[1];
+    expect(cancel.textContent).toBe('Batalkan');
+    cancel.onclick();
+    expect(controller.signal.aborted).toBe(true);
+    expect(ui.youtubeSearchSequence).toBe(4);
+    expect(ui.elements.ytUrlInput.value).toBe('ambient focus');
+    expect(results.children[0].textContent).toContain('dibatalkan');
+  });
+
   it('does not offer retry for a permanent YouTube search error', () => {
     const makeElement = () => ({
       children: [], className: '', style: {}, textContent: '',
