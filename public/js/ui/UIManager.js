@@ -2731,6 +2731,9 @@ export class UIManager {
     const audioEngine = this.app?.audioEngine;
     if (isPlaying && audioEngine?.isPlaying && !audioEngine.isPlaybackActive && this.currentTrack?.sourceType !== 'youtube') return;
     this.isPlayingState = isPlaying;
+    if (typeof document !== 'undefined') document.body?.classList.toggle('is-playing', isPlaying);
+    if (isPlaying) this.app?.visualizer?.start();
+    else this.app?.visualizer?.stop();
     if (this.currentTrack?.sourceType === 'youtube') {
       const player = this.app?.youtubePlayer;
       if (isPlaying && !player?.hasVideo(this.currentTrack.sourceId)) {

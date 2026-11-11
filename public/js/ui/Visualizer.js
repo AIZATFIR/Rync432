@@ -5,7 +5,6 @@ export class Visualizer {
     this.audioEngine = audioEngine;
     this.animationId = null;
     this.freqData = new Uint8Array(128);
-    this.idleTime = 0;
 
     this.resize();
     window.addEventListener('resize', () => this.resize());
@@ -28,11 +27,10 @@ export class Visualizer {
       cancelAnimationFrame(this.animationId);
       this.animationId = null;
     }
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
   }
 
   render() {
-    this.animationId = requestAnimationFrame(() => this.render());
-
     const width = this.canvas.width;
     const height = this.canvas.height;
     const ctx = this.ctx;
@@ -40,17 +38,12 @@ export class Visualizer {
     ctx.clearRect(0, 0, width, height);
 
     const isPlaying = this.audioEngine && this.audioEngine.isPlaying;
-
-    if (isPlaying) {
-      this.audioEngine.getFrequencyData(this.freqData);
-    } else {
-      // Subtle rhythmic idle wave
-      this.idleTime += 0.035;
-      for (let i = 0; i < this.freqData.length; i++) {
-        const wave = Math.sin(this.idleTime + i * 0.18) * 12 + 15;
-        this.freqData[i] = Math.max(3, wave);
-      }
+    if (!isPlaying) {
+      this.animationId = null;
+      return;
     }
+    this.animationId = requestAnimationFrame(() => this.render());
+    this.audioEngine.getFrequencyData(this.freqData);
 
     // 1. Center subtle baseline
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
@@ -76,14 +69,9 @@ export class Visualizer {
 
       // Spotify Green Gradient
       const gradient = ctx.createLinearGradient(0, y, 0, height);
-      if (isPlaying) {
-        gradient.addColorStop(0, '#1ed760');   // Spotify Green Top
-        gradient.addColorStop(0.6, '#1db954'); // Spotify Mid Green
-        gradient.addColorStop(1, '#181818');   // Charcoal Base
-      } else {
-        gradient.addColorStop(0, 'rgba(30, 215, 96, 0.35)');
-        gradient.addColorStop(1, 'rgba(24, 24, 24, 0.1)');
-      }
+      gradient.addColorStop(0, '#d8ff45');
+      gradient.addColorStop(0.6, '#a9c63b');
+      gradient.addColorStop(1, '#181818');
 
       ctx.fillStyle = gradient;
       ctx.beginPath();
@@ -91,14 +79,14 @@ export class Visualizer {
       ctx.fill();
 
       // Top glowing dot
-      if (isPlaying && percent > 0.35) {
+      if (percent > 0.35) {
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(x, y - 2, barWidth, 2);
       }
     }
 
     // 3. Central Harmonic Phase Line
-    ctx.strokeStyle = isPlaying ? 'rgba(30, 215, 96, 0.85)' : 'rgba(179, 179, 179, 0.2)';
+    ctx.strokeStyle = 'rgba(216, 255, 69, 0.85)';
     ctx.lineWidth = 2;
     ctx.beginPath();
 

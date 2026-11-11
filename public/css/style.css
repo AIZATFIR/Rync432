@@ -1787,6 +1787,31 @@ body {
 
 .main-grid { grid-template-columns: minmax(0, 1.65fr) minmax(250px, 0.8fr); gap: 18px; }
 .player-stage { gap: 16px; }
+body:not(.in-room) #activeRoomSection:not(.search-mode) .main-grid { grid-template-columns: minmax(0, 1fr); }
+body:not(.in-room) #activeRoomSection:not(.search-mode) .player-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(300px, 0.82fr);
+  align-items: start;
+}
+body:not(.in-room) #activeRoomSection:not(.search-mode) #sourceHubSection { grid-column: 1; grid-row: 1 / span 2; }
+body:not(.in-room) #activeRoomSection:not(.search-mode) #queueCardSection { grid-column: 2; grid-row: 1; }
+body:not(.in-room) #activeRoomSection:not(.search-mode) #audioTuningSection { grid-column: 2; grid-row: 2; }
+.audio-tuning-card { padding: 0; overflow: visible; }
+.audio-tuning-summary { display: flex; min-height: 52px; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; color: var(--text-base); font-size: 0.88rem; font-weight: 700; cursor: pointer; }
+.audio-tuning-summary::marker { color: var(--spotify-green); }
+.audio-tuning-summary:focus-visible { outline: 2px solid var(--spotify-green); outline-offset: 2px; }
+.audio-tuning-card[open] .audio-tuning-summary { margin-bottom: 12px; border-bottom: 1px solid var(--border-subtle); }
+.audio-tuning-card[open] > :not(summary) { margin-inline: 14px; }
+.audio-tuning-card[open] > :last-child { margin-bottom: 14px; }
+@media (max-width: 900px) {
+  body:not(.in-room) #activeRoomSection:not(.search-mode) .player-stage { grid-template-columns: minmax(0, 1fr); }
+  body:not(.in-room) #activeRoomSection:not(.search-mode) #sourceHubSection,
+  body:not(.in-room) #activeRoomSection:not(.search-mode) #queueCardSection,
+  body:not(.in-room) #activeRoomSection:not(.search-mode) #audioTuningSection { grid-column: 1; grid-row: auto; }
+}
+@media (min-width: 901px) {
+  #activeRoomSection.search-mode .player-stage { grid-template-columns: minmax(0, 1fr); }
+}
 body:not(.in-room) #activeRoomSection .active-room-bar,
 body:not(.in-room) #activeRoomSection .devices-stage,
 body:not(.in-room) #activeRoomSection .readiness-indicator,
@@ -1869,6 +1894,7 @@ button:focus-visible,input:focus-visible { outline: 2px solid var(--spotify-gree
 .youtube-enable-audio { justify-self: center; min-height: 44px; margin: 0 10px 10px; }
 .youtube-enable-audio[hidden] { display: none; }
 body.is-youtube-track .visualizer-container { display: none; }
+body:not(.is-playing) .visualizer-container { display: none; }
 
 @media (max-width: 760px) {
   .app-container { padding: 10px 14px calc(96px + env(safe-area-inset-bottom)); }
@@ -1893,6 +1919,8 @@ body.is-youtube-track .visualizer-container { display: none; }
   .action-tile, .spotify-input-wrap { min-width: 0; }
   #joinRoomBtn { flex: 0 0 auto; padding-inline: 12px; }
   .primary-nav-item { min-width: 0; padding-inline: 4px; font-size: 0.72rem; }
+  #tabContentYoutube .spotify-input-wrap > #ytUrlInput { width: 0; min-width: 0; flex: 1 1 0; min-height: 44px; }
+  #tabContentYoutube #fetchYtAudioBtn { min-height: 44px; padding-inline: 12px !important; }
 }
 
 @media (prefers-reduced-motion: reduce) {

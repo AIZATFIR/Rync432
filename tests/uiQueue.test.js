@@ -1138,15 +1138,22 @@ describe('YouTube search queue UI', () => {
 
   it('mirrors playback state into the mini player control', () => {
     const button = { textContent: '', attributes: {}, setAttribute(name, value) { this.attributes[name] = value; } };
-    const ui = new UIManager({});
+    const visualizer = { start: vi.fn(), stop: vi.fn() };
+    const toggle = vi.fn();
+    vi.stubGlobal('document', { body: { classList: { toggle } } });
+    const ui = new UIManager({ visualizer });
     ui.elements = { miniPlayerPlayBtn: button };
 
     ui.setPlayState(true);
     expect(button.textContent).toBe('Ⅱ');
     expect(button.attributes['aria-label']).toBe('Jeda');
+    expect(visualizer.start).toHaveBeenCalledOnce();
+    expect(toggle).toHaveBeenCalledWith('is-playing', true);
     ui.setPlayState(false);
     expect(button.textContent).toBe('▶');
     expect(button.attributes['aria-pressed']).toBe('false');
+    expect(visualizer.stop).toHaveBeenCalledOnce();
+    expect(toggle).toHaveBeenLastCalledWith('is-playing', false);
   });
 
   it('exposes shared repeat and shuffle modes through accessible control state', () => {
