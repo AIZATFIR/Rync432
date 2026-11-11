@@ -3,6 +3,8 @@
 
 const P2P_AUDIO_CHUNK_BYTES = 32 * 1024;
 const MAX_P2P_AUDIO_BYTES = 64 * 1024 * 1024;
+const P2P_AUDIO_TRANSFER_TIMEOUT_MS = 30_000;
+const P2P_AUDIO_BACKPRESSURE_TIMEOUT_MS = 15_000;
 
 export class CloudMesh {
   constructor(onEvent) {
@@ -1666,14 +1668,26 @@ export class CloudMesh {
                 : 'Header transfer P2P tidak valid.', msg.name || '');
               return;
             }
-            this.incomingAudioChunks.set(targetPeerId, {
+            const previousTransfer = this.incomingAudioChunks.get(targetPeerId);
+            if (previousTransfer?.timeout) clearTimeout(previousTransfer.timeout);
+            const transfer = {
               name: msg.name,
               id: msg.id,
               totalBytes: msg.totalBytes,
               totalChunks: msg.totalChunks,
               receivedBytes: 0,
               chunks: []
-            });
+            };
+            transfer.resetTimeout = () => {
+              clearTimeout(transfer.timeout);
+              transfer.timeout = setTimeout(() => {
+                if (this.incomingAudioChunks.get(targetPeerId) === transfer) {
+                  this.failIncomingAudioTransfer(targetPeerId, transfer.id || '', 'Transfer audio P2P timeout. Coba lagi.', transfer.name);
+                }
+              }, P2P_AUDIO_TRANSFER_TIMEOUT_MS);
+            };
+            transfer.resetTimeout();
+            this.incomingAudioChunks.set(targetPeerId, transfer);
             this.updateLoadingState(true, `Menerima ${msg.name}...`);
             this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status: `Menerima ${msg.name} P2P...` });
           } else if (msg.type === 'SCHEDULED_PLAY') {
@@ -1739,6 +1753,7 @@ export class CloudMesh {
           }
           stream.chunks.push(event.data);
           stream.receivedBytes += event.data.byteLength;
+          stream.resetTimeout?.();
           const pct = Math.min(99, Math.round((stream.receivedBytes / stream.totalBytes) * 100));
           this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct, status: `Menerima P2P (${pct}%)...` });
 
@@ -1756,6 +1771,7 @@ export class CloudMesh {
             const trackName = stream.name;
             const trackId = stream.id;
             this.incomingAudioChunks.delete(targetPeerId);
+            if (stream.timeout) clearTimeout(stream.timeout);
             if (this.peerBufferRequestInterval) clearInterval(this.peerBufferRequestInterval);
             this.peerBufferRequestInterval = null;
             this.peerBufferRequestTrackKey = null;
@@ -1893,12 +1909,12 @@ export class CloudMesh {
   }
 
   async streamAudioToPeer(channel, arrayBuffer, trackName = 'Uploaded Track', trackId = '') {
-    if (!channel || channel.readyState !== 'open' || !arrayBuffer) return;
+    if (!channel || channel.readyState !== 'open' || !arrayBuffer) return false;
     const totalBytes = arrayBuffer.byteLength;
     if (!Number.isSafeInteger(totalBytes) || totalBytes <= 0 || totalBytes > MAX_P2P_AUDIO_BYTES) {
       this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status: 'Audio terlalu besar untuk transfer P2P (maks. 64 MiB).' });
       this.broadcastReadiness('FAILED', trackId);
-      return;
+      return false;
     }
     const totalChunks = Math.ceil(totalBytes / P2P_AUDIO_CHUNK_BYTES);
 
@@ -1912,21 +1928,35 @@ export class CloudMesh {
       }));
 
       for (let offset = 0; offset < totalBytes; offset += P2P_AUDIO_CHUNK_BYTES) {
-        if (channel.readyState !== 'open') break;
+        if (channel.readyState !== 'open') throw new Error('P2P_CHANNEL_CLOSED');
 
+        const backpressureStartedAt = Date.now();
         while (channel.bufferedAmount > 512 * 1024 && channel.readyState === 'open') {
+          if (Date.now() - backpressureStartedAt >= P2P_AUDIO_BACKPRESSURE_TIMEOUT_MS) {
+            throw new Error('P2P_BACKPRESSURE_TIMEOUT');
+          }
           await new Promise(r => setTimeout(r, 15));
         }
+        if (channel.readyState !== 'open') throw new Error('P2P_CHANNEL_CLOSED');
 
         const chunk = arrayBuffer.slice(offset, offset + P2P_AUDIO_CHUNK_BYTES);
         channel.send(chunk);
       }
+      return true;
     } catch (e) {
       console.warn('P2P stream notice:', e.message);
+      const status = e.message === 'P2P_BACKPRESSURE_TIMEOUT'
+        ? 'Koneksi P2P lambat atau macet. Coba lagi.'
+        : 'Koneksi P2P terputus. Coba lagi.';
+      this.broadcastReadiness('FAILED', trackId);
+      this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status });
+      return false;
     }
   }
 
   failIncomingAudioTransfer(peerId, trackId, status, trackName = '') {
+    const transfer = this.incomingAudioChunks.get(peerId);
+    if (transfer?.timeout) clearTimeout(transfer.timeout);
     this.incomingAudioChunks.delete(peerId);
     const trackKey = trackId || trackName;
     if (this.peerBufferRequestInterval && this.peerBufferRequestTrackKey === trackKey) {
@@ -1991,6 +2021,9 @@ export class CloudMesh {
     if (this.peerBufferRequestInterval) clearInterval(this.peerBufferRequestInterval);
     this.peerBufferRequestInterval = null;
     this.peerBufferRequestTrackKey = null;
+    this.incomingAudioChunks.forEach((transfer) => {
+      if (transfer.timeout) clearTimeout(transfer.timeout);
+    });
     this.incomingAudioChunks.clear();
     this.localPeersMap.clear();
     this.roomId = null;

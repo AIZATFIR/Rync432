@@ -338,6 +338,41 @@ describe('CloudMesh audio transfer', () => {
     }));
   });
 
+  it('expires an incomplete P2P transfer even while the channel stays open', () => {
+    vi.useFakeTimers();
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.updateLoadingState = vi.fn();
+    const channel = makeChannel();
+    mesh.setupDataChannel('peer-2', channel);
+    channel.onmessage({ data: JSON.stringify({
+      type: 'AUDIO_HEADER', name: 'Track', id: 'track-1', totalBytes: 8, totalChunks: 1
+    }) });
+
+    vi.advanceTimersByTime(30_000);
+
+    expect(mesh.incomingAudioChunks.has('peer-2')).toBe(false);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'AUDIO_TRANSFER_PROGRESS', payload: expect.objectContaining({ status: 'Transfer audio P2P timeout. Coba lagi.' })
+    }));
+  });
+
+  it('fails a P2P send when the data channel backpressure never clears', async () => {
+    vi.useFakeTimers();
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    const channel = makeChannel();
+    channel.bufferedAmount = 1024 * 1024;
+    const transfer = mesh.streamAudioToPeer(channel, new ArrayBuffer(16), 'Track', 'track-1');
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    await expect(transfer).resolves.toBe(false);
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'AUDIO_TRANSFER_PROGRESS', payload: expect.objectContaining({ status: 'Koneksi P2P lambat atau macet. Coba lagi.' })
+    }));
+  });
+
   it('does not send a P2P buffer above the configured size limit', async () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
