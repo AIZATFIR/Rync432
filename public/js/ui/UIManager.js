@@ -461,12 +461,7 @@ export class UIManager {
       elements.joinRoomBtn.addEventListener('click', async () => {
         const code = elements.roomCodeInput.value.trim().toUpperCase();
         if (/^[A-Z0-9]{4}$/.test(code)) {
-          try {
-            app.audioEngine.ensureContext().catch(() => {});
-            await app.socketClient.joinRoom(code, this.getDeviceName());
-          } catch (error) {
-            this.showUrlFeedback('Room tidak bisa dimasuki. Periksa kode atau koneksi.', 'error');
-          }
+          await this.joinRoom(code, elements.joinRoomBtn);
         } else {
           this.showUrlFeedback('Kode room terdiri dari 4 huruf atau angka.', 'error');
         }
@@ -493,12 +488,7 @@ export class UIManager {
           this.qrScanner = new QRScanner(elements.qrVideo, async (scannedCode) => {
             if (elements.roomCodeInput) elements.roomCodeInput.value = scannedCode;
             if (elements.qrScannerModal) elements.qrScannerModal.classList.remove('active');
-            try {
-              app.audioEngine.ensureContext().catch(() => {});
-              await app.socketClient.joinRoom(scannedCode, this.getDeviceName());
-            } catch (error) {
-              this.showUrlFeedback('Room tidak bisa dimasuki. Periksa kode atau koneksi.', 'error');
-            }
+            await this.joinRoom(scannedCode, elements.joinRoomBtn);
           });
           await this.qrScanner.start();
         } catch (err) {
@@ -2296,6 +2286,30 @@ export class UIManager {
 
   setConnected(isConnected) {
     this.setConnectionState(isConnected ? 'CONNECTED' : 'DISCONNECTED');
+  }
+
+  async joinRoom(code, button = this.elements.joinRoomBtn) {
+    const originalLabel = button?.textContent || 'Gabung';
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Menghubungkan…';
+    }
+    if (this.elements.roomCodeInput) this.elements.roomCodeInput.value = code;
+    this.setView('room');
+    this.showUrlFeedback(`Menghubungkan ke room ${code}…`, 'loading');
+    this.app.audioEngine.ensureContext().catch(() => {});
+    try {
+      await this.app.socketClient.joinRoom(code, this.getDeviceName());
+      this.clearUrlFeedback();
+    } catch (error) {
+      this.setView('room');
+      this.showUrlFeedback('Room tidak bisa dimasuki. Periksa kode atau koneksi.', 'error');
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = originalLabel;
+      }
+    }
   }
 
   setConnectionState(state) {

@@ -113,12 +113,14 @@ describe('YouTube search queue UI', () => {
 
   it('joins the room without waiting for the audio context to resume', async () => {
     let finishAudioContext;
+    const states = [];
     const socketClient = { roomId: null, joinRoom: vi.fn(async code => { socketClient.roomId = code; }) };
     const ui = new UIManager({
       socketClient,
       audioEngine: { ensureContext: vi.fn(() => new Promise(resolve => { finishAudioContext = resolve; })) }
     });
     ui.showUrlFeedback = vi.fn();
+    ui.setView = vi.fn();
     ui.startPlaybackTicker = vi.fn();
     ui.getDeviceName = () => 'Guest';
     ui.elements = {
@@ -129,11 +131,56 @@ describe('YouTube search queue UI', () => {
 
     vi.stubGlobal('window', { addEventListener: vi.fn(), location: { origin: 'https://rync.example' } });
     ui.bindEvents();
+    ui.app.audioEngine.ensureContext.mockImplementation(() => new Promise(resolve => { finishAudioContext = resolve; }));
+    ui.showUrlFeedback.mockImplementation(message => states.push(message));
     await ui.joinHandler();
 
+    expect(ui.setView).toHaveBeenCalledWith('room');
+    expect(states).toContain('Menghubungkan ke room AB12…');
     expect(socketClient.joinRoom).toHaveBeenCalledWith('AB12', 'Guest');
     expect(ui.app.audioEngine.ensureContext).toHaveBeenCalledOnce();
     finishAudioContext();
+  });
+
+  it('shows the room code while a guest audio context is still preparing', () => {
+    const roomHeroSection = { hidden: false, style: {} };
+    const feedback = { hidden: true, style: {}, className: '', innerText: '' };
+    const input = { value: 'AB12', disabled: false };
+    const joinButton = { disabled: false, textContent: 'Gabung' };
+    const ui = new UIManager({ socketClient: { roomId: null } });
+    ui.elements = { roomHeroSection, roomFeedback: feedback, roomCodeInput: input, joinRoomBtn: joinButton };
+
+    ui.setView('room');
+    ui.showUrlFeedback('Menghubungkan ke room AB12…', 'loading');
+    joinButton.disabled = true;
+    joinButton.textContent = 'Menghubungkan…';
+
+    expect(roomHeroSection.hidden).toBe(false);
+    expect(feedback.innerText).toContain('AB12');
+    expect(feedback.className).toContain('loading');
+    expect(input.value).toBe('AB12');
+    expect(joinButton.disabled).toBe(true);
+  });
+
+  it('restores room join controls after the server rejects a room code', async () => {
+    const button = { disabled: false, textContent: 'Gabung' };
+    const input = { value: '' };
+    const ui = new UIManager({
+      socketClient: { joinRoom: vi.fn().mockRejectedValue(new Error('not found')) },
+      audioEngine: { ensureContext: vi.fn().mockResolvedValue(undefined) }
+    });
+    ui.getDeviceName = () => 'Guest';
+    ui.setView = vi.fn();
+    ui.showUrlFeedback = vi.fn();
+    ui.clearUrlFeedback = vi.fn();
+    ui.elements = { joinRoomBtn: button, roomCodeInput: input };
+
+    await ui.joinRoom('AB12');
+
+    expect(input.value).toBe('AB12');
+    expect(button.disabled).toBe(false);
+    expect(button.textContent).toBe('Gabung');
+    expect(ui.showUrlFeedback).toHaveBeenLastCalledWith('Room tidak bisa dimasuki. Periksa kode atau koneksi.', 'error');
   });
 
   it('waits for the audio context before toggling the audible metronome', async () => {

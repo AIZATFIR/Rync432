@@ -44,4 +44,13 @@ describe('room invite links', () => {
 
     await expect(joinRoomFromInvite(socketClient, 'ROOM', 'Guest')).resolves.toBe(room);
   });
+
+  it('routes invite joins through the same visible room progress handler', async () => {
+    const joinRoom = vi.fn().mockResolvedValue({ roomId: 'ROOM' });
+    const uiManager = { joinRoom };
+
+    await expect(joinRoomFromInvite({}, 'ROOM', 'Guest', uiManager)).resolves.toEqual({ roomId: 'ROOM' });
+
+    expect(joinRoom).toHaveBeenCalledWith('ROOM');
+  });
 });

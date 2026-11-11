@@ -10,8 +10,9 @@ function youtubeVideoId(track) {
   return /^[A-Za-z0-9_-]{11}$/.test(sourceId || '') ? sourceId : null;
 }
 
-export async function joinRoomFromInvite(socketClient, roomId, deviceName) {
+export async function joinRoomFromInvite(socketClient, roomId, deviceName, uiManager) {
   try {
+    if (uiManager?.joinRoom) return await uiManager.joinRoom(roomId);
     return await socketClient.joinRoom(roomId, deviceName);
   } catch {
     return undefined;
@@ -88,8 +89,7 @@ class App {
     const roomParam = urlParams.get('room')?.trim().toUpperCase();
     if (/^[A-Z0-9]{4}$/.test(roomParam || '')) {
       setTimeout(() => {
-        this.audioEngine.ensureContext().catch(() => {});
-        joinRoomFromInvite(this.socketClient, roomParam, this.uiManager.getDeviceName());
+        joinRoomFromInvite(this.socketClient, roomParam, this.uiManager.getDeviceName(), this.uiManager);
       }, 0);
     }
   }

@@ -1645,9 +1645,24 @@ input:checked + .slider-round:before {
   border: 1px solid rgba(239, 68, 68, 0.3);
 }
 .url-feedback-text.loading {
-  background: rgba(59, 130, 246, 0.15);
-  color: #60a5fa;
-  border: 1px solid rgba(59, 130, 246, 0.3);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 40px;
+  padding: 8px 12px;
+  background: rgba(216, 255, 69, 0.08);
+  color: var(--text-base);
+  border: 1px solid rgba(216, 255, 69, 0.22);
+}
+.url-feedback-text.loading::before {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 13px;
+  content: '';
+  border: 2px solid rgba(216, 255, 69, 0.28);
+  border-top-color: var(--spotify-green);
+  border-radius: 50%;
+  animation: rync-search-spin 800ms linear infinite;
 }
 
 
