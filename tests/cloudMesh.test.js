@@ -697,6 +697,26 @@ describe('CloudMesh audio transfer', () => {
     expect(received.slice(-2)).toEqual(new Uint8Array([6, 7]));
   });
 
+  it('emits P2P progress only when the displayed integer percentage changes', () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.updateLoadingState = vi.fn();
+    const channel = makeChannel();
+    mesh.setupDataChannel('peer-2', channel);
+    channel.onopen();
+    channel.onmessage({ data: JSON.stringify({
+      type: 'AUDIO_HEADER', chunkProtocol: 1, name: 'Track', id: 'track-1', totalBytes: 32 * 1024 * 1000, totalChunks: 1000
+    }) });
+
+    for (let sequence = 0; sequence < 10; sequence += 1) {
+      channel.onmessage({ data: makeAudioChunkFrame(sequence, sequence, new Uint8Array(32 * 1024)) });
+    }
+
+    const progress = events.filter(event => event.type === 'AUDIO_TRANSFER_PROGRESS' && event.payload.pct > 0 && event.payload.pct < 100);
+    expect(progress.length).toBeLessThan(10);
+    expect(progress.map(event => event.payload.pct)).toEqual([...new Set(progress.map(event => event.payload.pct))]);
+  });
+
   it('rejects an out-of-order framed P2P audio chunk', () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));

@@ -2012,6 +2012,7 @@ export class CloudMesh {
               totalChunks: msg.totalChunks,
               chunkProtocol: msg.chunkProtocol || 0,
               lastChunkTimestamp: -Infinity,
+              lastProgressPct: 0,
               receivedBytes: 0,
               nextChunkIndex: 0,
               buffer: null
@@ -2129,7 +2130,10 @@ export class CloudMesh {
           stream.nextChunkIndex += 1;
           stream.resetTimeout?.();
           const pct = Math.min(99, Math.round((stream.receivedBytes / stream.totalBytes) * 100));
-          this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct, status: `Menerima P2P (${pct}%)...` });
+          if (pct > stream.lastProgressPct) {
+            stream.lastProgressPct = pct;
+            this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct, status: `Menerima P2P (${pct}%)...` });
+          }
 
           if (stream.nextChunkIndex === stream.totalChunks) {
             if (stream.receivedBytes !== stream.totalBytes) {
