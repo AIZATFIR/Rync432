@@ -18,6 +18,20 @@ export async function joinRoomFromInvite(socketClient, roomId, deviceName) {
   }
 }
 
+export function updateRoomUrl(roomId) {
+  if (!globalThis.window?.location?.href || !globalThis.window.history?.replaceState) return false;
+  const url = new URL(window.location.href);
+  if (roomId) {
+    const normalizedRoomId = String(roomId).trim().toUpperCase();
+    if (!/^[A-Z0-9]{4}$/.test(normalizedRoomId)) return false;
+    url.searchParams.set('room', normalizedRoomId);
+  } else {
+    url.searchParams.delete('room');
+  }
+  window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+  return true;
+}
+
 class App {
   constructor() {
     this.socketClient = null;
@@ -166,12 +180,14 @@ class App {
         break;
 
       case 'ROOM_CREATED':
+        updateRoomUrl(payload.roomId);
         uiManager.setRoomState(payload.roomId, true);
         uiManager.renderPeerList(payload.peers || [{ id: payload.peerId, isHost: true, deviceName: 'Master Speaker' }]);
         this.requestWakeLock();
         break;
 
       case 'ROOM_JOINED':
+        updateRoomUrl(payload.roomId);
         uiManager.setRoomState(payload.roomId, payload.isHost);
         uiManager.renderPeerList(payload.peers || []);
         this.requestWakeLock();
@@ -216,6 +232,7 @@ class App {
         break;
 
       case 'ROOM_LEFT':
+        updateRoomUrl(null);
         uiManager.setSoloState();
         break;
 
