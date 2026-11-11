@@ -4,6 +4,7 @@ import { QRScanner } from './QRScanner.js';
 import { MusicSourceManager } from '../music/MusicSourceManager.js';
 import { MusicSourceType } from '../music/types.js';
 import { LocalLibrary } from '../library/LocalLibrary.js';
+import { recordLocalMetric } from '../metrics/localMetrics.js';
 
 const YOUTUBE_SEARCH_DEBOUNCE_MS = 250;
 const RECENT_YOUTUBE_SEARCHES_KEY = 'rync_recent_youtube_searches';
@@ -1178,10 +1179,12 @@ export class UIManager {
   }
 
   async fetchYoutubeSearch(query, signal, { refresh = false } = {}) {
+    const searchStartedAt = globalThis.performance?.now?.() ?? Date.now();
     const cacheKey = query.trim().toLowerCase();
     const cached = this.youtubeSearchCache.get(cacheKey);
     if (!refresh && cached && Date.now() - cached.storedAt < this.youtubeSearchCacheTtlMs) {
       this.lastYoutubeSearchCacheState = 'fresh';
+      recordLocalMetric('youtube_search_ms', (globalThis.performance?.now?.() ?? Date.now()) - searchStartedAt);
       return [...cached.results];
     }
 
@@ -1203,6 +1206,7 @@ export class UIManager {
         this.youtubeSearchCache.delete(this.youtubeSearchCache.keys().next().value);
       }
       this.lastYoutubeSearchCacheState = 'network';
+      recordLocalMetric('youtube_search_ms', (globalThis.performance?.now?.() ?? Date.now()) - searchStartedAt);
       return results;
     } catch (error) {
       if (signal?.aborted || (error.name === 'AbortError' && !timedOut)) throw error;
@@ -1215,6 +1219,7 @@ export class UIManager {
         error.staleResults = [...cached.results];
         this.lastYoutubeSearchCacheState = 'stale';
       }
+      recordLocalMetric('youtube_search_ms', (globalThis.performance?.now?.() ?? Date.now()) - searchStartedAt, { outcome: 'failure' });
       throw error;
     } finally {
       clearTimeout(timeout);

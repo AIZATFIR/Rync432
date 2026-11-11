@@ -1101,6 +1101,25 @@ describe('YouTube search queue UI', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('records YouTube search latency locally without storing the query', async () => {
+    vi.useFakeTimers();
+    const store = new Map();
+    vi.stubGlobal('localStorage', { getItem: key => store.get(key) || null, setItem: (key, value) => store.set(key, value) });
+    vi.stubGlobal('fetch', async () => {
+      await new Promise(resolve => setTimeout(resolve, 90));
+      return { ok: true, json: async () => ({ results: [{ id: 'dQw4w9WgXcQ' }] }) };
+    });
+    const ui = new UIManager({});
+
+    const search = ui.fetchYoutubeSearch('private query');
+    await vi.advanceTimersByTimeAsync(90);
+    await search;
+
+    const metrics = JSON.parse(store.get('rync_metrics_v1'));
+    expect(metrics.youtube_search_ms).toEqual([{ durationMs: 90, outcome: 'success' }]);
+    expect(JSON.stringify(metrics)).not.toContain('private query');
+  });
+
   it('returns stale search results when refresh fails', async () => {
     vi.useFakeTimers();
     const ui = new UIManager({});
