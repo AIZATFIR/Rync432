@@ -153,7 +153,7 @@ export class SocketClient {
   }
 
   playNext(queueId) {
-    this.cloudMesh.playNext(queueId);
+    return this.cloudMesh.playNext(queueId);
   }
 
   refetchCurrentTrack() {
@@ -161,11 +161,11 @@ export class SocketClient {
   }
 
   reorderQueue(newQueue) {
-    this.cloudMesh.reorderQueue(newQueue);
+    return this.cloudMesh.reorderQueue(newQueue);
   }
 
   removeFromQueue(queueId) {
-    this.cloudMesh.removeFromQueue(queueId);
+    return this.cloudMesh.removeFromQueue(queueId);
   }
 
   clearQueue(queueIds) {

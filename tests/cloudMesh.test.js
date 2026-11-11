@@ -280,6 +280,64 @@ describe('CloudMesh audio transfer', () => {
     expect(mesh.lastKnownQueue).toEqual(canonicalQueue);
   });
 
+  it('rolls back an optimistic room reorder when the server never responds', async () => {
+    vi.useFakeTimers();
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.isHost = true;
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'host-peer';
+    mesh.hostToken = 'token';
+    mesh.lastKnownQueue = [{ id: 'a' }, { id: 'b' }];
+    vi.stubGlobal('fetch', () => new Promise(() => {}));
+    const reorder = mesh.reorderQueue([{ id: 'b' }, { id: 'a' }]);
+
+    expect(mesh.lastKnownQueue.map(item => item.id)).toEqual(['b', 'a']);
+    await vi.advanceTimersByTimeAsync(8_000);
+    await expect(reorder).resolves.toBe(false);
+
+    expect(mesh.lastKnownQueue.map(item => item.id)).toEqual(['a', 'b']);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'QUEUE_SYNC_ERROR' }));
+  });
+
+  it('rolls back an optimistic room removal when the server never responds', async () => {
+    vi.useFakeTimers();
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.isHost = true;
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'host-peer';
+    mesh.hostToken = 'token';
+    mesh.lastKnownQueue = [{ id: 'current' }, { id: 'next' }];
+    vi.stubGlobal('fetch', () => new Promise(() => {}));
+    const removal = mesh.removeFromQueue('next');
+
+    expect(mesh.lastKnownQueue.map(item => item.id)).toEqual(['current']);
+    await vi.advanceTimersByTimeAsync(8_000);
+    await expect(removal).resolves.toBe(false);
+
+    expect(mesh.lastKnownQueue.map(item => item.id)).toEqual(['current', 'next']);
+    expect(mesh.deletedQueueIds.has('next')).toBe(false);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'QUEUE_SYNC_ERROR' }));
+  });
+
+  it('ends a stalled room track selection with a retryable result', async () => {
+    vi.useFakeTimers();
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.isHost = true;
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'host-peer';
+    mesh.hostToken = 'token';
+    vi.stubGlobal('fetch', () => new Promise(() => {}));
+    const selection = mesh.playQueueItem('track-1', true);
+
+    await vi.advanceTimersByTimeAsync(8_000);
+    await expect(selection).resolves.toBe(false);
+
+    expect(events).toContainEqual(expect.objectContaining({ type: 'QUEUE_SYNC_ERROR' }));
+  });
+
   it('rebases a queue addition once on a conflict snapshot', async () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
@@ -890,7 +948,7 @@ describe('CloudMesh audio transfer', () => {
     responses[0]({ json: async () => ({ queue: [{ id: 'track-x', name: 'Track X' }] }) });
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(mesh.lastKnownQueue.map(track => track.id)).toEqual([]);
-    responses[1]({ json: async () => ({ queue: [] }) });
+    responses[1]({ ok: true, json: async () => ({ success: true, queue: [] }) });
     await removal;
 
     expect(mesh.lastKnownQueue.map(track => track.id)).toEqual([]);

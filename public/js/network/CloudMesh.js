@@ -1069,7 +1069,7 @@ export class CloudMesh {
   async playQueueItem(queueId, autoplay = false) {
     if (!this.isHost) return false;
     try {
-      const res = await fetch('/api/room?action=play_queue_item', {
+      const res = await fetchQueueMutation('/api/room?action=play_queue_item', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, queueId, expectedQueueRevision: this.queueRevision })
@@ -1079,6 +1079,10 @@ export class CloudMesh {
       if (res.status === 409) {
         this.applyCanonicalQueue(data.queue);
         this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Antrean berubah di perangkat lain. Coba lagi.' });
+        return false;
+      }
+      if (!res.ok || data.success === false) {
+        this.onEvent('QUEUE_SYNC_ERROR', { message: 'Room gagal memilih lagu. Refresh antrean lalu coba lagi.' });
         return false;
       }
       if (data.track) {
@@ -1136,6 +1140,11 @@ export class CloudMesh {
       }
       return data.track || false;
     } catch (error) {
+      this.onEvent('QUEUE_SYNC_ERROR', {
+        message: error.name === 'TimeoutError'
+          ? 'Room lambat merespons. Pemilihan lagu dibatalkan; coba lagi.'
+          : 'Room gagal memilih lagu. Refresh antrean lalu coba lagi.'
+      });
       return false;
     }
   }
@@ -1143,7 +1152,7 @@ export class CloudMesh {
   async playNext(queueId) {
     if (!this.isHost) return;
     try {
-      const res = await fetch('/api/room?action=play_next', {
+      const res = await fetchQueueMutation('/api/room?action=play_next', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, queueId, expectedQueueRevision: this.queueRevision })
@@ -1153,7 +1162,11 @@ export class CloudMesh {
       if (res.status === 409) {
         this.applyCanonicalQueue(data.queue);
         this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Antrean berubah di perangkat lain. Coba lagi.' });
-        return;
+        return false;
+      }
+      if (!res.ok || !data.success) {
+        this.onEvent('QUEUE_SYNC_ERROR', { message: 'Lagu gagal dipindahkan ke urutan berikutnya. Coba lagi.' });
+        return false;
       }
       if (data.queue) {
         this.lastKnownQueue = data.queue;
@@ -1163,11 +1176,20 @@ export class CloudMesh {
         this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: data.queue });
         this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: data.queue });
       }
-    } catch (e) { }
+      return true;
+    } catch (error) {
+      this.onEvent('QUEUE_SYNC_ERROR', {
+        message: error.name === 'TimeoutError'
+          ? 'Room lambat merespons. Perubahan urutan belum dikonfirmasi.'
+          : 'Lagu gagal dipindahkan ke urutan berikutnya. Coba lagi.'
+      });
+      return false;
+    }
   }
 
   async reorderQueue(newQueue) {
     if (!this.isHost) return;
+    const previousQueue = [...(this.lastKnownQueue || [])];
     this.lastQueueReorderTime = Date.now();
     this.lastKnownQueue = newQueue;
     this.lastKnownQueueStr = JSON.stringify(newQueue);
@@ -1183,7 +1205,7 @@ export class CloudMesh {
     }
 
     try {
-      const res = await fetch('/api/room?action=reorder_queue', {
+      const res = await fetchQueueMutation('/api/room?action=reorder_queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1196,18 +1218,38 @@ export class CloudMesh {
       });
       const data = await res.json();
       this.rememberQueueRevision(data);
-      if (res.status === 409) this.onEvent('QUEUE_SYNC_ERROR', { queue: data.queue, message: 'Antrean berubah di perangkat lain. Susunan terbaru sudah dimuat.' });
+      if (!res.ok || !data.success) {
+        if (res.status === 409 && Array.isArray(data.queue)) {
+          this.applyCanonicalQueue(data.queue);
+          this.onEvent('QUEUE_SYNC_ERROR', { queue: data.queue, message: 'Antrean berubah di perangkat lain. Susunan terbaru sudah dimuat.' });
+        } else {
+          this.applyCanonicalQueue(previousQueue);
+          this.onEvent('QUEUE_SYNC_ERROR', { queue: previousQueue, message: 'Susunan antrean gagal disimpan. Perubahan dipulihkan; coba lagi.' });
+        }
+        return false;
+      }
       if (data.queue) {
         this.applyCanonicalQueue(data.queue);
         this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: data.queue });
         this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: data.queue });
         this.broadcastChannel?.postMessage({ type: 'QUEUE_UPDATED', payload: { queue: data.queue } });
       }
-    } catch (e) { }
+      return true;
+    } catch (error) {
+      this.applyCanonicalQueue(previousQueue);
+      this.onEvent('QUEUE_SYNC_ERROR', {
+        queue: previousQueue,
+        message: error.name === 'TimeoutError'
+          ? 'Room lambat merespons. Susunan antrean dipulihkan; coba lagi.'
+          : 'Susunan antrean gagal disimpan. Perubahan dipulihkan; coba lagi.'
+      });
+      return false;
+    }
   }
 
   async removeFromQueue(queueId) {
     if (!this.isHost) return;
+    const previousQueue = [...(this.lastKnownQueue || [])];
     if (queueId) {
       this.deletedQueueIds.add(queueId);
       this.lastKnownQueue = (this.lastKnownQueue || []).filter(q => q.id !== queueId);
@@ -1219,7 +1261,7 @@ export class CloudMesh {
     }
 
     try {
-      const res = await fetch('/api/room?action=remove_queue', {
+      const res = await fetchQueueMutation('/api/room?action=remove_queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1236,14 +1278,21 @@ export class CloudMesh {
         if (queueId) this.deletedQueueIds.delete(queueId);
         this.applyCanonicalQueue(data.queue);
         this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Antrean berubah di perangkat lain. Coba lagi.' });
-        return;
+        return false;
       }
+      if (!res.ok || !data.success) throw new Error('QUEUE_REMOVE_FAILED');
       if (data.queue) {
         this.lastKnownQueue = data.queue.filter(q => !this.deletedQueueIds.has(q.id));
         this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
         this.onEvent('QUEUE_UPDATED', { queue: this.lastKnownQueue });
       }
-    } catch (e) { }
+      return true;
+    } catch (error) {
+      if (queueId) this.deletedQueueIds.delete(queueId);
+      this.applyCanonicalQueue(previousQueue);
+      this.onEvent('QUEUE_SYNC_ERROR', { queue: previousQueue, message: 'Lagu gagal dihapus dari room. Antrean dipulihkan; coba lagi.' });
+      return false;
+    }
   }
 
   async clearQueue(queueIds) {
@@ -1260,7 +1309,7 @@ export class CloudMesh {
     this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
 
     try {
-      const res = await fetch('/api/room?action=clear_queue', {
+      const res = await fetchQueueMutation('/api/room?action=clear_queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, queueIds: [...ids], expectedQueueRevision: this.queueRevision })
@@ -1295,7 +1344,7 @@ export class CloudMesh {
     if (!this.isHost || !Array.isArray(removed) || removed.length === 0) return false;
     removed.forEach(entry => this.deletedQueueIds.delete(entry.item?.id));
     try {
-      const res = await fetch('/api/room?action=restore_queue', {
+      const res = await fetchQueueMutation('/api/room?action=restore_queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, removed, expectedQueueRevision: this.queueRevision })
