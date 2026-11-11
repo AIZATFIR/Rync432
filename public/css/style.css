@@ -872,7 +872,8 @@ canvas#visualizerCanvas {
 }
 
 .yt-search-refresh {
-  min-height: 36px;
+  min-width: 44px;
+  min-height: 44px;
   border: 1px solid var(--border-subtle);
   border-radius: 999px;
   padding: 0 12px;
@@ -913,7 +914,8 @@ canvas#visualizerCanvas {
 
 .play-yt-result-btn,
 .add-yt-queue-btn {
-  min-height: 36px;
+  min-width: 44px;
+  min-height: 44px;
   padding: 0 10px;
   white-space: nowrap;
   font-size: 0.75rem;

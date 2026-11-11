@@ -966,6 +966,9 @@ describe('YouTube search queue UI', () => {
     expect(list.children[1].children).toHaveLength(3);
     expect(list.children[1].children[2].children).toHaveLength(2);
     expect(list.children[1].children[2].children[0].textContent).toBe('Putar');
+    expect(list.children[1].children[2].children[0].className).toContain('play-yt-result-btn');
+    expect(list.children[1].children[2].children[1].className).toContain('add-yt-queue-btn');
+    expect(list.children[1].children[2].children[1].style.cssText || '').not.toContain('28px');
     expect(list.children[1].children[1].children[0].textContent).toBe('<img src=x onerror=alert(1)>');
     expect(list.children[1].children[1].children[0]._html).toBeUndefined();
   });

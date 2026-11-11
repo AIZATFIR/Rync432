@@ -1274,8 +1274,8 @@ export class UIManager {
         if (videoId) thumbnail.src = `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`;
       };
       const queueButton = document.createElement('button');
+      queueButton.type = 'button';
       queueButton.className = 'btn-spotify btn-spotify-primary add-yt-queue-btn';
-      queueButton.style.cssText = 'padding: 4px 10px; font-size: 0.72rem; min-height: 28px; white-space: nowrap;';
       queueButton.textContent = '+ Queue';
       const playButton = document.createElement('button');
       playButton.type = 'button';
