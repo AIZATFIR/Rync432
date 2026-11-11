@@ -2151,6 +2151,7 @@ export class UIManager {
         if (!localTrack?.audioData) throw new Error('File lokal sudah tidak tersedia');
         this.addToSoloQueue(track);
         await this.app.audioEngine.loadAudioFromArrayBuffer(localTrack.audioData, track.name, track.id);
+        this.app.socketClient.cloudMesh.lastKnownTrack = track;
         this.currentTrack = track;
         this.updateTrackUI(track.name, track.duration || this.app.audioEngine.currentTrackDuration, track.thumbnail || '');
         this.app.audioEngine.schedulePlayAtServerTime(this.app.socketClient.clockSync?.getServerTime?.() + 50 || Date.now() + 50, 0);

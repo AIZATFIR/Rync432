@@ -69,7 +69,7 @@ describe('YouTube search queue UI', () => {
   it('plays a stored local file solo without creating a room', async () => {
     const track = { id: 'local-1', name: 'Local song', sourceType: 'local-file', duration: 12 };
     const bytes = new ArrayBuffer(16);
-    const socketClient = { roomId: null, cloudMesh: { lastKnownTrack: null }, clockSync: { getServerTime: () => 1000 } };
+    const socketClient = { roomId: null, cloudMesh: { lastKnownTrack: { id: 'stale-room-track', name: 'Old room track' } }, clockSync: { getServerTime: () => 1000 } };
     const audioEngine = {
       ensureContext: vi.fn().mockResolvedValue(undefined),
       loadAudioFromArrayBuffer: vi.fn().mockResolvedValue({ duration: 12 }),
@@ -85,6 +85,7 @@ describe('YouTube search queue UI', () => {
     await ui.playLibraryTrack(track);
 
     expect(socketClient.roomId).toBeNull();
+    expect(socketClient.cloudMesh.lastKnownTrack).toEqual(track);
     expect(ui.localLibrary.getLocalAudio).toHaveBeenCalledWith(track.id);
     expect(audioEngine.loadAudioFromArrayBuffer).toHaveBeenCalledWith(bytes, track.name, track.id);
     expect(audioEngine.schedulePlayAtServerTime).toHaveBeenCalledWith(1050, 0);
