@@ -170,6 +170,9 @@ export default async function handler(req, res) {
       track: null,
       targetServerTime: 0,
       startOffsetSec: 0,
+      repeatMode: 'off',
+      shuffle: false,
+      shufflePlayedIds: [],
       updatedAt: now,
       queue: [],
       peers: {
@@ -222,6 +225,8 @@ export default async function handler(req, res) {
         queue: room.queue || [],
         targetServerTime: room.targetServerTime,
         startOffsetSec: room.startOffsetSec,
+        repeatMode: room.repeatMode || 'off',
+        shuffle: room.shuffle === true,
         peers: Object.values(room.peers),
         serverTime: now
       }
@@ -243,9 +248,17 @@ export default async function handler(req, res) {
     }
 
     if (isThisHost) {
-      if (body.track) room.track = body.track;
+      if (body.track) {
+        room.track = body.track;
+        if (room.shuffle) room.shufflePlayedIds = [body.track.id];
+      }
       if (body.state) room.state = body.state;
       if (body.targetServerTime) room.targetServerTime = body.targetServerTime;
+      if (['off', 'all', 'one'].includes(body.repeatMode)) room.repeatMode = body.repeatMode;
+      if (typeof body.shuffle === 'boolean' && body.shuffle !== room.shuffle) {
+        room.shuffle = body.shuffle;
+        room.shufflePlayedIds = body.shuffle && room.track?.id ? [room.track.id] : [];
+      }
     }
 
     // Keep host order, while retaining items added by peers since its last snapshot.
@@ -314,6 +327,8 @@ export default async function handler(req, res) {
       queue: room.queue || [],
       targetServerTime: room.targetServerTime,
       startOffsetSec: room.startOffsetSec,
+      repeatMode: room.repeatMode || 'off',
+      shuffle: room.shuffle === true,
       peers: Object.values(room.peers),
       signals: incomingSignals,
       serverTime: now
@@ -371,9 +386,29 @@ export default async function handler(req, res) {
   if (action === 'track') {
     const room = rooms.get(roomId);
     if (!requireHost(room, body.hostToken)) return;
-    if (body.track) room.track = body.track;
+    if (body.track) {
+      room.track = body.track;
+      if (room.shuffle) room.shufflePlayedIds = [body.track.id];
+    }
     room.updatedAt = now;
     return res.status(200).json({ success: true, track: room.track });
+  }
+
+  if (action === 'playback_options') {
+    const room = rooms.get(roomId);
+    if (!requireHost(room, body.hostToken)) return;
+    if ((body.repeatMode !== undefined && !['off', 'all', 'one'].includes(body.repeatMode))
+      || (body.shuffle !== undefined && typeof body.shuffle !== 'boolean')
+      || (body.repeatMode === undefined && body.shuffle === undefined)) {
+      return res.status(400).json({ success: false, error: 'INVALID_PLAYBACK_OPTIONS' });
+    }
+    if (body.repeatMode !== undefined) room.repeatMode = body.repeatMode;
+    if (body.shuffle !== undefined && body.shuffle !== room.shuffle) {
+      room.shuffle = body.shuffle;
+      room.shufflePlayedIds = body.shuffle && room.track?.id ? [room.track.id] : [];
+    }
+    room.updatedAt = now;
+    return res.status(200).json({ success: true, repeatMode: room.repeatMode, shuffle: room.shuffle });
   }
 
   if (action === 'add_queue') {
@@ -386,6 +421,7 @@ export default async function handler(req, res) {
       body.items.forEach(it => {
         if (it && it.id && !room.queue.some(q => q.id === it.id)) {
           room.queue.push(it);
+          room.shufflePlayedIds = (room.shufflePlayedIds || []).filter(id => id !== it.id);
         }
       });
     } else {
@@ -403,6 +439,7 @@ export default async function handler(req, res) {
       const exists = room.queue.some(q => q.id === item.id);
       if (!exists) {
         room.queue.push(item);
+        room.shufflePlayedIds = (room.shufflePlayedIds || []).filter(id => id !== item.id);
       }
     }
 
@@ -468,6 +505,7 @@ export default async function handler(req, res) {
       const target = room.queue.find(q => q.id === qId);
       if (target) {
         room.track = target;
+        if (room.shuffle) room.shufflePlayedIds = [target.id];
         room.state = 'PAUSED';
         room.targetServerTime = null;
         room.startOffsetSec = 0;
@@ -541,16 +579,46 @@ export default async function handler(req, res) {
     const room = rooms.get(roomId);
     if (!requireHost(room, body.hostToken)) return;
     if (room) {
-      if (room.queue && room.queue.length > 0) {
-        const currentIndex = room.track ? room.queue.findIndex(q => q.id === room.track.id) : -1;
-        const nextIndex = currentIndex >= 0 && currentIndex + 1 < room.queue.length ? currentIndex + 1 : 0;
-        
-        room.track = room.queue[nextIndex] || room.queue[0];
+      const queue = room.queue || [];
+      let nextTrack = null;
+      if (body.automatic === true && room.repeatMode === 'one' && room.track) {
+        nextTrack = room.track;
+      } else if (queue.length > 0) {
+        const currentIndex = room.track ? queue.findIndex(q => q.id === room.track.id) : -1;
+        if (room.shuffle) {
+          const playedIds = new Set(room.shufflePlayedIds || (room.track?.id ? [room.track.id] : []));
+          if (room.track?.id) playedIds.add(room.track.id);
+          let candidates = queue.filter(item => !playedIds.has(item.id));
+          if (candidates.length === 0 && room.repeatMode === 'all') {
+            if (queue.length === 1) nextTrack = queue[0];
+            else {
+              playedIds.clear();
+              if (room.track?.id) playedIds.add(room.track.id);
+              candidates = queue.filter(item => !playedIds.has(item.id));
+            }
+          }
+          if (candidates.length > 0) {
+            nextTrack = candidates[Math.floor(Math.random() * candidates.length)];
+            playedIds.add(nextTrack.id);
+          }
+          room.shufflePlayedIds = [...playedIds];
+        } else if (currentIndex < 0) {
+          nextTrack = queue[0];
+        } else if (currentIndex + 1 < queue.length) {
+          nextTrack = queue[currentIndex + 1];
+        } else if (room.repeatMode === 'all') {
+          nextTrack = queue[0];
+        }
+      }
+
+      if (nextTrack) {
+        room.track = nextTrack;
         room.state = 'PLAYING';
         room.targetServerTime = now + 800;
         room.startOffsetSec = 0;
       } else {
         room.state = 'PAUSED';
+        room.targetServerTime = null;
         room.startOffsetSec = 0;
       }
       room.updatedAt = now;

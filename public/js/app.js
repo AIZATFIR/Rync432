@@ -130,6 +130,10 @@ class App {
         }
         break;
 
+      case 'PLAYBACK_OPTIONS_UPDATED':
+        uiManager.setPlaybackOptions(payload);
+        break;
+
       case 'QUEUE_SYNC_ERROR':
         uiManager.showUrlFeedback(payload.message || 'Antrean belum tersinkron ke room.', 'error');
         break;
@@ -144,7 +148,8 @@ class App {
           play_queue_item: `play “${payload.details?.name || 'queued track'}”`,
           play_next: 'move a track to next',
           remove_queue: 'remove a track from queue',
-          seek: 'seek playback'
+          seek: 'seek playback',
+          playback_options: 'change repeat or shuffle'
         };
         const actionLabel = labels[payload.action];
         if (!actionLabel || !window.confirm(`${payload.requestedBy || 'A member'} requests to ${actionLabel}. Approve?`)) break;
@@ -167,6 +172,11 @@ class App {
           case 'play_next': socketClient.playNext(payload.details?.queueId); break;
           case 'remove_queue': socketClient.removeFromQueue(payload.details?.queueId); break;
           case 'seek': socketClient.schedulePlay(800, payload.details?.position || 0); break;
+          case 'playback_options':
+            socketClient.updatePlaybackOptions(payload.details || {}).catch(() => {
+              uiManager.showUrlFeedback('Mode pemutaran gagal disinkronkan. Coba lagi.', 'error');
+            });
+            break;
         }
         break;
       }

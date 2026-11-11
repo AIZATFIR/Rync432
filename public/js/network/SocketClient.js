@@ -165,8 +165,12 @@ export class SocketClient {
     return this.cloudMesh.restoreQueue(removed);
   }
 
-  nextTrack() {
-    this.cloudMesh.nextTrack();
+  nextTrack(automatic = false) {
+    this.cloudMesh.nextTrack(automatic);
+  }
+
+  updatePlaybackOptions(options) {
+    return this.cloudMesh.updatePlaybackOptions(options);
   }
 
   prevTrack() {
@@ -215,6 +219,8 @@ export class SocketClient {
       this.onEvent('TRACK_METADATA', payload);
     } else if (event === 'QUEUE_UPDATED') {
       this.onEvent('QUEUE_UPDATED', payload);
+    } else if (event === 'PLAYBACK_OPTIONS_UPDATED') {
+      this.onEvent('PLAYBACK_OPTIONS_UPDATED', payload);
     } else if (event === 'SCHEDULED_PLAY') {
       this.onEvent('SCHEDULED_PLAY', payload);
     } else if (event === 'PAUSED') {

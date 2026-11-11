@@ -21,6 +21,8 @@ export class CloudMesh {
     this.lastKnownQueue = null;
     this.isPaused = true;
     this.lastPauseTime = 0;
+    this.repeatMode = 'off';
+    this.shuffle = false;
     this.seenControlRequestIds = new Set();
 
     // WebRTC P2P Connections
@@ -114,6 +116,7 @@ export class CloudMesh {
       if (!result.success || typeof result.hostToken !== 'string') throw new Error(result.error || 'Room creation failed');
       this.hostToken = result.hostToken;
       this.saveHostToken(roomId, this.hostToken);
+      this.applyPlaybackOptions(result.room);
       this.startPolling();
       return result.room;
     } catch (error) {
@@ -162,7 +165,9 @@ export class CloudMesh {
   }
 
   applyRoomSnapshot(snapshot) {
-    if (this.isHost || !snapshot) return;
+    if (!snapshot) return;
+    this.applyPlaybackOptions(snapshot);
+    if (this.isHost) return;
     if (Array.isArray(snapshot.queue)) {
       const queueStr = JSON.stringify(snapshot.queue);
       if (queueStr !== this.lastKnownQueueStr) {
@@ -203,6 +208,33 @@ export class CloudMesh {
       if (changed) this.onEvent('PAUSED', { currentOffsetSec: offset });
     }
     this.lastKnownOffsetSec = offset;
+  }
+
+  applyPlaybackOptions(snapshot = {}) {
+    const repeatMode = ['off', 'all', 'one'].includes(snapshot.repeatMode) ? snapshot.repeatMode : this.repeatMode;
+    const shuffle = typeof snapshot.shuffle === 'boolean' ? snapshot.shuffle : this.shuffle;
+    if (repeatMode === this.repeatMode && shuffle === this.shuffle) return;
+    this.repeatMode = repeatMode;
+    this.shuffle = shuffle;
+    this.onEvent('PLAYBACK_OPTIONS_UPDATED', { repeatMode, shuffle });
+  }
+
+  async updatePlaybackOptions(options = {}) {
+    if (!this.isHost) return false;
+    const body = { roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, ...options };
+    const response = await fetch('/api/room?action=playback_options', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.error || 'PLAYBACK_OPTIONS_FAILED');
+    this.applyPlaybackOptions(data);
+    const payload = { repeatMode: this.repeatMode, shuffle: this.shuffle };
+    this.publishMqtt(this.roomTopic, { type: 'PLAYBACK_OPTIONS_UPDATED', ...payload });
+    this.broadcastDataChannelMessage({ type: 'PLAYBACK_OPTIONS_UPDATED', ...payload });
+    this.broadcastChannel?.postMessage({ type: 'PLAYBACK_OPTIONS_UPDATED', payload });
+    return payload;
   }
 
   initMqttBus(roomId, deviceName) {
@@ -270,6 +302,8 @@ export class CloudMesh {
                     state: this.isPaused ? 'PAUSED' : 'PLAYING',
                     targetServerTime: this.lastKnownState,
                     startOffsetSec: this.lastKnownOffsetSec,
+                    repeatMode: this.repeatMode,
+                    shuffle: this.shuffle,
                     peers: Array.from(this.localPeersMap.values())
                   });
 
@@ -323,6 +357,10 @@ export class CloudMesh {
                 this.saveLocalQueue(q);
                 this.onEvent('QUEUE_UPDATED', { queue: q });
               }
+              break;
+
+            case 'PLAYBACK_OPTIONS_UPDATED':
+              this.applyPlaybackOptions(msg.payload || msg);
               break;
 
             case 'CONTROL_REQUEST':
@@ -422,7 +460,9 @@ export class CloudMesh {
                 queue: this.lastKnownQueue || [],
                 state: this.isPaused ? 'PAUSED' : 'PLAYING',
                 targetServerTime: this.isPaused ? null : this.lastKnownState,
-                startOffsetSec: this.lastKnownOffsetSec
+                startOffsetSec: this.lastKnownOffsetSec,
+                repeatMode: this.repeatMode,
+                shuffle: this.shuffle
               });
             }
           }
@@ -471,6 +511,10 @@ export class CloudMesh {
 
         case 'QUEUE_UPDATED':
           this.onEvent('QUEUE_UPDATED', msg.payload);
+          break;
+
+        case 'PLAYBACK_OPTIONS_UPDATED':
+          this.applyPlaybackOptions(msg.payload || msg);
           break;
 
         case 'CONTROL_REQUEST':
@@ -567,12 +611,15 @@ export class CloudMesh {
           queue: this.isHost ? (this.lastKnownQueue || []) : undefined,
           deletedQueueIds: this.isHost ? Array.from(this.deletedQueueIds) : [],
           track: this.isHost ? this.lastKnownTrack : undefined,
-          state: this.isPaused ? 'PAUSED' : 'PLAYING'
+          state: this.isPaused ? 'PAUSED' : 'PLAYING',
+          repeatMode: this.isHost ? this.repeatMode : undefined,
+          shuffle: this.isHost ? this.shuffle : undefined
         })
       });
       if (!res.ok) return;
 
       const data = await res.json();
+      this.applyPlaybackOptions(data);
 
       if (data.kicked && !this.isHost) {
         this.unsubscribe();
@@ -1078,13 +1125,13 @@ export class CloudMesh {
     }
   }
 
-  async nextTrack() {
+  async nextTrack(automatic = false) {
     if (!this.isHost) return;
     try {
       const res = await fetch('/api/room?action=next_track', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken })
+        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, automatic })
       });
       const data = await res.json();
       if (data.track) {
@@ -1111,6 +1158,17 @@ export class CloudMesh {
         this.lastKnownQueueStr = JSON.stringify(data.queue);
         this.onEvent('QUEUE_UPDATED', { queue: data.queue });
         this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: data.queue });
+      }
+      if (data.state === 'PAUSED') {
+        this.isPaused = true;
+        this.lastPauseTime = Date.now();
+        this.lastKnownState = 'PAUSED';
+        this.lastKnownOffsetSec = 0;
+        const payload = { currentOffsetSec: 0 };
+        this.onEvent('PAUSED', payload);
+        this.publishMqtt(this.roomTopic, { type: 'PAUSED', payload });
+        this.broadcastDataChannelMessage({ type: 'PAUSED', ...payload });
+        this.broadcastChannel?.postMessage({ type: 'PAUSED', payload });
       }
     } catch (e) { }
   }
@@ -1536,7 +1594,9 @@ export class CloudMesh {
           queue: this.lastKnownQueue || [],
           state: this.isPaused ? 'PAUSED' : 'PLAYING',
           targetServerTime: this.isPaused ? null : this.lastKnownState,
-          startOffsetSec: this.lastKnownOffsetSec
+          startOffsetSec: this.lastKnownOffsetSec,
+          repeatMode: this.repeatMode,
+          shuffle: this.shuffle
         }));
         const activeBuffer = targetTrack && (this.localAudioBufferCache.get(targetTrack.id) || (!targetTrack.id && this.localAudioBufferCache.get(targetTrack.name)) || (targetTrack.audioUrl && this.localAudioBufferCache.get(targetTrack.audioUrl)));
         if (activeBuffer && (activeBuffer instanceof ArrayBuffer || activeBuffer.byteLength)) {
@@ -1611,6 +1671,8 @@ export class CloudMesh {
               this.lastKnownQueueStr = JSON.stringify(msg.queue);
               this.onEvent('QUEUE_UPDATED', { queue: msg.queue });
             }
+          } else if (msg.type === 'PLAYBACK_OPTIONS_UPDATED') {
+            this.applyPlaybackOptions(msg.payload || msg);
           } else if (msg.type === 'TRACK_METADATA') {
             this.onEvent('TRACK_METADATA', msg.metadata);
           } else if (msg.type === 'PEER_SETTINGS') {

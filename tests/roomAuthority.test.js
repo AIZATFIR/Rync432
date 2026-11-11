@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import roomHandler from '../api/room.js';
 
 async function callRoom(action, body) {
@@ -271,5 +271,86 @@ describe('room authority', () => {
 
     expect(result.statusCode).toBe(403);
     expect(snapshot.body.peers.find(peer => peer.id === 'host-peer')).toMatchObject({ volume: 1, role: 'stereo' });
+  });
+
+  it('supports shared repeat-one for automatic track advance', async () => {
+    const roomId = `Q${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
+      { id: 'current', name: 'Current' }, { id: 'next', name: 'Next' }
+    ] });
+    await callRoom('track', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, track: { id: 'current', name: 'Current' } });
+    await callRoom('playback_options', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, repeatMode: 'one', shuffle: false });
+
+    const result = await callRoom('next_track', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, automatic: true });
+
+    expect(result.body.track.id).toBe('current');
+    expect(result.body.state).toBe('PLAYING');
+  });
+
+  it('stops at queue end when repeat is off', async () => {
+    const roomId = `R${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
+      { id: 'first', name: 'First' }, { id: 'last', name: 'Last' }
+    ] });
+    await callRoom('track', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, track: { id: 'last', name: 'Last' } });
+
+    const result = await callRoom('next_track', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, automatic: true });
+
+    expect(result.body.track.id).toBe('last');
+    expect(result.body.state).toBe('PAUSED');
+  });
+
+  it('wraps or shuffles at queue end according to shared playback options', async () => {
+    const roomId = `S${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
+      { id: 'current', name: 'Current' }, { id: 'next-a', name: 'Next A' }, { id: 'next-b', name: 'Next B' }
+    ] });
+    await callRoom('track', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, track: { id: 'next-b', name: 'Next B' } });
+    await callRoom('playback_options', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, repeatMode: 'all', shuffle: false });
+    const wrapped = await callRoom('next_track', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken });
+    expect(wrapped.body.track.id).toBe('current');
+
+    await callRoom('track', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, track: { id: 'current', name: 'Current' } });
+    await callRoom('playback_options', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, repeatMode: 'off', shuffle: true });
+    const shuffled = await callRoom('next_track', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken });
+    expect(['next-a', 'next-b']).toContain(shuffled.body.track.id);
+    expect(shuffled.body.track.id).not.toBe('current');
+  });
+
+  it('plays each queued track once before stopping when shuffle is on and repeat is off', async () => {
+    const roomId = `H${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
+      { id: 'first', name: 'First' }, { id: 'second', name: 'Second' }, { id: 'third', name: 'Third' }
+    ] });
+    await callRoom('track', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, track: { id: 'first', name: 'First' } });
+    await callRoom('playback_options', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, repeatMode: 'off', shuffle: true });
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+    try {
+      const second = await callRoom('next_track', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken });
+      const third = await callRoom('next_track', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken });
+      const ended = await callRoom('next_track', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken });
+
+      expect([second.body.track.id, third.body.track.id]).toEqual(['second', 'third']);
+      expect(ended.body.state).toBe('PAUSED');
+      expect(ended.body.track.id).toBe('third');
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  it('restricts shared playback options to the authenticated host', async () => {
+    const roomId = `T${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
+
+    const result = await callRoom('playback_options', {
+      roomId, peerId: 'guest-peer', repeatMode: 'all', shuffle: true
+    });
+
+    expect(result.statusCode).toBe(403);
   });
 });

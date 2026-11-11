@@ -91,6 +91,37 @@ describe('CloudMesh audio transfer', () => {
     });
   });
 
+  it('persists host playback options and broadcasts the canonical settings', async () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.isHost = true;
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'host-peer';
+    mesh.hostToken = 'private-host-token';
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({
+      success: true, repeatMode: 'one', shuffle: true
+    }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const settings = await mesh.updatePlaybackOptions({ repeatMode: 'one', shuffle: true });
+
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(requestBody).toMatchObject({ roomId: 'ROOM', peerId: 'host-peer', hostToken: 'private-host-token', repeatMode: 'one', shuffle: true });
+    expect(settings).toEqual({ repeatMode: 'one', shuffle: true });
+    expect(events).toContainEqual({ type: 'PLAYBACK_OPTIONS_UPDATED', payload: settings });
+  });
+
+  it('restores playback options from a room snapshot', () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+
+    mesh.applyRoomSnapshot({ repeatMode: 'all', shuffle: true });
+
+    expect(mesh.repeatMode).toBe('all');
+    expect(mesh.shuffle).toBe(true);
+    expect(events).toContainEqual({ type: 'PLAYBACK_OPTIONS_UPDATED', payload: { repeatMode: 'all', shuffle: true } });
+  });
+
   it('clears upcoming tracks optimistically while keeping the active track', async () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
@@ -471,6 +502,15 @@ describe('CloudMesh audio transfer', () => {
 });
 
 describe('SocketClient room readiness', () => {
+  it('forwards automatic track advance to the room service', () => {
+    const client = new SocketClient(() => {});
+    client.cloudMesh.nextTrack = vi.fn();
+
+    client.nextTrack(true);
+
+    expect(client.cloudMesh.nextTrack).toHaveBeenCalledWith(true);
+  });
+
   it('preserves the autoplay request when playing a queued item', () => {
     const client = new SocketClient(() => {});
     const play = vi.fn();

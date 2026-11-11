@@ -33,6 +33,8 @@ export class UIManager {
     this.isPlayingState = false;
     this.currentView = 'home';
     this.currentTrack = null;
+    this.repeatMode = 'off';
+    this.shuffle = false;
     this.youtubeSearchController = null;
     this.youtubeSearchDebounce = null;
     this.youtubeSearchSequence = 0;
@@ -132,6 +134,8 @@ export class UIManager {
       trackSub: document.getElementById('trackSub'),
       albumArtBox: document.getElementById('albumArtBox'),
       redoBtn: document.getElementById('redoBtn'),
+      shuffleToggleBtn: document.getElementById('shuffleToggleBtn'),
+      repeatToggleBtn: document.getElementById('repeatToggleBtn'),
       playPauseToggleBtn: document.getElementById('playPauseToggleBtn'),
       togglePlayIcon: document.getElementById('togglePlayIcon'),
       togglePauseIcon: document.getElementById('togglePauseIcon'),
@@ -223,6 +227,7 @@ export class UIManager {
 
     this.initFirebaseAuthListener();
     this.bindEvents();
+    this.setPlaybackOptions();
     this.setView('home');
     this.refreshLibrary();
     this.startPlaybackTicker();
@@ -231,7 +236,7 @@ export class UIManager {
     this.app.audioEngine.onPlaybackEnded = () => {
       this.setPlayState(false);
       if (this.app.socketClient?.isHost) {
-        this.app.socketClient.nextTrack();
+        this.app.socketClient.nextTrack(true);
       }
     };
   }
@@ -527,6 +532,15 @@ export class UIManager {
         }
       });
     }
+
+    elements.shuffleToggleBtn?.addEventListener('click', () => {
+      this.requestPlaybackOptions({ shuffle: !this.shuffle });
+    });
+    elements.repeatToggleBtn?.addEventListener('click', () => {
+      const modes = ['off', 'all', 'one'];
+      const nextMode = modes[(modes.indexOf(this.repeatMode) + 1) % modes.length];
+      this.requestPlaybackOptions({ repeatMode: nextMode });
+    });
 
     if (elements.refetchTrackBtn) {
       elements.refetchTrackBtn.addEventListener('click', () => {
@@ -2039,6 +2053,34 @@ export class UIManager {
       this.elements.miniPlayerPlayBtn.setAttribute('aria-label', isPlaying ? 'Jeda' : 'Putar');
       this.elements.miniPlayerPlayBtn.setAttribute('aria-pressed', String(isPlaying));
     }
+  }
+
+  setPlaybackOptions({ repeatMode = this.repeatMode, shuffle = this.shuffle } = {}) {
+    if (['off', 'all', 'one'].includes(repeatMode)) this.repeatMode = repeatMode;
+    if (typeof shuffle === 'boolean') this.shuffle = shuffle;
+    if (this.elements.shuffleToggleBtn) {
+      const label = this.shuffle ? 'Matikan acak' : 'Aktifkan acak';
+      this.elements.shuffleToggleBtn.setAttribute('aria-pressed', String(this.shuffle));
+      this.elements.shuffleToggleBtn.setAttribute('aria-label', label);
+      this.elements.shuffleToggleBtn.title = this.shuffle ? 'Acak nyala' : 'Acak mati';
+    }
+    if (this.elements.repeatToggleBtn) {
+      const label = this.repeatMode === 'one' ? 'Ulangi lagu' : this.repeatMode === 'all' ? 'Ulangi antrean' : 'Ulangi mati';
+      this.elements.repeatToggleBtn.dataset.repeatMode = this.repeatMode;
+      this.elements.repeatToggleBtn.setAttribute('aria-pressed', String(this.repeatMode !== 'off'));
+      this.elements.repeatToggleBtn.setAttribute('aria-label', label);
+      this.elements.repeatToggleBtn.title = label;
+    }
+  }
+
+  requestPlaybackOptions(options) {
+    if (!this.app.socketClient?.isHost) {
+      this.app.socketClient?.requestControl('playback_options', options);
+      return;
+    }
+    this.app.socketClient.updatePlaybackOptions(options).catch(() => {
+      this.showUrlFeedback('Mode pemutaran gagal disinkronkan. Coba lagi.', 'error');
+    });
   }
 
   updateMiniPlayer() {

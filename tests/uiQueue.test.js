@@ -188,6 +188,29 @@ describe('YouTube search queue UI', () => {
     expect(button.attributes['aria-pressed']).toBe('false');
   });
 
+  it('exposes shared repeat and shuffle modes through accessible control state', () => {
+    const control = () => ({ attributes: {}, dataset: {}, setAttribute(name, value) { this.attributes[name] = value; } });
+    const ui = new UIManager({});
+    ui.elements = { repeatToggleBtn: control(), shuffleToggleBtn: control() };
+
+    ui.setPlaybackOptions({ repeatMode: 'one', shuffle: true });
+
+    expect(ui.elements.repeatToggleBtn.dataset.repeatMode).toBe('one');
+    expect(ui.elements.repeatToggleBtn.attributes['aria-pressed']).toBe('true');
+    expect(ui.elements.repeatToggleBtn.attributes['aria-label']).toBe('Ulangi lagu');
+    expect(ui.elements.shuffleToggleBtn.attributes['aria-pressed']).toBe('true');
+    expect(ui.elements.shuffleToggleBtn.attributes['aria-label']).toBe('Matikan acak');
+  });
+
+  it('sends a playback mode request from a guest to the host', () => {
+    const requestControl = vi.fn();
+    const ui = new UIManager({ socketClient: { isHost: false, requestControl } });
+
+    ui.requestPlaybackOptions({ repeatMode: 'all' });
+
+    expect(requestControl).toHaveBeenCalledWith('playback_options', { repeatMode: 'all' });
+  });
+
   it('keeps the selected screen when room creation finishes asynchronously', () => {
     const node = () => ({ hidden: false, style: {}, classList: { toggle() {}, add() {}, remove() {} }, setAttribute() {}, removeAttribute() {}, innerText: '' });
     vi.stubGlobal('document', { body: { classList: { add() {}, remove() {} } } });

@@ -355,6 +355,35 @@ body {
   transform: scale(0.95);
 }
 
+.btn-ctrl-secondary[aria-pressed="true"] {
+  color: var(--spotify-green);
+  border-color: var(--spotify-green);
+}
+
+#repeatToggleBtn {
+  position: relative;
+}
+
+.repeat-one-indicator {
+  display: none;
+  position: absolute;
+  right: 7px;
+  bottom: 8px;
+  min-width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--spotify-green);
+  color: #101010;
+  font-size: 7px;
+  font-weight: 800;
+  line-height: 10px;
+  text-align: center;
+}
+
+#repeatToggleBtn[data-repeat-mode="one"] .repeat-one-indicator {
+  display: block;
+}
+
 .btn-spotify-circle.play-toggle-btn {
   width: 54px;
   height: 54px;
