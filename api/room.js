@@ -4,6 +4,12 @@ import path from 'node:path';
 import { createRoomPersistence, ROOM_TTL_MS } from './roomPersistence.js';
 // Supports Multi-Device Sync, Binary Audio Relay, Democratic Queue, and WebRTC
 
+const MAX_ROOM_PEERS = 5;
+const MAX_QUEUE_ITEMS = 500;
+const MAX_SIGNAL_BYTES = 64 * 1024;
+const MAX_PENDING_SIGNALS = 256;
+const SIGNAL_TTL_MS = 30 * 1000;
+
 const roomStorePath = !process.env.VERCEL && process.env.NODE_ENV !== 'test'
   ? (process.env.RYNC_ROOM_STORE_PATH || path.join(process.cwd(), 'data', 'rooms.json'))
   : null;
@@ -199,10 +205,17 @@ export default async function handler(req, res) {
 
     const isReturningHost = hostTokenMatches(room, body.hostToken);
     if (isReturningHost) {
+      if (room.hostId && room.hostId !== peerId) delete room.peers[room.hostId];
       room.hostId = peerId;
       Object.values(room.peers).forEach(peer => { peer.isHost = false; });
     } else if (room.peers[peerId]) {
       return res.status(409).json({ success: false, error: 'PEER_ID_IN_USE' });
+    }
+    for (const [id, peer] of Object.entries(room.peers || {})) {
+      if (id !== room.hostId && now - (peer.lastSeen || 0) > 10000) delete room.peers[id];
+    }
+    if (!room.peers[peerId] && Object.keys(room.peers || {}).length >= MAX_ROOM_PEERS) {
+      return res.status(409).json({ success: false, error: 'ROOM_FULL', maxPeers: MAX_ROOM_PEERS });
     }
     room.peers[peerId] = {
       id: peerId,
@@ -241,6 +254,9 @@ export default async function handler(req, res) {
     const isThisHost = !!peerId && claimsHost;
     if (!isThisHost && room.peers?.[peerId]?.isHost) {
       return res.status(409).json({ exists: true, error: 'HOST_AUTH_REQUIRED' });
+    }
+    if (!room.peers?.[peerId]) {
+      return res.status(403).json({ exists: true, error: 'ROOM_MEMBER_REQUIRED' });
     }
     if (isThisHost) {
       room.hostId = peerId;
@@ -284,7 +300,7 @@ export default async function handler(req, res) {
 
     // Prune stale / disconnected peers (> 10s without poll)
     for (const [pId, p] of Object.entries(room.peers || {})) {
-      if (pId !== room.hostId && (now - (p.lastSeen || 0) > 10000)) {
+      if (pId !== room.hostId && pId !== peerId && (now - (p.lastSeen || 0) > 10000)) {
         delete room.peers[pId];
       }
     }
@@ -305,20 +321,11 @@ export default async function handler(req, res) {
       if (deviceName && deviceName !== 'Speaker') {
         room.peers[peerId].deviceName = deviceName;
       }
-    } else if (peerId) {
-      room.peers[peerId] = {
-        id: peerId,
-        deviceName,
-        isHost: isHostAssigned,
-        role: 'stereo',
-        volume: 1.0,
-        latencyOffset: 0,
-        lastSeen: now
-      };
     }
 
-    const incomingSignals = (room.signals || []).filter(s => s.to === peerId);
-    room.signals = (room.signals || []).filter(s => s.to !== peerId);
+    room.signals = (room.signals || []).filter(signal => now - signal.timestamp <= SIGNAL_TTL_MS);
+    const incomingSignals = room.signals.filter(signal => signal.to === peerId);
+    room.signals = room.signals.filter(signal => signal.to !== peerId);
 
     return res.status(200).json({
       exists: true,
@@ -418,13 +425,37 @@ export default async function handler(req, res) {
     if (!room.queue) room.queue = [];
 
     if (Array.isArray(body.items)) {
-      body.items.forEach(it => {
-        if (it && it.id && !room.queue.some(q => q.id === it.id)) {
-          room.queue.push(it);
-          room.shufflePlayedIds = (room.shufflePlayedIds || []).filter(id => id !== it.id);
+      if (body.items.length > MAX_QUEUE_ITEMS
+        || body.items.some(item => !item || typeof item.id !== 'string' || !item.id || item.id.length > 160
+          || (item.name !== undefined && (typeof item.name !== 'string' || item.name.length > 512))
+          || (item.artist !== undefined && (typeof item.artist !== 'string' || item.artist.length > 512))
+          || (item.audioUrl !== undefined && (typeof item.audioUrl !== 'string' || item.audioUrl.length > 4096))
+          || (item.duration !== undefined && (!Number.isFinite(item.duration) || item.duration < 0)))) {
+        return res.status(400).json({ success: false, error: 'INVALID_QUEUE_ITEMS' });
+      }
+      const existingIds = new Set(room.queue.map(item => item.id));
+      const additions = [];
+      body.items.forEach(item => {
+        if (!existingIds.has(item.id)) {
+          existingIds.add(item.id);
+          additions.push(item);
         }
       });
+      if (room.queue.length + additions.length > MAX_QUEUE_ITEMS) {
+        return res.status(413).json({ success: false, error: 'QUEUE_LIMIT_REACHED', maxItems: MAX_QUEUE_ITEMS });
+      }
+      additions.forEach(item => {
+        room.queue.push(item);
+        room.shufflePlayedIds = (room.shufflePlayedIds || []).filter(id => id !== item.id);
+      });
     } else {
+      if ((body.id !== undefined && typeof body.id !== 'string')
+        || (body.name !== undefined && typeof body.name !== 'string')
+        || (body.artist !== undefined && typeof body.artist !== 'string')
+        || (body.audioUrl !== undefined && typeof body.audioUrl !== 'string')
+        || (body.duration !== undefined && (!Number.isFinite(body.duration) || body.duration < 0))) {
+        return res.status(400).json({ success: false, error: 'INVALID_QUEUE_ITEM' });
+      }
       const item = {
         id: body.id || ('q_' + Math.random().toString(36).substring(2, 9)),
         name: body.name || 'Untitled',
@@ -436,8 +467,15 @@ export default async function handler(req, res) {
         addedBy: deviceName
       };
 
+      if (item.id.length > 160 || item.name.length > 512 || item.artist.length > 512 || item.audioUrl.length > 4096) {
+        return res.status(400).json({ success: false, error: 'INVALID_QUEUE_ITEM' });
+      }
+
       const exists = room.queue.some(q => q.id === item.id);
       if (!exists) {
+        if (room.queue.length >= MAX_QUEUE_ITEMS) {
+          return res.status(413).json({ success: false, error: 'QUEUE_LIMIT_REACHED', maxItems: MAX_QUEUE_ITEMS });
+        }
         room.queue.push(item);
         room.shufflePlayedIds = (room.shufflePlayedIds || []).filter(id => id !== item.id);
       }
@@ -711,17 +749,26 @@ export default async function handler(req, res) {
 
   if (action === 'signal') {
     const room = rooms.get(roomId);
-    if (room) {
-      if (!room.signals) room.signals = [];
-      room.signals.push({
-        from: peerId,
-        to: body.to,
-        data: body.data,
-        timestamp: now
-      });
-      return res.status(200).json({ success: true });
+    if (!room) return res.status(404).json({ error: 'ROOM_NOT_FOUND' });
+    if (!peerId || !room.peers?.[peerId]) return res.status(403).json({ success: false, error: 'ROOM_MEMBER_REQUIRED' });
+    if (typeof body.to !== 'string' || !room.peers[body.to] || body.to === peerId) {
+      return res.status(404).json({ success: false, error: 'SIGNAL_TARGET_NOT_FOUND' });
     }
-    return res.status(404).json({ error: 'Room not found' });
+    let dataSize;
+    try {
+      dataSize = Buffer.byteLength(JSON.stringify(body.data));
+    } catch (error) {
+      return res.status(400).json({ success: false, error: 'INVALID_SIGNAL' });
+    }
+    if (body.data === undefined || dataSize > MAX_SIGNAL_BYTES) {
+      return res.status(413).json({ success: false, error: 'SIGNAL_TOO_LARGE', maxBytes: MAX_SIGNAL_BYTES });
+    }
+    room.signals = (room.signals || []).filter(signal => now - signal.timestamp <= SIGNAL_TTL_MS);
+    if (room.signals.length >= MAX_PENDING_SIGNALS) {
+      return res.status(429).json({ success: false, error: 'SIGNAL_QUEUE_FULL' });
+    }
+    room.signals.push({ from: peerId, to: body.to, data: body.data, timestamp: now });
+    return res.status(200).json({ success: true });
   }
 
   return res.status(400).json({ error: 'Invalid action' });

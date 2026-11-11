@@ -1,32 +1,20 @@
-# Rync432 • Spotify-Style Multi-Device Audio Synchronizer 🎵🟢
+# Rync
 
-> **Web-Native Ultra-Low Latency Synchronized Audio Mesh Player**  
-> Mengubah sekumpulan smartphone, laptop, dan tablet menjadi satu kesatuan multi-channel sound system yang megah dan berharmoni dengan akurasi sub-milidetik.
-
-![Spotify Theme](https://img.shields.io/badge/UI-Spotify%20Dark%20Theme-1ed760?style=for-the-badge&logo=spotify&logoColor=black)
-![Web Audio API](https://img.shields.io/badge/Audio-Web%20Audio%20API-orange?style=for-the-badge)
-![WebSockets](https://img.shields.io/badge/Sync-NTP%20Cristian%20Algorithm-6366f1?style=for-the-badge)
-![Vercel Ready](https://img.shields.io/badge/Deployment-Vercel-black?style=for-the-badge&logo=vercel)
+Rync adalah pemutar musik browser dengan antrean bersama dan room untuk mendengarkan bareng. Cari musik, putar sumber yang tersedia, lalu bagikan tautan room ke teman.
 
 ---
 
-## ✨ Fitur Unggulan (Key Features)
+## Fitur yang tersedia
 
-1. **Spotify Design Aesthetics (`#121212` / `#1ed760`)**:
-   - Tema gelap imersif (*content-first darkness*) dengan tombol pill (`border-radius: 9999px`), kontrol sirkular 50%, font CircularSp/SpotifyMixUI, dan shadow terangkat (`rgba(0,0,0,0.5) 0px 8px 24px`).
-2. **Sub-Millisecond Sample-Accurate Audio Engine**:
-   - Menggunakan `AudioContext` & `AudioBufferSourceNode` yang dijadwalkan langsung ke hardware clock (`AudioContext.currentTime`), mengeliminasi delay 50-200ms bawaan tag `<audio>` HTML5.
-3. **Precision Latency Tuner ($\pm 1\text{ms}$ Fine-Tune & Nudge Buttons)**:
-   - Tombol step `+` dan `−` untuk penyesuaian delay mikrodetik per perangkat.
-   - Preset hardware: *Wired Speaker (0ms)*, *Internal Phone (+15ms)*, *Bluetooth Speaker (+120ms)*, *AirPlay (+250ms)*.
-4. **Dual-Tone Keep-Alive Metronome (Ketukan 2 Nada: 880Hz / 440Hz)**:
-   - Mencegah browser mobile (iOS Safari/Android Chrome) mematikan (*sleep mode*) DAC audio hardware saat hening, dan menjadi sarana kalibrasi telinga di ruangan.
-5. **Skema Login Google (Google OAuth 2.0)**:
-   - Tombol Google Sign-in resmi dengan modal profil user, avatar, dan persistensi preferensi akun di localStorage.
-6. **Slot Google AdSense (Responsive Banner Ads)**:
-   - Kontainer iklan responsif bertema gelap yang siap disematkan Google Publisher ID (`ca-pub-XXXXXXXXXXXXX`).
-7. **Mesh Topology Monitor**:
-   - Menampilkan daftar seluruh speaker/device yang terhubung di ruangan lengkap dengan ping RTT dan latency offset masing-masing.
+- Pemutar audio browser dengan antrean lokal dan antrean room.
+- Pencarian YouTube, link YouTube, URL audio langsung, dan audio yang diunggah.
+- Room dengan tautan/kode undangan, daftar perangkat, dan kontrol host.
+- Sinkronisasi lewat WebRTC dengan jalur HTTP sebagai fallback untuk audio yang didukung.
+- Antrean bersama dengan tambah, susun ulang, hapus, clear-upcoming, dan undo.
+- Mode repeat dan shuffle yang dibagikan ke anggota room.
+- Favorit, playlist, dan riwayat lokal pada browser.
+
+Ketersediaan sumber YouTube bergantung pada provider dan kebijakan yang berlaku. Metode provider saat ini belum ditinjau untuk peluncuran publik; jangan menganggap endpoint YouTube sebagai layanan produksi yang dijamin tersedia.
 
 ---
 
@@ -47,12 +35,14 @@ npm start
 - Buka `http://<IP-Lokal-WiFi>:3000` dari smartphone lain di jaringan Wi-Fi yang sama untuk langsung sinkron!
 - Server Node menyimpan room dan queue di `data/rooms.json` (TTL 3 jam). Simpan folder `data/` pada disk persisten homeserver dan sertakan di backup; room ini tidak dipersist di deployment Vercel/serverless.
 - Lokasi store dapat diganti dengan `RYNC_ROOM_STORE_PATH=/path/yang/persisten/rooms.json`. File dibuat dengan permission `0600`; peer aktif dan sinyal WebRTC harus tersambung ulang setelah restart.
+- Batas room saat ini: 5 perangkat aktif, 500 item antrean, payload signaling 64 KiB, dan paling banyak 256 sinyal tertunda per room. Sinyal kedaluwarsa setelah 30 detik.
+- Batas tersebut menjaga server, bukan hasil uji performa. Sinkronisasi audio tetap bergantung pada browser, jaringan, dan output device.
 
 ---
 
 ## 🌐 Deploy ke Vercel (Vercel Setup)
 
-Proyek ini telah dikonfigurasi dengan [`vercel.json`](file:///home/aizatfir/Project/Rync432/vercel.json) untuk deployment instan:
+Proyek ini memiliki konfigurasi [`vercel.json`](vercel.json):
 
 ```bash
 # Deploy via Vercel CLI

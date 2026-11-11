@@ -164,9 +164,9 @@ describe('room authority', () => {
     expect(restored.body.queue.map(item => item.id)).toEqual(['current', 'next-a', 'new-track']);
   });
 
-  it('does not let a spoofed host peer poll overwrite the host membership', async () => {
+  it('does not let a spoofed host peer poll overwrite the host membership or register unknown peers', async () => {
     const roomId = `Z${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
-    await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
 
     const spoof = await callRoom('poll', {
       roomId, peerId: 'host-peer', isHost: true, state: 'PLAYING'
@@ -174,8 +174,66 @@ describe('room authority', () => {
     const guestView = await callRoom('poll', { roomId, peerId: 'guest-peer' });
 
     expect(spoof.statusCode).toBe(409);
-    expect(guestView.body.peers.find(peer => peer.id === 'host-peer').isHost).toBe(true);
-    expect(guestView.body.state).toBe('IDLE');
+    expect(guestView.statusCode).toBe(403);
+    const hostView = await callRoom('poll', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken });
+    expect(hostView.body.peers.find(peer => peer.id === 'host-peer').isHost).toBe(true);
+    expect(hostView.body.state).toBe('IDLE');
+  });
+
+  it('caps rooms at five active devices and rejects extra joins', async () => {
+    const roomId = `M${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    for (let index = 1; index <= 4; index++) {
+      await callRoom('join', { roomId, peerId: `guest-${index}`, deviceName: `Guest ${index}` });
+    }
+
+    const sixthDevice = await callRoom('join', { roomId, peerId: 'guest-5', deviceName: 'Guest 5' });
+
+    expect(sixthDevice.statusCode).toBe(409);
+    expect(sixthDevice.body.error).toBe('ROOM_FULL');
+  });
+
+  it('lets a returning member refresh its stale presence without rejoining', async () => {
+    const roomId = `D${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
+    globalThis.__rync_rooms.get(roomId).peers['guest-peer'].lastSeen = Date.now() - 15000;
+
+    const resumed = await callRoom('poll', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
+
+    expect(resumed.statusCode).toBe(200);
+    expect(resumed.body.peers.some(peer => peer.id === 'guest-peer')).toBe(true);
+  });
+
+  it('accepts only bounded signaling from one room member to another', async () => {
+    const roomId = `G${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
+
+    const outsider = await callRoom('signal', { roomId, peerId: 'outsider', to: 'guest-peer', data: { candidate: 'x' } });
+    const oversized = await callRoom('signal', { roomId, peerId: 'host-peer', to: 'guest-peer', data: 'x'.repeat(65537) });
+    const valid = await callRoom('signal', { roomId, peerId: 'host-peer', to: 'guest-peer', data: { candidate: 'candidate' } });
+
+    expect(outsider.statusCode).toBe(403);
+    expect(oversized.statusCode).toBe(413);
+    expect(valid.statusCode).toBe(200);
+  });
+
+  it('rejects queue additions atomically when they exceed the room limit', async () => {
+    const roomId = `K${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    const fullQueue = Array.from({ length: 500 }, (_, index) => ({ id: `track-${index}`, name: `Track ${index}` }));
+    await callRoom('add_queue', { roomId, peerId: 'host-peer', items: fullQueue });
+
+    const overflow = await callRoom('add_queue', {
+      roomId, peerId: 'host-peer', items: [{ id: 'new-a', name: 'New A' }, { id: 'new-b', name: 'New B' }]
+    });
+    const duplicate = await callRoom('add_queue', { roomId, peerId: 'host-peer', id: 'track-0', name: 'Track 0' });
+
+    expect(overflow.statusCode).toBe(413);
+    expect(overflow.body.error).toBe('QUEUE_LIMIT_REACHED');
+    expect(duplicate.statusCode).toBe(200);
+    expect(duplicate.body.queue).toHaveLength(500);
   });
 
   it('does not create an empty room from an unauthenticated poll', async () => {
