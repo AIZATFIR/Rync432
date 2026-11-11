@@ -10,14 +10,15 @@ afterEach(() => {
 async function callSearch(query) {
   let statusCode = 0;
   let body;
+  const headers = {};
   const res = {
-    setHeader() {},
+    setHeader(name, value) { headers[name.toLowerCase()] = value; },
     status(code) { statusCode = code; return this; },
     json(value) { body = value; return this; },
     end() { return this; }
   };
   await handler({ method: 'GET', query: { q: query } }, res);
-  return { statusCode, body };
+  return { statusCode, body, headers };
 }
 
 describe('YouTube search API', () => {
@@ -30,6 +31,7 @@ describe('YouTube search API', () => {
 
     expect(result.statusCode).toBe(503);
     expect(result.body.error).toBe('PROVIDER_NOT_CONFIGURED');
+    expect(result.headers['cache-control']).toBe('no-store');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -63,6 +65,7 @@ describe('YouTube search API', () => {
       duration: 215,
       url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
     })]);
+    expect(result.headers['cache-control']).toBe('public, s-maxage=300, stale-while-revalidate=600');
   });
 
   it('coalesces concurrent identical searches into one provider search request', async () => {

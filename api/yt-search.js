@@ -4,6 +4,7 @@ const PROVIDER_REQUEST_TIMEOUT_MS = 3_000;
 const DURATION_ENRICHMENT_TIMEOUT_MS = 500;
 const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
 const SEARCH_CACHE_MAX_ITEMS = 100;
+const SEARCH_CACHE_CONTROL = 'public, s-maxage=300, stale-while-revalidate=600';
 const searchCache = new Map();
 const inFlightSearches = new Map();
 
@@ -125,7 +126,7 @@ async function resolveSearch(query, cacheKey, key, staleCache) {
 }
 
 export default async function handler(req, res) {
-  res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600');
+  res.setHeader('Cache-Control', 'no-store');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') return res.status(405).json({ error: 'METHOD_NOT_ALLOWED' });
 
@@ -139,6 +140,7 @@ export default async function handler(req, res) {
   const cacheKey = query.toLocaleLowerCase();
   const cached = searchCache.get(cacheKey);
   if (cached && Date.now() - cached.storedAt < SEARCH_CACHE_TTL_MS) {
+    res.setHeader('Cache-Control', SEARCH_CACHE_CONTROL);
     return res.status(200).json({ results: cached.results, cached: true });
   }
 
@@ -150,6 +152,9 @@ export default async function handler(req, res) {
   try {
     const result = await search;
     if (result.retryAfter) res.setHeader('Retry-After', result.retryAfter);
+    if (result.statusCode === 200 && !result.body.stale) {
+      res.setHeader('Cache-Control', SEARCH_CACHE_CONTROL);
+    }
     return res.status(result.statusCode).json(result.body);
   } finally {
     if (inFlightSearches.get(cacheKey) === search) inFlightSearches.delete(cacheKey);
