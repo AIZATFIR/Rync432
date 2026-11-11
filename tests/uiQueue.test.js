@@ -54,9 +54,45 @@ describe('Rync page structure', () => {
     }
     expect(html).toMatch(/<button\b[^>]*id="audioDropzone"[^>]*aria-label="Pilih file audio untuk ditambahkan"/);
   });
+
+  it('exposes a persisted dark/light theme preference in settings', () => {
+    const htmlPath = fileURLToPath(new URL('../public/index.html', import.meta.url));
+    const cssPath = fileURLToPath(new URL('../public/css/style.css', import.meta.url));
+    const html = readFileSync(htmlPath, 'utf8');
+    const css = readFileSync(cssPath, 'utf8');
+
+    expect(html).toContain('id="themeToggle"');
+    expect(html).toContain('aria-label="Aktifkan tema terang"');
+    expect(css).toContain('[data-theme="light"]');
+    expect(css).toContain('var(--surface-nav)');
+  });
 });
 
 describe('YouTube search queue UI', () => {
+  it('restores the saved theme and persists changes from the settings toggle', () => {
+    const attributes = {};
+    const storage = new Map([['rync_theme', 'light']]);
+    const toggle = { checked: false, addEventListener: vi.fn((event, handler) => { toggle.change = handler; }) };
+    vi.stubGlobal('localStorage', {
+      getItem: key => storage.get(key) || null,
+      setItem: (key, value) => storage.set(key, value)
+    });
+    vi.stubGlobal('document', { addEventListener: vi.fn(), documentElement: { style: {}, setAttribute: (key, value) => { attributes[key] = value; } } });
+    vi.stubGlobal('window', { addEventListener: vi.fn() });
+    const ui = new UIManager({ socketClient: {}, audioEngine: {} });
+    ui.elements = { themeToggle: toggle };
+
+    ui.applyTheme(ui.loadTheme());
+    ui.bindEvents();
+    expect(attributes['data-theme']).toBe('light');
+    expect(toggle.checked).toBe(true);
+
+    toggle.checked = false;
+    toggle.change();
+    expect(attributes['data-theme']).toBe('dark');
+    expect(storage.get('rync_theme')).toBe('dark');
+  });
+
   it('shares the new room before waiting for its local playlist to sync', async () => {
     const order = [];
     const socketClient = { roomId: null, createRoom: vi.fn(async () => { order.push('create'); socketClient.roomId = 'AB12'; }), isHost: true };

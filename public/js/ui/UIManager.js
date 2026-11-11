@@ -11,6 +11,7 @@ import { roomJoinMessage } from '../network/roomJoinMessage.js';
 const YOUTUBE_SEARCH_DEBOUNCE_MS = 250;
 const RECENT_YOUTUBE_SEARCHES_KEY = 'rync_recent_youtube_searches';
 const MAX_RECENT_YOUTUBE_SEARCHES = 8;
+const THEME_STORAGE_KEY = 'rync_theme';
 const AUDIO_ROUTE_LABELS = {
   unknown: 'Mencari jalur audio…',
   p2p: 'P2P',
@@ -92,6 +93,7 @@ export class UIManager {
   }
 
   init() {
+    this.applyTheme(this.loadTheme());
     this.elements = {
       connectionStatus: document.getElementById('connectionStatus'),
       connectionStatusPill: document.getElementById('connectionStatusPill'),
@@ -139,6 +141,7 @@ export class UIManager {
       userAvatarContainer: document.getElementById('userAvatarContainer'),
       authModal: document.getElementById('authModal'),
       modalCloseBtn: document.getElementById('modalCloseBtn'),
+      themeToggle: document.getElementById('themeToggle'),
       googleSignInActionBtn: document.getElementById('googleSignInActionBtn'),
       authLoggedOutView: document.getElementById('authLoggedOutView'),
       authLoggedInView: document.getElementById('authLoggedInView'),
@@ -324,6 +327,15 @@ export class UIManager {
   bindEvents() {
     const { elements, app } = this;
     this.bindQueueMenuDismissal();
+
+    if (elements.themeToggle) {
+      elements.themeToggle.checked = this.loadTheme() === 'light';
+      elements.themeToggle.addEventListener('change', () => {
+        const theme = elements.themeToggle.checked ? 'light' : 'dark';
+        this.applyTheme(theme);
+        try { localStorage.setItem(THEME_STORAGE_KEY, theme); } catch (error) {}
+      });
+    }
 
     [
       [elements.navHomeBtn, 'home'],
@@ -1113,6 +1125,20 @@ export class UIManager {
         });
       }
     });
+  }
+
+  loadTheme() {
+    try {
+      return localStorage.getItem(THEME_STORAGE_KEY) === 'light' ? 'light' : 'dark';
+    } catch (error) {
+      return 'dark';
+    }
+  }
+
+  applyTheme(theme) {
+    const normalizedTheme = theme === 'light' ? 'light' : 'dark';
+    globalThis.document?.documentElement?.setAttribute('data-theme', normalizedTheme);
+    if (globalThis.document?.documentElement) globalThis.document.documentElement.style.colorScheme = normalizedTheme;
   }
 
   applyEqPreset(preset) {

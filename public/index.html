@@ -286,7 +286,7 @@
           <!-- Collaborative Queue / Playlist Section -->
           <div class="spotify-card" id="queueCardSection">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-              <div style="font-weight: 700; font-size: 0.95rem; color: #fff;">Antrean Lagu</div>
+              <div style="font-weight: 700; font-size: 0.95rem; color: var(--text-base);">Antrean Lagu</div>
               <div class="queue-header-actions">
                 <span id="queueCountBadge" style="font-size: 0.72rem; color: var(--text-silver); font-weight: 600;">0 lagu</span>
                 <button id="clearUpcomingBtn" class="queue-clear-btn" type="button" hidden>Hapus berikutnya</button>
@@ -359,7 +359,7 @@
                     <line x1="12" y1="3" x2="12" y2="15"></line>
                   </svg>
                 </div>
-                <div style="font-weight: 700; font-size: 0.9rem; color: #fff;">Upload Musik (MP3 / WAV / FLAC)</div>
+                <div style="font-weight: 700; font-size: 0.9rem; color: var(--text-base);">Upload Musik (MP3 / WAV / FLAC)</div>
                 <div style="font-size: 0.76rem; color: var(--text-silver);">Klik atau drag & drop file musik ke sini</div>
               </button>
             </div>
@@ -379,7 +379,7 @@
         <div class="devices-stage">
           <div class="spotify-card">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-              <div style="font-weight: 700; font-size: 0.95rem; color: #fff;">Device</div>
+              <div style="font-weight: 700; font-size: 0.95rem; color: var(--text-base);">Device</div>
               <button class="btn-spotify btn-spotify-outline" id="manageDevicesBtn" style="padding: 4px 10px; font-size: 0.72rem; min-height: 28px;">
                 QR Code
               </button>
@@ -427,7 +427,7 @@
   <div class="modal-overlay" id="qrScannerModal">
     <div class="modal-content" style="max-width: 360px; text-align: center;">
       <button class="modal-close-btn" id="qrScannerCloseBtn">&times;</button>
-      <h3 style="font-size: 1.1rem; font-weight: 700; color: #fff;">Scan QR Code</h3>
+        <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--text-base);">Scan QR Code</h3>
       <p style="font-size: 0.78rem; color: var(--text-silver);">Arahkan kamera ke QR Code Host untuk gabung otomatis.</p>
       
       <div class="scanner-video-wrap">
@@ -443,12 +443,12 @@
       <button class="modal-close-btn" id="deviceSettingsCloseBtn">&times;</button>
       
       <div style="text-align: center;">
-        <h3 style="font-size: 1.1rem; font-weight: 700; color: #fff;" id="modalTargetDeviceName">Pengaturan Speaker</h3>
+        <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--text-base);" id="modalTargetDeviceName">Pengaturan Speaker</h3>
         <p style="font-size: 0.78rem; color: var(--text-silver); margin-top: 2px;">Atur alokasi channel suara dan volume speaker ini.</p>
       </div>
 
       <div class="settings-box" style="margin-top: 8px;">
-        <div style="font-size: 0.8rem; font-weight: 700; color: #fff; margin-bottom: 8px;">Alokasi Channel:</div>
+        <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-base); margin-bottom: 8px;">Alokasi Channel:</div>
         <div class="segmented-channel-chips" style="width: 100%;">
           <button class="channel-chip active" id="modalSpatialStereo" style="flex: 1;">Stereo</button>
           <button class="channel-chip" id="modalSpatialLeft" style="flex: 1;">Left (L)</button>
@@ -458,7 +458,7 @@
       </div>
 
       <div class="settings-box">
-        <div style="display: flex; justify-content: space-between; font-size: 0.8rem; font-weight: 700; color: #fff; margin-bottom: 6px;">
+        <div style="display: flex; justify-content: space-between; font-size: 0.8rem; font-weight: 700; color: var(--text-base); margin-bottom: 6px;">
           <span>Volume Speaker:</span>
           <span id="modalVolumeText" style="color: var(--spotify-green);">100%</span>
         </div>
@@ -482,7 +482,7 @@
       <button class="modal-close-btn" id="devicesModalCloseBtn">&times;</button>
       
       <div style="text-align: center;">
-        <h3 style="font-size: 1.15rem; font-weight: 700; color: #fff;">Sambungkan Device</h3>
+        <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-base);">Sambungkan Device</h3>
         <p style="font-size: 0.8rem; color: var(--text-silver); margin-top: 4px;">Scan QR dari HP lain untuk gabung room ini.</p>
       </div>
 
@@ -495,7 +495,7 @@
       </button>
 
       <div style="margin-top: 8px;">
-        <div style="font-weight: 700; font-size: 0.85rem; color: #fff; margin-bottom: 6px;">Device di Room (Klik utk Atur):</div>
+        <div style="font-weight: 700; font-size: 0.85rem; color: var(--text-base); margin-bottom: 6px;">Device di Room (Klik utk Atur):</div>
         <div class="devices-list" id="devicesMatrixList"></div>
       </div>
     </div>
@@ -506,7 +506,20 @@
     <div class="modal-content" style="max-width: 420px;">
       <button class="modal-close-btn" id="modalCloseBtn">&times;</button>
       
-      <h3 style="font-size: 1.15rem; font-weight: 700; color: #fff; text-align: center;">Settings & Profile</h3>
+      <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-base); text-align: center;">Settings & Profile</h3>
+
+      <div class="settings-box">
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-title">Tema terang</div>
+            <div class="toggle-desc">Gunakan permukaan warna kertas.</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="themeToggle" aria-label="Aktifkan tema terang">
+            <span class="slider-round"></span>
+          </label>
+        </div>
+      </div>
 
       <!-- Account Card -->
       <div class="settings-box">
@@ -526,7 +539,7 @@
           <div style="display: flex; align-items: center; gap: 10px;">
             <img id="userModalAvatar" src="" alt="Avatar" style="width: 38px; height: 38px; border-radius: 50%; border: 2px solid var(--spotify-green);">
             <div>
-              <div id="userModalName" style="font-weight: 700; font-size: 0.9rem; color: #fff;">User</div>
+              <div id="userModalName" style="font-weight: 700; font-size: 0.9rem; color: var(--text-base);">User</div>
               <div id="userModalEmail" style="font-size: 0.72rem; color: var(--text-silver);">email@gmail.com</div>
             </div>
           </div>
@@ -565,7 +578,7 @@
         <div style="padding-top: 10px; border-top: 1px solid var(--border-subtle);">
           <div class="tuner-header">
             <div>
-              <div style="font-weight: 700; font-size: 0.9rem; color: #fff;">Kompensasi latency perangkat</div>
+              <div style="font-weight: 700; font-size: 0.9rem; color: var(--text-base);">Kompensasi latency perangkat</div>
               <div style="font-size: 0.75rem; color: var(--text-silver);">Atur per speaker bila output berbeda waktu.</div>
             </div>
             <div class="current-offset-display" id="latencyDisplay">0 ms</div>
