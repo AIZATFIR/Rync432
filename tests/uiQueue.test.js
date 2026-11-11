@@ -69,6 +69,18 @@ describe('Rync page structure', () => {
     expect(css).toContain('--surface-raised:');
     expect(css).toContain('background: var(--surface-card);');
     expect(css).not.toContain('background: linear-gradient(155deg, #191d15, #12150f 72%);');
+    expect(css).toMatch(/\.btn-spotify-primary\s*\{[^}]*color:\s*var\(--text-on-accent\)/);
+
+    const lightTokens = css.match(/:root\[data-theme="light"\]\s*\{([^}]+)\}/)?.[1] || '';
+    const token = name => lightTokens.match(new RegExp(`${name}:\\s*(#[0-9a-f]{6})`, 'i'))?.[1];
+    const luminance = color => {
+      const rgb = color.slice(1).match(/.{2}/g).map(value => parseInt(value, 16) / 255)
+        .map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+      return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+    };
+    const [textLum, accentLum] = [luminance(token('--text-on-accent')), luminance(token('--spotify-green'))]
+      .sort((a, b) => b - a);
+    expect((textLum + 0.05) / (accentLum + 0.05)).toBeGreaterThanOrEqual(4.5);
   });
 });
 
