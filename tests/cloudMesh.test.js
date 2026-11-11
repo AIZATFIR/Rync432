@@ -87,6 +87,38 @@ describe('CloudMesh audio transfer', () => {
     expect(mesh.requestTrackBufferFromPeers).not.toHaveBeenCalled();
   });
 
+  it.each(['', 'blob:local-object-url'])('requests P2P immediately for local room tracks without a relay copy (%s)', async audioUrl => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.roomId = 'ROOM';
+    mesh.requestTrackBufferFromPeers = vi.fn();
+    mesh.fetchRemoteAudioUrl = vi.fn();
+    mesh.updateLoadingState = vi.fn();
+
+    await mesh.loadTrackBuffer({ id: 'local-track', name: 'Local track', sourceType: 'local-file', audioUrl });
+
+    expect(mesh.requestTrackBufferFromPeers).toHaveBeenCalledWith('Local track', 'local-track');
+    expect(mesh.fetchRemoteAudioUrl).not.toHaveBeenCalled();
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'AUDIO_TRANSFER_PROGRESS', payload: expect.objectContaining({ status: expect.stringContaining('P2P') })
+    }));
+  });
+
+  it('releases the local-track single-flight guard after a P2P transfer fails', async () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.updateLoadingState = vi.fn();
+    mesh.broadcastReadiness = vi.fn();
+    mesh.requestTrackBufferFromPeers = vi.fn();
+    const track = { id: 'local-track', name: 'Local track', sourceType: 'local-file', audioUrl: '' };
+
+    await mesh.loadTrackBuffer(track);
+    mesh.failIncomingAudioTransfer('peer-2', track.id, 'Transfer gagal', track.name);
+
+    expect(mesh.currentFetchingTrackKey).toBeNull();
+    expect(mesh.pendingTrackBufferRequest).toBeNull();
+  });
+
   it('marks a synthetic track ready after local preparation', () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
@@ -196,6 +228,23 @@ describe('CloudMesh audio transfer', () => {
       payload: expect.objectContaining({ status: expect.stringContaining('tidak tersedia') })
     }));
     expect(mesh.peerBufferRequestInterval).toBeNull();
+  });
+
+  it('stops request retries while the requested P2P transfer is actively arriving', async () => {
+    vi.useFakeTimers();
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'peer-1';
+    mesh.localPeersMap.set('peer-1', { id: 'peer-1' });
+    mesh.dataChannels.set('peer-2', makeChannel());
+
+    mesh.requestTrackBufferFromPeers('Track', 'track-1');
+    mesh.incomingAudioChunks.set('peer-2', { id: 'track-1' });
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(mesh.peerBufferRequestInterval).toBeNull();
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'AUDIO_TRANSFER_PROGRESS', payload: expect.objectContaining({ status: expect.stringContaining('tidak tersedia') }) }));
   });
 
   it('falls back to P2P when a remote audio response stalls past its deadline', async () => {
