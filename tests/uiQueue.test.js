@@ -1183,6 +1183,7 @@ describe('YouTube search queue UI', () => {
     const documentStub = { createElement: makeElement };
     vi.stubGlobal('document', documentStub);
     const ui = new UIManager({});
+    ui.app = { youtubePlayer: { preload: vi.fn().mockResolvedValue(true) } };
     ui.elements = { ytSearchResults: list };
 
     ui.renderSearchResults([{
@@ -1200,6 +1201,7 @@ describe('YouTube search queue UI', () => {
     expect(list.children[1].children[1].children[0].textContent).toBe('<img src=x onerror=alert(1)>');
     expect(list.children[1].children[1].children[1].textContent).toBe('<svg onload=alert(1)>');
     expect(list.children[1].children[1].children[0]._html).toBeUndefined();
+    expect(ui.app.youtubePlayer.preload).toHaveBeenCalledOnce();
   });
 
   it('reuses the same queue item id after a failed add retry and stays added after acknowledgement', async () => {

@@ -1265,6 +1265,7 @@ export class UIManager {
   renderSearchResults(results, { query = '', cached = false, stale = false } = {}) {
     const list = this.elements.ytSearchResults;
     if (!list) return;
+    this.app?.youtubePlayer?.preload?.()?.catch(() => {});
     list.innerHTML = '';
     const resultHeader = document.createElement('div');
     resultHeader.className = 'yt-search-result-header';

@@ -32,6 +32,28 @@ function installFakePlayer() {
 }
 
 describe('YouTube embedded player adapter', () => {
+  it('preloads the official iframe API without creating a player', async () => {
+    vi.resetModules();
+    const { YouTubeEmbedPlayer: IsolatedPlayer } = await import('../public/js/music/YouTubeEmbedPlayer.js');
+    let scriptCount = 0;
+    globalThis.YT = undefined;
+    globalThis.document = {
+      querySelector: () => null,
+      createElement: () => ({ set src(value) { this._src = value; }, async: false }),
+      head: { appendChild() { scriptCount++; } }
+    };
+    const player = new IsolatedPlayer('youtubePlayerContainer');
+    const preload = player.preload();
+
+    expect(scriptCount).toBe(1);
+    expect(player.player).toBeNull();
+    globalThis.YT = { Player: class {} };
+    globalThis.onYouTubeIframeAPIReady();
+    await expect(preload).resolves.toBe(true);
+    expect(scriptCount).toBe(1);
+    expect(player.player).toBeNull();
+  });
+
   it('creates one iframe player when concurrent requests arrive before the API loads', async () => {
     const instances = [];
     globalThis.YT = undefined;

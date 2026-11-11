@@ -54,6 +54,10 @@ export class YouTubeEmbedPlayer {
     return this.playRequestId;
   }
 
+  preload() {
+    return loadIframeApi().then(() => true);
+  }
+
   async ensurePlayer(videoId = '') {
     if (!this.readyPromise) {
       const initialVideoId = videoId;
