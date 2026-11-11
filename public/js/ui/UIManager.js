@@ -462,7 +462,7 @@ export class UIManager {
         const code = elements.roomCodeInput.value.trim().toUpperCase();
         if (/^[A-Z0-9]{4}$/.test(code)) {
           try {
-            await app.audioEngine.ensureContext();
+            app.audioEngine.ensureContext().catch(() => {});
             await app.socketClient.joinRoom(code, this.getDeviceName());
           } catch (error) {
             this.showUrlFeedback('Room tidak bisa dimasuki. Periksa kode atau koneksi.', 'error');
@@ -494,7 +494,7 @@ export class UIManager {
             if (elements.roomCodeInput) elements.roomCodeInput.value = scannedCode;
             if (elements.qrScannerModal) elements.qrScannerModal.classList.remove('active');
             try {
-              await app.audioEngine.ensureContext();
+              app.audioEngine.ensureContext().catch(() => {});
               await app.socketClient.joinRoom(scannedCode, this.getDeviceName());
             } catch (error) {
               this.showUrlFeedback('Room tidak bisa dimasuki. Periksa kode atau koneksi.', 'error');

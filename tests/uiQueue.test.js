@@ -111,6 +111,31 @@ describe('YouTube search queue UI', () => {
     expect(ui.showUrlFeedback).toHaveBeenLastCalledWith('Room siap, tetapi antrean gagal disinkronkan. Coba lagi dari perangkat host.', 'error');
   });
 
+  it('joins the room without waiting for the audio context to resume', async () => {
+    let finishAudioContext;
+    const socketClient = { roomId: null, joinRoom: vi.fn(async code => { socketClient.roomId = code; }) };
+    const ui = new UIManager({
+      socketClient,
+      audioEngine: { ensureContext: vi.fn(() => new Promise(resolve => { finishAudioContext = resolve; })) }
+    });
+    ui.showUrlFeedback = vi.fn();
+    ui.startPlaybackTicker = vi.fn();
+    ui.getDeviceName = () => 'Guest';
+    ui.elements = {
+      joinRoomBtn: { addEventListener: (_event, handler) => { ui.joinHandler = handler; } },
+      roomCodeInput: { value: ' ab12 ', addEventListener() {} },
+      roomFeedback: null, directUrlFeedback: null
+    };
+
+    vi.stubGlobal('window', { addEventListener: vi.fn(), location: { origin: 'https://rync.example' } });
+    ui.bindEvents();
+    await ui.joinHandler();
+
+    expect(socketClient.joinRoom).toHaveBeenCalledWith('AB12', 'Guest');
+    expect(ui.app.audioEngine.ensureContext).toHaveBeenCalledOnce();
+    finishAudioContext();
+  });
+
   it('waits for the audio context before toggling the audible metronome', async () => {
     let makeMetronomeReady;
     const metronome = { start: vi.fn(), stop: vi.fn() };
