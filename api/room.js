@@ -14,6 +14,22 @@ const queueRevisionOf = room => Number.isSafeInteger(room?.queueRevision) ? room
 const updateQueueRevision = (room, previousQueue) => {
   if (previousQueue !== JSON.stringify(room.queue || [])) room.queueRevision = queueRevisionOf(room) + 1;
 };
+const checkQueueRevision = (room, body, res) => {
+  if (body.expectedQueueRevision !== undefined && !Number.isSafeInteger(body.expectedQueueRevision)) {
+    res.status(400).json({ success: false, error: 'INVALID_QUEUE_REVISION' });
+    return false;
+  }
+  if (body.expectedQueueRevision !== undefined && body.expectedQueueRevision !== queueRevisionOf(room)) {
+    res.status(409).json({
+      success: false,
+      error: 'QUEUE_CONFLICT',
+      queue: room.queue || [],
+      queueRevision: queueRevisionOf(room)
+    });
+    return false;
+  }
+  return true;
+};
 
 const roomStorePath = !process.env.VERCEL && process.env.NODE_ENV !== 'test'
   ? (process.env.RYNC_ROOM_STORE_PATH || path.join(process.cwd(), 'data', 'rooms.json'))
@@ -106,6 +122,7 @@ export default async function handler(req, res) {
       const room = rooms.get(roomId);
       if (!requireHost(room, body.hostToken)) return;
       if (!room.queue) room.queue = [];
+      if (!checkQueueRevision(room, body, res)) return;
       const previousQueueSnapshot = JSON.stringify(room.queue);
       let item = targetQueueId ? room.queue.find(q => q.id === targetQueueId) : null;
       if (!item) {
@@ -298,8 +315,11 @@ export default async function handler(req, res) {
       }
     }
 
+    const hostQueueRevisionMatches = body.queueRevision === undefined
+      || body.queueRevision === queueRevisionOf(room);
+
     // Keep host order, while retaining items added by peers since its last snapshot.
-    if (isThisHost && Array.isArray(body.queue) && body.queue.length > 0) {
+    if (isThisHost && hostQueueRevisionMatches && Array.isArray(body.queue) && body.queue.length > 0) {
       const deletedIds = new Set(Array.isArray(body.deletedQueueIds) ? body.deletedQueueIds : []);
       const orderedQueue = body.queue.filter(item => item && item.id && !deletedIds.has(item.id));
       const knownIds = new Set(orderedQueue.map(item => item.id));
@@ -312,11 +332,11 @@ export default async function handler(req, res) {
       room.queue = orderedQueue;
     }
 
-    if (isThisHost && Array.isArray(body.deletedQueueIds) && body.deletedQueueIds.length > 0) {
+    if (isThisHost && hostQueueRevisionMatches && Array.isArray(body.deletedQueueIds) && body.deletedQueueIds.length > 0) {
       const delSet = new Set(body.deletedQueueIds);
       room.queue = (room.queue || []).filter(item => !delSet.has(item.id));
     }
-    if (isThisHost) updateQueueRevision(room, previousQueueSnapshot);
+    if (isThisHost && hostQueueRevisionMatches) updateQueueRevision(room, previousQueueSnapshot);
 
     const isHostAssigned = isThisHost;
 
@@ -355,6 +375,7 @@ export default async function handler(req, res) {
       track: room.track,
       queue: room.queue || [],
       queueRevision: queueRevisionOf(room),
+      queueConflict: isThisHost && Array.isArray(body.queue) && !hostQueueRevisionMatches,
       targetServerTime: room.targetServerTime,
       startOffsetSec: room.startOffsetSec,
       repeatMode: room.repeatMode || 'off',
@@ -371,6 +392,7 @@ export default async function handler(req, res) {
     if (Array.isArray(body.queue) && body.queue.length > MAX_QUEUE_ITEMS) {
       return res.status(413).json({ success: false, error: 'QUEUE_LIMIT_REACHED', maxItems: MAX_QUEUE_ITEMS });
     }
+    if (Array.isArray(body.queue) && room && !checkQueueRevision(room, body, res)) return;
     if (!room) {
       room = {
         roomId,
@@ -451,6 +473,7 @@ export default async function handler(req, res) {
     if (!room) return res.status(404).json({ success: false, error: 'ROOM_NOT_FOUND' });
     if (!peerId || !room.peers?.[peerId]) return res.status(403).json({ success: false, error: 'ROOM_MEMBER_REQUIRED' });
     if (!room.queue) room.queue = [];
+    if (!checkQueueRevision(room, body, res)) return;
     const previousQueueSnapshot = JSON.stringify(room.queue);
 
     if (Array.isArray(body.items)) {
@@ -525,17 +548,7 @@ export default async function handler(req, res) {
   if (action === 'reorder_queue') {
     const room = rooms.get(roomId);
     if (!requireHost(room, body.hostToken)) return;
-    if (body.expectedQueueRevision !== undefined && !Number.isSafeInteger(body.expectedQueueRevision)) {
-      return res.status(400).json({ success: false, error: 'INVALID_QUEUE_REVISION' });
-    }
-    if (body.expectedQueueRevision !== undefined && body.expectedQueueRevision !== queueRevisionOf(room)) {
-      return res.status(409).json({
-        success: false,
-        error: 'QUEUE_CONFLICT',
-        queue: room.queue || [],
-        queueRevision: queueRevisionOf(room)
-      });
-    }
+    if (!checkQueueRevision(room, body, res)) return;
     if (room && Array.isArray(body.queue)) {
       const previousQueueSnapshot = JSON.stringify(room.queue || []);
       const currentQueue = room.queue || [];
@@ -564,6 +577,7 @@ export default async function handler(req, res) {
   if (action === 'play_next') {
     const room = rooms.get(roomId);
     if (!requireHost(room, body.hostToken)) return;
+    if (!checkQueueRevision(room, body, res)) return;
     if (room && room.queue) {
       const qId = body.queueId;
       const targetIdx = room.queue.findIndex(q => q.id === qId);
@@ -584,6 +598,7 @@ export default async function handler(req, res) {
   if (action === 'play_queue_item') {
     const room = rooms.get(roomId);
     if (!requireHost(room, body.hostToken)) return;
+    if (!checkQueueRevision(room, body, res)) return;
     if (room && room.queue) {
       const qId = body.queueId;
       const target = room.queue.find(q => q.id === qId);
@@ -611,6 +626,7 @@ export default async function handler(req, res) {
   if (action === 'remove_queue') {
     const room = rooms.get(roomId);
     if (!requireHost(room, body.hostToken)) return;
+    if (!checkQueueRevision(room, body, res)) return;
     if (room && room.queue) {
       const previousQueueSnapshot = JSON.stringify(room.queue);
       const qId = body.queueId;
@@ -625,6 +641,7 @@ export default async function handler(req, res) {
   if (action === 'clear_queue') {
     const room = rooms.get(roomId);
     if (!requireHost(room, body.hostToken)) return;
+    if (!checkQueueRevision(room, body, res)) return;
     if (!Array.isArray(body.queueIds) || body.queueIds.length > 200
       || body.queueIds.some(id => typeof id !== 'string' || id.length > 160)) {
       return res.status(400).json({ success: false, error: 'INVALID_QUEUE_IDS' });
@@ -648,6 +665,7 @@ export default async function handler(req, res) {
   if (action === 'restore_queue') {
     const room = rooms.get(roomId);
     if (!requireHost(room, body.hostToken)) return;
+    if (!checkQueueRevision(room, body, res)) return;
     if (!Array.isArray(body.removed) || body.removed.length > 200
       || body.removed.some(entry => !entry?.item?.id || !Number.isInteger(entry.index) || entry.index < 0)) {
       return res.status(400).json({ success: false, error: 'INVALID_QUEUE_RESTORE' });

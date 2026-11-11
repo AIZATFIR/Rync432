@@ -80,6 +80,37 @@ describe('room authority', () => {
     expect(staleReorder.body.queue.map(item => item.id)).toEqual(['track-a', 'track-b']);
   });
 
+  it('rejects stale revisions for every queue mutation with the canonical queue', async () => {
+    const roomId = `Q${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
+      { id: 'track-a', name: 'A' }, { id: 'track-b', name: 'B' }
+    ] });
+    const staleMutations = [
+      ['add_queue', { id: 'track-c', name: 'C' }],
+      ['reorder_queue', { queue: [{ id: 'track-b' }, { id: 'track-a' }] }],
+      ['play_queue_item', { queueId: 'track-a' }],
+      ['play_next', { queueId: 'track-b' }],
+      ['remove_queue', { queueId: 'track-a' }],
+      ['clear_queue', { queueIds: ['track-a'] }],
+      ['restore_queue', { removed: [{ item: { id: 'track-c', name: 'C' }, index: 1 }] }]
+    ];
+
+    for (const [action, payload] of staleMutations) {
+      const result = await callRoom(action, {
+        roomId,
+        peerId: 'host-peer',
+        hostToken: created.body.hostToken,
+        expectedQueueRevision: 0,
+        ...payload
+      });
+      expect(result.statusCode, action).toBe(409);
+      expect(result.body.error, action).toBe('QUEUE_CONFLICT');
+      expect(result.body.queueRevision, action).toBe(1);
+      expect(result.body.queue.map(item => item.id), action).toEqual(['track-a', 'track-b']);
+    }
+  });
+
   it('keeps tracks added by members while preserving the host reordered list', async () => {
     const roomId = `S${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
@@ -104,6 +135,27 @@ describe('room authority', () => {
     });
 
     expect(result.body.queue.map(item => item.id)).toEqual(['track-c', 'track-a', 'track-b', 'track-d']);
+  });
+
+  it('ignores a stale host poll queue snapshot and returns the current room queue', async () => {
+    const roomId = `P${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
+    await callRoom('add_queue', { roomId, peerId: 'guest-peer', items: [{ id: 'guest-track', name: 'Guest track' }] });
+
+    const result = await callRoom('poll', {
+      roomId,
+      peerId: 'host-peer',
+      hostToken: created.body.hostToken,
+      isHost: true,
+      queueRevision: 0,
+      queue: [{ id: 'stale-track', name: 'Stale track' }],
+      deletedQueueIds: ['guest-track']
+    });
+
+    expect(result.body.queueConflict).toBe(true);
+    expect(result.body.queueRevision).toBe(1);
+    expect(result.body.queue.map(item => item.id)).toEqual(['guest-track']);
   });
 
   it('preserves a member addition that races with a host reorder', async () => {

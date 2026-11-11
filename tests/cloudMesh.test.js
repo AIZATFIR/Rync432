@@ -143,6 +143,32 @@ describe('CloudMesh audio transfer', () => {
     expect(mesh.lastKnownQueue).toEqual(canonicalQueue);
   });
 
+  it('rebases a queue addition once on a conflict snapshot', async () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'guest-peer';
+    mesh.queueRevision = 7;
+    const canonicalQueue = [{ id: 'from-host' }];
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({
+        success: false, error: 'QUEUE_CONFLICT', queue: canonicalQueue, queueRevision: 8
+      }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({
+        success: true, queue: [...canonicalQueue, { id: 'new-track' }], queueRevision: 9
+      }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    mesh.addToQueue({ id: 'new-track', name: 'New track' });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).expectedQueueRevision).toBe(7);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).expectedQueueRevision).toBe(8);
+    expect(mesh.queueRevision).toBe(9);
+    expect(mesh.lastKnownQueue.map(item => item.id)).toEqual(['from-host', 'new-track']);
+    expect(events.some(event => event.type === 'QUEUE_SYNC_ERROR')).toBe(false);
+  });
+
   it('clears upcoming tracks optimistically while keeping the active track', async () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
@@ -151,13 +177,15 @@ describe('CloudMesh audio transfer', () => {
     mesh.peerId = 'peer-1';
     mesh.lastKnownTrack = { id: 'current' };
     mesh.lastKnownQueue = [{ id: 'current' }, { id: 'next' }];
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({
       success: true, queue: [{ id: 'current' }], removed: [{ item: { id: 'next' }, index: 1 }]
-    }) }));
+    }) });
+    vi.stubGlobal('fetch', fetchMock);
 
     const result = await mesh.clearQueue(['current', 'next']);
 
     expect(result.removed).toEqual([{ item: { id: 'next' }, index: 1 }]);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).expectedQueueRevision).toBe(0);
     expect(mesh.lastKnownQueue.map(item => item.id)).toEqual(['current']);
     expect(mesh.deletedQueueIds.has('next')).toBe(true);
     expect(events.some(event => event.type === 'QUEUE_UPDATED')).toBe(true);
