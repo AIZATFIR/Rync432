@@ -43,3 +43,5 @@ npm run build
 ```
 
 Untuk instalasi homeserver, pastikan folder penyimpanan room persisten. Deploy ke Vercel tidak menyediakan penyimpanan file room persisten secara otomatis; gunakan layanan penyimpanan yang sesuai sebelum mengandalkannya untuk room yang harus bertahan antar-instance.
+
+Panduan update, pemeriksaan setelah restart, dan rollback homeserver ada di [docs/homeserver-runbook.md](docs/homeserver-runbook.md).
