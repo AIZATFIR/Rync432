@@ -2209,9 +2209,15 @@ export class UIManager {
 
   async syncLocalQueueToRoom() {
     const room = this.app.socketClient;
-    const currentId = this.currentTrack?.id;
-    const items = this.soloQueue.filter(item => item?.id && item.id !== currentId);
-    for (const item of items) await room.addToQueue(item);
+    const activeTrack = this.currentTrack || room.cloudMesh?.lastKnownTrack;
+    const items = [...this.soloQueue];
+    if (activeTrack?.id && !items.some(item => item?.id === activeTrack.id)) items.unshift(activeTrack);
+    const seenIds = new Set();
+    for (const item of items) {
+      if (!item?.id || seenIds.has(item.id)) continue;
+      seenIds.add(item.id);
+      await room.addToQueue(item);
+    }
   }
 
   async seedCurrentTrackIntoRoom() {

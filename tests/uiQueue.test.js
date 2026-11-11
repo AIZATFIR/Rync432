@@ -81,6 +81,32 @@ describe('YouTube search queue UI', () => {
     expect(schedulePlay).toHaveBeenCalledWith(800, 12);
   });
 
+  it('copies the full solo queue in order when a room is created', async () => {
+    const current = { id: 'current', name: 'Current' };
+    const first = { id: 'first', name: 'First' };
+    const last = { id: 'last', name: 'Last' };
+    const room = { addToQueue: vi.fn().mockResolvedValue(true) };
+    const ui = new UIManager({ socketClient: room });
+    ui.currentTrack = current;
+    ui.soloQueue = [first, current, last];
+
+    await ui.syncLocalQueueToRoom();
+
+    expect(room.addToQueue.mock.calls.map(([track]) => track.id)).toEqual(['first', 'current', 'last']);
+  });
+
+  it('puts an active track first when it was played outside the saved queue', async () => {
+    const current = { id: 'current', name: 'Current' };
+    const room = { addToQueue: vi.fn().mockResolvedValue(true) };
+    const ui = new UIManager({ socketClient: room });
+    ui.currentTrack = current;
+    ui.soloQueue = [{ id: 'next', name: 'Next' }];
+
+    await ui.syncLocalQueueToRoom();
+
+    expect(room.addToQueue.mock.calls.map(([track]) => track.id)).toEqual(['current', 'next']);
+  });
+
   it('does not schedule room playback when the server rejects track selection', async () => {
     const track = { id: 'yt_dQw4w9WgXcQ', name: 'Song', sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ' };
     const schedulePlay = vi.fn();
