@@ -151,6 +151,22 @@ describe('room authority', () => {
     expect(result.body.queue.map(item => item.id)).toEqual(['track-c', 'track-a', 'track-b', 'track-d']);
   });
 
+  it('accepts one idempotent batch of queue additions from a room member', async () => {
+    const roomId = `B${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
+
+    const result = await callRoom('add_queue', {
+      roomId,
+      peerId: 'guest-peer',
+      items: [{ id: 'track-a', name: 'A' }, { id: 'track-b', name: 'B' }, { id: 'track-a', name: 'A' }]
+    });
+
+    expect(result.statusCode).toBe(200);
+    expect(result.body.queue.map(item => item.id)).toEqual(['track-a', 'track-b']);
+    expect(result.body.queueRevision).toBe(1);
+  });
+
   it('ignores a stale host poll queue snapshot and returns the current room queue', async () => {
     const roomId = `P${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });

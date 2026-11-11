@@ -996,6 +996,91 @@ export class CloudMesh {
     } catch (e) { }
   }
 
+  async addQueueItems(tracks) {
+    if (!Array.isArray(tracks) || tracks.length === 0) return true;
+    const currentQueue = this.lastKnownQueue || [];
+    const knownIds = new Set(currentQueue.map(item => item?.id).filter(Boolean));
+    const additions = [];
+    for (const track of tracks) {
+      if (!track || typeof track !== 'object') continue;
+      const item = {
+        id: track.id || ('q_' + Math.random().toString(36).substring(2, 9)),
+        name: track.name || 'Untitled',
+        artist: track.artist || 'Artist',
+        duration: track.duration || 0,
+        thumbnail: track.thumbnail || '',
+        audioUrl: track.audioUrl || '',
+        sourceType: track.sourceType,
+        sourceId: track.sourceId,
+        sourceUrl: track.sourceUrl,
+        isSynthetic: !!track.isSynthetic,
+        addedBy: track.addedBy || this.deviceName
+      };
+      if (knownIds.has(item.id)) continue;
+      knownIds.add(item.id);
+      additions.push(item);
+    }
+    if (!additions.length) return true;
+
+    this.lastKnownQueue = [...currentQueue, ...additions];
+    this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
+    this.saveLocalQueue(this.lastKnownQueue);
+    this.onEvent('QUEUE_UPDATED', { queue: this.lastKnownQueue });
+    this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
+    this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
+    if (!this.roomId || !this.peerId) return true;
+
+    const submit = async (expectedQueueRevision, retryConflict) => {
+      const res = await fetchQueueMutation('/api/room?action=add_queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: this.roomId,
+          peerId: this.peerId,
+          deviceName: this.deviceName,
+          expectedQueueRevision,
+          items: additions
+        })
+      });
+      const data = await res.json();
+      this.rememberQueueRevision(data);
+      if (res.status === 409 && retryConflict && Array.isArray(data.queue)
+        && Number.isSafeInteger(data.queueRevision)) {
+        this.applyCanonicalQueue(data.queue);
+        return submit(data.queueRevision, false);
+      }
+      if (!res.ok || !data.success) {
+        if (Array.isArray(data.queue)) this.applyCanonicalQueue(data.queue);
+        this.onEvent('QUEUE_SYNC_ERROR', {
+          queue: this.lastKnownQueue,
+          message: 'Antrean belum tersinkron ke room. Coba lagi.'
+        });
+        return false;
+      }
+      if (Array.isArray(data.queue)) {
+        const serverIds = new Set(data.queue.map(item => item?.id).filter(Boolean));
+        const pendingItems = this.lastKnownQueue.filter(item => item?.id && !serverIds.has(item.id) && !this.deletedQueueIds.has(item.id));
+        this.lastKnownQueue = [...data.queue, ...pendingItems];
+        this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
+        this.saveLocalQueue(this.lastKnownQueue);
+        this.onEvent('QUEUE_UPDATED', { queue: this.lastKnownQueue });
+        this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
+        this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
+      }
+      return true;
+    };
+
+    try {
+      return await submit(this.queueRevision, true);
+    } catch (error) {
+      this.onEvent('QUEUE_SYNC_ERROR', {
+        queue: this.lastKnownQueue,
+        message: 'Antrean tersimpan di perangkat ini, sinkronisasi room gagal.'
+      });
+      return false;
+    }
+  }
+
   async addToQueue(track) {
     // Optimistic immediate queue update
     const currentQ = this.lastKnownQueue || [];

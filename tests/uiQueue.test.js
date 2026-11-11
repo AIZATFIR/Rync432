@@ -823,6 +823,25 @@ describe('YouTube search queue UI', () => {
     expect(room.addToQueue.mock.calls.map(([track]) => track.id)).toEqual(['first', 'current', 'last']);
   });
 
+  it('batches consecutive non-local tracks around local audio uploads', async () => {
+    const first = { id: 'first', name: 'First' };
+    const local = { id: 'local', name: 'Local', sourceType: 'local-file' };
+    const last = { id: 'last', name: 'Last' };
+    const order = [];
+    const room = {
+      cloudMesh: { lastKnownQueue: [], addQueueItems: vi.fn(async items => { order.push(['batch', items.map(item => item.id)]); return true; }) }
+    };
+    const ui = new UIManager({ socketClient: room });
+    ui.soloQueue = [first, local, last];
+    ui.localLibrary.getLocalAudio = vi.fn().mockResolvedValue({ audioData: new ArrayBuffer(8) });
+    ui.uploadLocalTrackToRoom = vi.fn(async item => { order.push(['upload', item.id]); });
+
+    await ui.syncLocalQueueToRoom();
+
+    expect(order).toEqual([['batch', ['first']], ['upload', 'local'], ['batch', ['last']]]);
+    expect(room.cloudMesh.addQueueItems).toHaveBeenCalledTimes(2);
+  });
+
   it('puts an active track first when it was played outside the saved queue', async () => {
     const current = { id: 'current', name: 'Current' };
     const room = { addToQueue: vi.fn().mockResolvedValue(true) };

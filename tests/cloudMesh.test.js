@@ -328,6 +328,51 @@ describe('CloudMesh audio transfer', () => {
     expect(JSON.parse(fetch.mock.calls[0][1].body)).toMatchObject({ sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ' });
   });
 
+  it('syncs multiple tracks with one optimistic room queue request', async () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'host';
+    mesh.lastKnownQueue = [];
+    mesh.publishMqtt = vi.fn();
+    mesh.broadcastDataChannelMessage = vi.fn();
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({
+      success: true,
+      queueRevision: 1,
+      queue: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }]
+    }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await mesh.addQueueItems([
+      { id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'a', name: 'A' }
+    ]);
+
+    expect(result).toBe(true);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).items.map(item => item.id)).toEqual(['a', 'b']);
+    expect(mesh.lastKnownQueue.map(item => item.id)).toEqual(['a', 'b']);
+  });
+
+  it('rebases a batched room queue addition once on a revision conflict', async () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'host';
+    mesh.queueRevision = 2;
+    mesh.lastKnownQueue = [];
+    mesh.publishMqtt = vi.fn();
+    mesh.broadcastDataChannelMessage = vi.fn();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({ queueRevision: 3, queue: [{ id: 'other', name: 'Other' }] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ success: true, queueRevision: 4, queue: [{ id: 'other', name: 'Other' }, { id: 'mine', name: 'Mine' }] }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(mesh.addQueueItems([{ id: 'mine', name: 'Mine' }])).resolves.toBe(true);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).expectedQueueRevision).toBe(2);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).expectedQueueRevision).toBe(3);
+    expect(mesh.lastKnownQueue.map(item => item.id)).toEqual(['other', 'mine']);
+  });
+
   it('retries P2P buffer requests while an open peer channel has no cached audio yet', () => {
     vi.useFakeTimers();
     const mesh = new CloudMesh(() => {});

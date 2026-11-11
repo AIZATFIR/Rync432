@@ -2736,6 +2736,18 @@ export class UIManager {
     const items = [...this.soloQueue];
     if (activeTrack?.id && !items.some(item => item?.id === activeTrack.id)) items.unshift(activeTrack);
     const seenIds = new Set();
+    let queueBatch = [];
+    const flushQueueBatch = async () => {
+      if (!queueBatch.length) return;
+      const batch = queueBatch;
+      queueBatch = [];
+      if (room.cloudMesh?.addQueueItems) {
+        const synced = await room.cloudMesh.addQueueItems(batch);
+        if (!synced) throw new Error('ROOM_QUEUE_SYNC_FAILED');
+      } else {
+        for (const item of batch) await room.addToQueue(item);
+      }
+    };
     for (const item of items) {
       if (!item?.id || seenIds.has(item.id)) continue;
       seenIds.add(item.id);
@@ -2743,6 +2755,7 @@ export class UIManager {
         continue;
       }
       if (item.sourceType === 'local-file') {
+        await flushQueueBatch();
         const localTrack = await this.localLibrary.getLocalAudio(item.id);
         if (!localTrack?.audioData) {
           this.showUrlFeedback(`File ${item.name} tidak tersedia di perangkat ini.`, 'error');
@@ -2750,9 +2763,10 @@ export class UIManager {
         }
         await this.uploadLocalTrackToRoom(item, localTrack.audioData);
       } else {
-        await room.addToQueue(item);
+        queueBatch.push(item);
       }
     }
+    await flushQueueBatch();
   }
 
   async seedCurrentTrackIntoRoom() {
