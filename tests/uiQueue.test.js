@@ -221,6 +221,25 @@ describe('YouTube search queue UI', () => {
     expect(ui.showUrlFeedback).toHaveBeenLastCalledWith('Room tidak bisa dimasuki. Periksa kode atau koneksi.', 'error');
   });
 
+  it('explains when a room has reached its device limit', async () => {
+    const button = { disabled: false, textContent: 'Gabung' };
+    const error = Object.assign(new Error('ROOM_FULL'), { code: 'ROOM_FULL' });
+    const ui = new UIManager({
+      socketClient: { joinRoom: vi.fn().mockRejectedValue(error) },
+      audioEngine: { ensureContext: vi.fn().mockResolvedValue(undefined) }
+    });
+    ui.getDeviceName = () => 'Guest';
+    ui.setView = vi.fn();
+    ui.showUrlFeedback = vi.fn();
+    ui.clearUrlFeedback = vi.fn();
+    ui.elements = { joinRoomBtn: button, roomCodeInput: { value: '' } };
+
+    await ui.joinRoom('AB12');
+
+    expect(button.disabled).toBe(false);
+    expect(ui.showUrlFeedback).toHaveBeenLastCalledWith('Room sudah penuh (maksimal 5 perangkat). Minta host kosongkan satu slot, lalu coba lagi.', 'error');
+  });
+
   it('waits for the audio context before toggling the audible metronome', async () => {
     let makeMetronomeReady;
     const metronome = { start: vi.fn(), stop: vi.fn() };

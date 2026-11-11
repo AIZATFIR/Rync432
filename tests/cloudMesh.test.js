@@ -1152,6 +1152,29 @@ describe('CloudMesh audio transfer', () => {
     expect(events).toContainEqual(expect.objectContaining({ type: 'ROOM_ERROR' }));
   });
 
+  it('preserves the room-full code and explains the device limit', async () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.initBroadcastChannel = vi.fn();
+    mesh.initMqttBus = vi.fn();
+    mesh.unsubscribe = vi.fn();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ error: 'ROOM_FULL' })
+    }));
+
+    await expect(mesh.joinRoom('FULL', 'peer-6', 'Guest')).rejects.toMatchObject({ code: 'ROOM_FULL' });
+
+    expect(events).toContainEqual({
+      type: 'ROOM_ERROR',
+      payload: {
+        code: 'ROOM_FULL',
+        message: 'Room sudah penuh (maksimal 5 perangkat). Minta host kosongkan satu slot, lalu coba lagi.'
+      }
+    });
+  });
+
   it('records local room join duration and failure without room identifiers', async () => {
     const store = new Map();
     vi.stubGlobal('localStorage', { getItem: key => store.get(key) || null, setItem: (key, value) => store.set(key, value) });

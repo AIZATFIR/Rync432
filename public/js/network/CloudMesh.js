@@ -1,6 +1,7 @@
 // CloudMesh: High-Precision WebRTC Local Mesh + Serverless Edge Relay
 // Connects Laptop & Mobile Phones with Sub-Millisecond Clock Alignment
 import { recordLocalMetric } from '../metrics/localMetrics.js';
+import { roomJoinMessage } from './roomJoinMessage.js';
 
 const P2P_AUDIO_CHUNK_BYTES = 32 * 1024;
 const P2P_AUDIO_FRAME_HEADER_BYTES = 12;
@@ -267,7 +268,11 @@ export class CloudMesh {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roomId, peerId, deviceName, hostToken: this.hostToken || undefined })
       });
-      if (!response.ok || !data.room) throw new Error(data.error || 'Room tidak ditemukan.');
+      if (!response.ok || !data.room) {
+        const error = new Error(data.error || 'ROOM_NOT_FOUND');
+        error.code = data.error || 'ROOM_NOT_FOUND';
+        throw error;
+      }
       if (data.room.roomId && data.room.roomId !== roomId) throw new Error('Room response mismatch');
       if (this.roomId !== roomId) return data.room;
       this.isHost = data.room.isHost === true;
@@ -285,7 +290,7 @@ export class CloudMesh {
         this.peerId = null;
         this.isHost = false;
         this.hostToken = null;
-        this.onEvent('ROOM_ERROR', { message: 'Room tidak bisa dimasuki. Periksa kode atau koneksi.' });
+        this.onEvent('ROOM_ERROR', { code: error.code, message: roomJoinMessage(error.code) });
       }
       throw error;
     }

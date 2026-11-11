@@ -5,6 +5,7 @@ import { MusicSourceManager } from '../music/MusicSourceManager.js';
 import { MusicSourceType } from '../music/types.js';
 import { LocalLibrary } from '../library/LocalLibrary.js';
 import { recordLocalMetric } from '../metrics/localMetrics.js';
+import { roomJoinMessage } from '../network/roomJoinMessage.js';
 
 const YOUTUBE_SEARCH_DEBOUNCE_MS = 250;
 const RECENT_YOUTUBE_SEARCHES_KEY = 'rync_recent_youtube_searches';
@@ -2367,7 +2368,7 @@ export class UIManager {
       this.clearUrlFeedback();
     } catch (error) {
       this.setView('room');
-      this.showUrlFeedback('Room tidak bisa dimasuki. Periksa kode atau koneksi.', 'error');
+      this.showUrlFeedback(roomJoinMessage(error.code), 'error');
     } finally {
       if (button) {
         button.disabled = false;
