@@ -8,6 +8,31 @@ const P2P_AUDIO_TRANSFER_TIMEOUT_MS = 30_000;
 const P2P_AUDIO_ACK_TIMEOUT_MS = 10_000;
 const P2P_AUDIO_BACKPRESSURE_TIMEOUT_MS = 15_000;
 const QUEUE_MUTATION_TIMEOUT_MS = 8_000;
+const ROOM_JOIN_TIMEOUT_MS = 8_000;
+
+async function fetchRoomJoin(url, options) {
+  const controller = new AbortController();
+  let timeout;
+  try {
+    const request = (async () => {
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      return { response, data: await response.json() };
+    })();
+    return await Promise.race([
+      request,
+      new Promise((resolve, reject) => {
+        timeout = setTimeout(() => {
+          controller.abort();
+          const error = new Error('ROOM_JOIN_TIMEOUT');
+          error.name = 'TimeoutError';
+          reject(error);
+        }, ROOM_JOIN_TIMEOUT_MS);
+      })
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 async function fetchQueueMutation(url, options) {
   const controller = new AbortController();
@@ -188,12 +213,11 @@ export class CloudMesh {
     this.initMqttBus(roomId, deviceName);
 
     try {
-      const response = await fetch('/api/room?action=join', {
+      const { response, data } = await fetchRoomJoin('/api/room?action=join', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roomId, peerId, deviceName, hostToken: this.hostToken || undefined })
       });
-      const data = await response.json();
       if (!response.ok || !data.room) throw new Error(data.error || 'Room tidak ditemukan.');
       if (data.room.roomId && data.room.roomId !== roomId) throw new Error('Room response mismatch');
       this.isHost = data.room.isHost === true;

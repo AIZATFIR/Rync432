@@ -462,6 +462,43 @@ describe('CloudMesh audio transfer', () => {
     mesh.leaveRoom();
   });
 
+  it('times out a stalled room join and clears the pending room identity', async () => {
+    vi.useFakeTimers();
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.initBroadcastChannel = vi.fn();
+    mesh.initMqttBus = vi.fn();
+    mesh.unsubscribe = vi.fn();
+    vi.stubGlobal('fetch', () => new Promise(() => {}));
+
+    const joining = mesh.joinRoom('ROOM', 'peer-1', 'Guest');
+    const rejected = expect(joining).rejects.toThrow('ROOM_JOIN_TIMEOUT');
+    await vi.advanceTimersByTimeAsync(8_000);
+
+    await rejected;
+    expect(mesh.roomId).toBeNull();
+    expect(mesh.peerId).toBeNull();
+    expect(mesh.isHost).toBe(false);
+    expect(mesh.unsubscribe).toHaveBeenCalledOnce();
+    expect(events).toContainEqual(expect.objectContaining({ type: 'ROOM_ERROR' }));
+  });
+
+  it('times out a room join when the response body stalls after headers', async () => {
+    vi.useFakeTimers();
+    const mesh = new CloudMesh(() => {});
+    mesh.initBroadcastChannel = vi.fn();
+    mesh.initMqttBus = vi.fn();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => new Promise(() => {}) }));
+
+    const joining = mesh.joinRoom('ROOM', 'peer-1', 'Guest');
+    const rejected = expect(joining).rejects.toThrow('ROOM_JOIN_TIMEOUT');
+    await vi.advanceTimersByTimeAsync(8_000);
+
+    await rejected;
+    expect(mesh.roomId).toBeNull();
+    expect(mesh.peerId).toBeNull();
+  });
+
   it('reports join failure and releases the room state', async () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
