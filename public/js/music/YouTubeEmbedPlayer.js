@@ -1,14 +1,14 @@
 const IFRAME_API_URL = 'https://www.youtube.com/iframe_api';
-const PLAYER_READY_TIMEOUT_MS = 12_000;
+const PLAYER_STARTUP_TIMEOUT_MS = 12_000;
 let apiPromise;
 
-function loadIframeApi() {
+function loadIframeApi(deadline = Date.now() + PLAYER_STARTUP_TIMEOUT_MS) {
   if (globalThis.YT?.Player) return Promise.resolve(globalThis.YT);
   if (apiPromise) return apiPromise;
 
   apiPromise = new Promise((resolve, reject) => {
     const previousReady = globalThis.onYouTubeIframeAPIReady;
-    const timeout = setTimeout(() => reject(new Error('YOUTUBE_PLAYER_TIMEOUT')), 12_000);
+    const timeout = setTimeout(() => reject(new Error('YOUTUBE_PLAYER_TIMEOUT')), Math.max(0, deadline - Date.now()));
     globalThis.onYouTubeIframeAPIReady = () => {
       clearTimeout(timeout);
       try { previousReady?.(); } catch (error) {}
@@ -57,13 +57,14 @@ export class YouTubeEmbedPlayer {
   async ensurePlayer(videoId = '') {
     if (!this.readyPromise) {
       const initialVideoId = videoId;
-      this.readyPromise = loadIframeApi().then(YT => new Promise((resolve, reject) => {
+      const startupDeadline = Date.now() + PLAYER_STARTUP_TIMEOUT_MS;
+      this.readyPromise = loadIframeApi(startupDeadline).then(YT => new Promise((resolve, reject) => {
         let settled = false;
         const readinessTimeout = setTimeout(() => {
           if (settled) return;
           settled = true;
           reject(new Error('YOUTUBE_PLAYER_READY_TIMEOUT'));
-        }, PLAYER_READY_TIMEOUT_MS);
+        }, Math.max(0, startupDeadline - Date.now()));
         try {
           this.player = new YT.Player(this.elementId, {
             width: '480',

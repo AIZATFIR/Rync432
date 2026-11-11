@@ -97,6 +97,28 @@ describe('YouTube embedded player adapter', () => {
     expect(player.readyPromise).toBeNull();
   });
 
+  it('bounds total startup time when the iframe API loads but never calls ready', async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    const { YouTubeEmbedPlayer: IsolatedYouTubeEmbedPlayer } = await import('../public/js/music/YouTubeEmbedPlayer.js');
+    delete globalThis.YT;
+    globalThis.document = {
+      querySelector: () => null,
+      createElement: () => ({ set src(value) { this._src = value; }, async: false }),
+      head: { appendChild() {} }
+    };
+    const player = new IsolatedYouTubeEmbedPlayer('youtubePlayerContainer');
+    const readiness = player.ensurePlayer();
+    const result = readiness.then(() => null, error => error.message);
+    await vi.advanceTimersByTimeAsync(11_900);
+
+    globalThis.YT = { Player: class { constructor() {} } };
+    globalThis.onYouTubeIframeAPIReady();
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(result).resolves.toBe('YOUTUBE_PLAYER_READY_TIMEOUT');
+  });
+
   it('aligns iframe volume with this device slider', async () => {
     const instances = installFakePlayer();
     const player = new YouTubeEmbedPlayer('youtubePlayerContainer');
