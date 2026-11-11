@@ -1482,9 +1482,10 @@ export class UIManager {
       this.app.socketClient.cloudMesh.lastKnownTrack = item;
       this.app.socketClient.cloudMesh.loadTrackBuffer(item);
       this.app.youtubePlayer?.setVolume(this.app.audioEngine.volume);
+      this.setYouTubePlayerStatus('Memuat player YouTube…');
       this.app.youtubePlayer?.playAt(item.sourceId, this.getYouTubeTargetServerTime(), 0)
         .catch(() => this.setYouTubePlayerStatus('Tekan Play di player YouTube untuk mulai.'));
-      this.updateTrackUI(item.name, item.duration, item.thumbnail);
+      this.updateTrackUI(item.name, item.duration, item.thumbnail, item);
       return item;
     }
     const socketClient = this.app.socketClient;
@@ -1498,7 +1499,7 @@ export class UIManager {
       const waitForAck = socketClient.cloudMesh?.waitForQueueItemAcknowledgement;
       return waitForAck ? waitForAck.call(socketClient.cloudMesh, queueItemKey(item)) : added;
     });
-    this.updateTrackUI(item.name, item.duration, item.thumbnail);
+    this.updateTrackUI(item.name, item.duration, item.thumbnail, item);
     this.setYouTubePlayerVisible(true);
     if (this.app.socketClient.isHost) this.setYouTubePlayerStatus('Menyiapkan pemutaran room…');
     else this.setYouTubePlayerStatus('Mengirim permintaan putar…');
@@ -1545,7 +1546,7 @@ export class UIManager {
         const waitForAck = socketClient.cloudMesh?.waitForQueueItemAcknowledgement;
         return waitForAck ? waitForAck.call(socketClient.cloudMesh, queueItemKey(item)) : added;
       });
-      this.updateTrackUI(item.name, item.duration || 0, item.thumbnail || '');
+      this.updateTrackUI(item.name, item.duration || 0, item.thumbnail || '', item);
       this.setTrackLoading(`Menyiapkan ${item.name}…`);
       queueSync.then(async synced => {
         if (synced === false) {
@@ -2228,8 +2229,8 @@ export class UIManager {
     }
   }
 
-  updateTrackUI(title, duration, thumbnail = '') {
-    const sourceTrack = this.app?.socketClient?.cloudMesh?.lastKnownTrack || {};
+  updateTrackUI(title, duration, thumbnail = '', trackOverride = null) {
+    const sourceTrack = trackOverride || this.app?.socketClient?.cloudMesh?.lastKnownTrack || {};
     const currentTrack = {
       ...sourceTrack,
       id: sourceTrack.id || `track_${encodeURIComponent(title || 'unknown')}`,
@@ -2252,7 +2253,17 @@ export class UIManager {
       this.app.audioEngine.currentTrackDuration = duration;
     }
     if (this.elements.trackTitle) this.elements.trackTitle.innerText = title;
-    if (this.elements.trackSub) this.elements.trackSub.innerText = `${this.formatTime(duration)} • Ready`;
+    if (this.elements.trackSub) {
+      const sourceLabel = ({
+        youtube: 'YouTube',
+        'direct-url': 'Direct URL',
+        'public-audio': 'Audio URL',
+        local: 'File lokal',
+        'local-file': 'File lokal',
+        proxy: 'Audio URL'
+      })[currentTrack.sourceType] || 'Audio';
+      this.elements.trackSub.innerText = `${this.formatTime(duration)} • ${sourceLabel}`;
+    }
     if (this.elements.totalTimeText) this.elements.totalTimeText.innerText = this.formatTime(duration);
     this.setYouTubePlayerVisible(currentTrack.sourceType === 'youtube');
     if (currentTrack.sourceType === 'youtube') this.app?.youtubePlayer?.setVolume(this.app.audioEngine?.volume || 1);
@@ -2806,10 +2817,11 @@ export class UIManager {
         } else {
           this.addToSoloQueue(track);
           this.currentTrack = track;
-          this.updateTrackUI(track.name, track.duration || 0, track.thumbnail || '');
           socketClient.cloudMesh.lastKnownTrack = track;
+          this.updateTrackUI(track.name, track.duration || 0, track.thumbnail || '');
           socketClient.cloudMesh.loadTrackBuffer(track);
           this.app.youtubePlayer?.setVolume(this.app.audioEngine.volume);
+          this.setYouTubePlayerStatus('Memuat player YouTube…');
           this.app.youtubePlayer?.playAt(track.sourceId, this.getYouTubeTargetServerTime(), 0)
             .catch(() => this.setYouTubePlayerStatus('Tekan Play di player YouTube untuk mulai.'));
         }

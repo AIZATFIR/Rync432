@@ -721,7 +721,9 @@ describe('YouTube search queue UI', () => {
     const socketClient = { roomId: null, cloudMesh: mesh };
     const audioEngine = { ensureContext: vi.fn().mockResolvedValue(undefined), volume: 0.4, stopLocalPlayback: vi.fn() };
     const ui = new UIManager({ socketClient, audioEngine, youtubePlayer: player });
-    ui.updateTrackUI = vi.fn();
+    ui.updateTrackUI = vi.fn((title, duration, thumbnail) => {
+      ui.currentTrack = { ...mesh.lastKnownTrack, name: title, duration, thumbnail };
+    });
     ui.renderQueue = vi.fn();
     ui.setView = vi.fn();
 
@@ -729,6 +731,7 @@ describe('YouTube search queue UI', () => {
 
     expect(player.setVolume).toHaveBeenCalledWith(0.4);
     expect(player.playAt).toHaveBeenCalledWith('dQw4w9WgXcQ', expect.any(Number), 0);
+    expect(ui.currentTrack).toMatchObject({ sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ' });
     expect(ui.isPlayingState).toBe(false);
   });
 
@@ -1960,6 +1963,26 @@ describe('YouTube search queue UI', () => {
     expect(addHistory).toHaveBeenCalledWith(expect.objectContaining({
       id: 'track-a', name: 'Track A', duration: 180, thumbnail: '/cover.jpg'
     }));
+  });
+
+  it('does not label YouTube metadata as ready before the embed player starts', () => {
+    vi.stubGlobal('document', { body: { classList: { toggle: vi.fn() } } });
+    const trackSub = { innerText: '' };
+    const trackTitle = { innerText: '' };
+    const audioEngine = { stopLocalPlayback: vi.fn() };
+    const youtubePlayer = { setVolume: vi.fn() };
+    const ui = new UIManager({
+      audioEngine,
+      socketClient: { cloudMesh: { lastKnownTrack: { id: 'yt_dQw4w9WgXcQ', sourceType: 'youtube' } } },
+      youtubePlayer
+    });
+    ui.localLibrary = { addHistory: vi.fn().mockResolvedValue(true), isFavorite: vi.fn().mockResolvedValue(false) };
+    ui.elements = { trackSub, trackTitle };
+
+    ui.updateTrackUI('Song', 180);
+
+    expect(trackSub.innerText).toContain('YouTube');
+    expect(trackSub.innerText).not.toContain('Ready');
   });
 
   it('renders queue updates into the local queue list', () => {
