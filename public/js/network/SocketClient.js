@@ -15,6 +15,9 @@ export class SocketClient {
     this.peerId = null;
     this.isHost = false;
     this.isConnected = false;
+    this.connectionState = 'UNKNOWN';
+    this.healthFailureCount = 0;
+    this.healthCheckInterval = null;
     this.cachedDeviceName = 'Speaker';
     this.roomReady = Promise.resolve();
 
@@ -26,45 +29,40 @@ export class SocketClient {
   }
 
   connect() {
-    fetch('/api/health')
-      .then((res) => res.json())
-      .then((data) => {
-        this.isConnected = true;
-        this.onEvent('CONNECTED');
-        if (data.t1 && data.t2) {
-          this.clockSync.handlePong(data.t0 || Date.now(), data.t1, data.t2);
-        }
-      })
-      .catch(() => {
-        if (navigator.onLine) {
-          this.isConnected = true;
-          this.onEvent('CONNECTED');
-        } else {
-          this.isConnected = false;
-          this.onEvent('DISCONNECTED');
-        }
-      });
+    this.setConnectionState('RECONNECTING');
+    this.checkHealth();
+    if (this.healthCheckInterval) clearInterval(this.healthCheckInterval);
+    this.healthCheckInterval = setInterval(() => this.checkHealth(), 4000);
+  }
 
-    setInterval(() => {
-      const t0 = Date.now();
-      fetch(`/api/health?t0=${t0}`)
-        .then((res) => res.json())
-        .then((data) => {
-          if (!this.isConnected) {
-            this.isConnected = true;
-            this.onEvent('CONNECTED');
-          }
-          if (data.t1 && data.t2) {
-            this.clockSync.handlePong(t0, data.t1, data.t2);
-          }
-        })
-        .catch(() => {
-          if (!navigator.onLine && this.isConnected) {
-            this.isConnected = false;
-            this.onEvent('DISCONNECTED');
-          }
-        });
-    }, 4000);
+  setConnectionState(state) {
+    if (this.connectionState === state) return;
+    this.connectionState = state;
+    this.isConnected = state === 'CONNECTED';
+    this.onEvent(state);
+  }
+
+  async checkHealth() {
+    const t0 = Date.now();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    try {
+      const response = await fetch(`/api/health?t0=${t0}`, {
+        cache: 'no-store',
+        signal: controller.signal
+      });
+      if (!response.ok) throw new Error('HEALTH_CHECK_FAILED');
+      const data = await response.json();
+      this.healthFailureCount = 0;
+      this.setConnectionState('CONNECTED');
+      if (data.t1 && data.t2) this.clockSync.handlePong(t0, data.t1, data.t2);
+    } catch (error) {
+      this.healthFailureCount += 1;
+      this.setConnectionState(globalThis.navigator?.onLine === false || this.healthFailureCount >= 2
+        ? 'DISCONNECTED' : 'RECONNECTING');
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   createRoom(deviceName = 'Master Speaker') {

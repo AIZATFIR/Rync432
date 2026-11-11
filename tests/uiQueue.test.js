@@ -1467,6 +1467,25 @@ describe('YouTube search queue UI', () => {
     expect(notice.hidden).toBe(true);
   });
 
+  it('shows readable reconnecting, online, and offline connection states', () => {
+    const dot = { classList: { toggle: vi.fn() } };
+    const status = { innerText: '' };
+    const ui = new UIManager({});
+    ui.elements = { connectionStatus: status, connectionDot: dot };
+
+    ui.setConnectionState('RECONNECTING');
+    expect(status.innerText).toBe('Menyambungkan…');
+    expect(dot.classList.toggle).toHaveBeenCalledWith('reconnecting', true);
+
+    ui.setConnectionState('CONNECTED');
+    expect(status.innerText).toBe('Online');
+    expect(dot.classList.toggle).toHaveBeenCalledWith('connected', true);
+
+    ui.setConnectionState('DISCONNECTED');
+    expect(status.innerText).toBe('Offline');
+    expect(dot.classList.toggle).toHaveBeenCalledWith('connected', false);
+  });
+
   it('keeps a compact player available on Library and room setup views', () => {
     const node = () => ({ hidden: false, style: {}, attributes: {}, classList: { toggle() {} }, setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name) { delete this.attributes[name]; } });
     const ui = new UIManager({ socketClient: { roomId: null } });

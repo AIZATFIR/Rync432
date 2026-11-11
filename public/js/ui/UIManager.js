@@ -2272,13 +2272,14 @@ export class UIManager {
   }
 
   setConnected(isConnected) {
-    if (isConnected) {
-      if (this.elements.connectionStatus) this.elements.connectionStatus.innerText = 'Online';
-      if (this.elements.connectionDot) this.elements.connectionDot.classList.add('connected');
-    } else {
-      if (this.elements.connectionStatus) this.elements.connectionStatus.innerText = 'Offline';
-      if (this.elements.connectionDot) this.elements.connectionDot.classList.remove('connected');
-    }
+    this.setConnectionState(isConnected ? 'CONNECTED' : 'DISCONNECTED');
+  }
+
+  setConnectionState(state) {
+    const labels = { CONNECTED: 'Online', RECONNECTING: 'Menyambungkan…', DISCONNECTED: 'Offline' };
+    if (this.elements.connectionStatus) this.elements.connectionStatus.innerText = labels[state] || labels.DISCONNECTED;
+    this.elements.connectionDot?.classList.toggle('connected', state === 'CONNECTED');
+    this.elements.connectionDot?.classList.toggle('reconnecting', state === 'RECONNECTING');
   }
 
   setHostDisconnected(disconnected) {

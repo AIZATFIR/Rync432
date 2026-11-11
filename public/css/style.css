@@ -141,6 +141,8 @@ body {
   box-shadow: 0 0 6px var(--spotify-green);
 }
 
+.status-dot.reconnecting { background: #e8bd4a; }
+
 .user-profile-btn {
   display: flex;
   align-items: center;

@@ -1652,6 +1652,37 @@ describe('CloudMesh audio transfer', () => {
 });
 
 describe('SocketClient room readiness', () => {
+  it('shows reconnecting after one failed health check and offline after repeated failures', async () => {
+    const events = [];
+    const client = new SocketClient((type, payload) => events.push({ type, payload }));
+    vi.stubGlobal('navigator', { onLine: true });
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('server unavailable')));
+
+    await client.checkHealth();
+    expect(events.map(event => event.type)).toEqual(['RECONNECTING']);
+    expect(client.isConnected).toBe(false);
+
+    await client.checkHealth();
+    expect(events.map(event => event.type)).toEqual(['RECONNECTING', 'DISCONNECTED']);
+    expect(client.isConnected).toBe(false);
+  });
+
+  it('recovers the connection state only after the health endpoint responds successfully', async () => {
+    const events = [];
+    const client = new SocketClient((type, payload) => events.push({ type, payload }));
+    client.setConnectionState('DISCONNECTED');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ t0: 1, t1: 2, t2: 3 })
+    }));
+
+    await client.checkHealth();
+
+    expect(events.map(event => event.type)).toEqual(['DISCONNECTED', 'CONNECTED']);
+    expect(client.isConnected).toBe(true);
+    expect(client.clockSync.offset).toBeDefined();
+  });
+
   it('forwards host disconnect state to the app', () => {
     const events = [];
     const client = new SocketClient((type, payload) => events.push({ type, payload }));

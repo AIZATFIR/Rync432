@@ -149,8 +149,12 @@ class App {
         uiManager.setConnected(true);
         break;
 
+      case 'RECONNECTING':
+        uiManager.setConnectionState('RECONNECTING');
+        break;
+
       case 'DISCONNECTED':
-        uiManager.setConnected(false);
+        uiManager.setConnectionState('DISCONNECTED');
         break;
 
       case 'HOST_DISCONNECTED':
