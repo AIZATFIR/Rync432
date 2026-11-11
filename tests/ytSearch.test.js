@@ -65,6 +65,31 @@ describe('YouTube search API', () => {
     })]);
   });
 
+  it('coalesces concurrent identical searches into one provider search request', async () => {
+    vi.stubEnv('YOUTUBE_DATA_API_KEY', 'test-key');
+    const query = `same query ${Date.now()}`;
+    const response = new Response(JSON.stringify({ items: [{
+      id: { videoId: 'dQw4w9WgXcQ' },
+      snippet: { title: 'Song title', channelTitle: 'Artist', thumbnails: {} }
+    }] }), { status: 200 });
+    let releaseSearch;
+    const searchResponse = new Promise(resolve => { releaseSearch = resolve; });
+    const fetchMock = vi.fn(() => searchResponse);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const first = callSearch(query);
+    const second = callSearch(query);
+    await Promise.resolve();
+    const searchRequests = fetchMock.mock.calls.filter(([url]) => new URL(url).pathname.endsWith('/search'));
+    expect(searchRequests).toHaveLength(1);
+
+    releaseSearch(response);
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(firstResult.statusCode).toBe(200);
+    expect(secondResult.statusCode).toBe(200);
+    expect(firstResult.body.results).toEqual(secondResult.body.results);
+  });
+
   it('maps exhausted YouTube quota to a retryable rate limit response', async () => {
     vi.stubEnv('YOUTUBE_DATA_API_KEY', 'test-key');
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
