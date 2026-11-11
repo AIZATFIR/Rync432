@@ -824,11 +824,7 @@ export class UIManager {
 
     this.activeYoutubeSearchHandler = handleYtSearchOrStream;
     if (elements.fetchYtAudioBtn) {
-      elements.fetchYtAudioBtn.addEventListener('click', () => {
-        clearTimeout(this.youtubeSearchDebounce);
-        const q = elements.ytUrlInput?.value.trim() || '';
-        handleYtSearchOrStream(q);
-      });
+      elements.fetchYtAudioBtn.addEventListener('click', () => this.submitYoutubeSearch());
     }
 
     if (elements.ytUrlInput) {
@@ -1263,6 +1259,12 @@ export class UIManager {
     this.youtubeSearchDebounce = setTimeout(() => {
       this.activeYoutubeSearchHandler?.(query);
     }, YOUTUBE_SEARCH_DEBOUNCE_MS);
+  }
+
+  submitYoutubeSearch() {
+    clearTimeout(this.youtubeSearchDebounce);
+    const query = this.elements.ytUrlInput?.value.trim() || '';
+    return this.activeYoutubeSearchHandler?.(query);
   }
 
   renderSearchMessage(message, state = 'info') {

@@ -1467,6 +1467,21 @@ describe('YouTube search queue UI', () => {
     expect(ui.activeYoutubeSearchHandler).toHaveBeenCalledWith('ambient live');
   });
 
+  it('does not run a second YouTube search after manual submit cancels the debounce', async () => {
+    vi.useFakeTimers();
+    const ui = new UIManager({});
+    const input = { value: 'ambient mix' };
+    const search = vi.fn();
+    ui.elements = { ytUrlInput: input };
+    ui.activeYoutubeSearchHandler = search;
+    ui.scheduleYoutubeSearch(input.value);
+    ui.submitYoutubeSearch();
+    await vi.advanceTimersByTimeAsync(250);
+
+    expect(search).toHaveBeenCalledOnce();
+    expect(search).toHaveBeenCalledWith('ambient mix');
+  });
+
   it('renders untrusted search metadata as text, not markup', () => {
     const makeElement = () => ({
       children: [], className: '', style: {}, dataset: {}, textContent: '',
