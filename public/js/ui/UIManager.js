@@ -2197,6 +2197,23 @@ export class UIManager {
         this.setView('home');
         return;
       }
+      if (track.audioUrl && !this.app.socketClient.roomId) {
+        this.addToSoloQueue(track);
+        this.app.socketClient.cloudMesh.lastKnownTrack = track;
+        this.currentTrack = track;
+        this.updateTrackUI(track.name, track.duration || 0, track.thumbnail || '');
+        this.setTrackLoading(`Memuat ${track.name}…`);
+        const buffer = await this.app.audioEngine.loadAudioFromUrl(track.audioUrl, track.name);
+        this.app.audioEngine.schedulePlayAtServerTime(
+          this.app.socketClient.clockSync?.getServerTime?.() + 50 || Date.now() + 50,
+          0
+        );
+        this.updateTrackUI(track.name, buffer.duration || track.duration || 0, track.thumbnail || '');
+        this.clearTrackLoading();
+        this.setPlayState(true);
+        this.setView('home');
+        return;
+      }
       if (!this.app.socketClient.roomId) await this.app.socketClient.createRoom(this.getDeviceName());
       const item = { ...track, id: track.id, addedBy: this.getDeviceName() };
       await this.app.socketClient.addToQueue(item);

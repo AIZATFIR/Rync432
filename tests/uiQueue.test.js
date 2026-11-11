@@ -166,6 +166,31 @@ describe('YouTube search queue UI', () => {
     expect(ui.setPlayState).toHaveBeenCalledWith(true);
   });
 
+  it('plays a direct audio library track solo without creating a room', async () => {
+    const track = { id: 'direct-1', name: 'Direct song', sourceType: 'direct-url', audioUrl: '/api/stream?id=direct-1', duration: 15 };
+    const socketClient = { roomId: null, cloudMesh: { lastKnownTrack: null }, clockSync: { getServerTime: () => 1000 } };
+    const audioEngine = {
+      ensureContext: vi.fn().mockResolvedValue(undefined),
+      loadAudioFromUrl: vi.fn().mockResolvedValue({ duration: 15 }),
+      schedulePlayAtServerTime: vi.fn()
+    };
+    const ui = new UIManager({ socketClient, audioEngine });
+    ui.updateTrackUI = vi.fn();
+    ui.setPlayState = vi.fn();
+    ui.setView = vi.fn();
+    ui.setTrackLoading = vi.fn();
+    ui.clearTrackLoading = vi.fn();
+
+    await ui.playLibraryTrack(track);
+
+    expect(socketClient.roomId).toBeNull();
+    expect(socketClient.cloudMesh.lastKnownTrack).toEqual(track);
+    expect(audioEngine.loadAudioFromUrl).toHaveBeenCalledWith(track.audioUrl, track.name);
+    expect(audioEngine.schedulePlayAtServerTime).toHaveBeenCalledWith(1050, 0);
+    expect(ui.soloQueue).toContainEqual(track);
+    expect(ui.setPlayState).toHaveBeenCalledWith(true);
+  });
+
   it('accepts local-file queue entries without a remote URL for solo playback', async () => {
     const track = { id: 'local-queue-track', name: 'Local queue track', sourceType: 'local-file' };
     const socketClient = { roomId: null, cloudMesh: {}, clockSync: { getServerTime: () => 1000 } };
