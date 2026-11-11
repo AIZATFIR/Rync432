@@ -1,94 +1,43 @@
 # Rync
 
-Rync adalah pemutar musik browser dengan antrean bersama dan room untuk mendengarkan bareng. Cari musik, putar sumber yang tersedia, lalu bagikan tautan room ke teman.
+Rync adalah music player berbasis browser dengan pencarian YouTube, library lokal, antrean, dan room untuk mendengarkan bersama. Buat room dari player lalu bagikan link atau kode room ke teman.
 
----
+## Jalankan lokal
 
-## Fitur yang tersedia
-
-- Pemutar audio browser dengan antrean lokal dan antrean room.
-- Pencarian YouTube, link YouTube, URL audio langsung, dan audio yang diunggah.
-- Room dengan tautan/kode undangan, daftar perangkat, dan kontrol host.
-- Sinkronisasi lewat WebRTC dengan jalur HTTP sebagai fallback untuk audio yang didukung.
-- Antrean bersama dengan tambah, susun ulang, hapus, clear-upcoming, dan undo.
-- Mode repeat dan shuffle yang dibagikan ke anggota room.
-- Favorit, playlist, dan riwayat lokal pada browser.
-
-Hasil pencarian memakai YouTube Data API v3; pemutaran memakai player embed resmi YouTube. Buat API key di Google Cloud, aktifkan YouTube Data API v3, lalu set `YOUTUBE_DATA_API_KEY` pada environment server. Jangan commit key ke Git. Video yang tidak mengizinkan embed dan kebijakan autoplay browser dapat membatasi pemutaran.
-
----
-
-## 🚀 Menjalankan Secara Lokal (Local Development)
+Butuh Node.js dan npm.
 
 ```bash
-# 1. Install dependencies
 npm install
-
-# 2. Jalankan test unit (Vitest)
 npm test
-
-# 3. Jalankan server lokal
+npm run build
 npm start
 ```
 
-- Buka `http://localhost:3000` di laptop/PC Host (Master).
-- Buka `http://<IP-Lokal-WiFi>:3000` dari smartphone lain di jaringan Wi-Fi yang sama untuk langsung sinkron!
-- Server Node menyimpan room dan queue di `data/rooms.json` (TTL 3 jam). Simpan folder `data/` pada disk persisten homeserver dan sertakan di backup; room ini tidak dipersist di deployment Vercel/serverless.
-- Lokasi store dapat diganti dengan `RYNC_ROOM_STORE_PATH=/path/yang/persisten/rooms.json`. File dibuat dengan permission `0600`; peer aktif dan sinyal WebRTC harus tersambung ulang setelah restart.
-- Batas room saat ini: 5 perangkat aktif, 500 item antrean, payload signaling 64 KiB, dan paling banyak 256 sinyal tertunda per room. Sinyal kedaluwarsa setelah 30 detik.
-- Batas tersebut menjaga server, bukan hasil uji performa. Sinkronisasi audio tetap bergantung pada browser, jaringan, dan output device.
+Buka `http://localhost:3000`. Metadata room dan antreannya disimpan di `data/rooms.json` selama maksimum tiga jam. Audio yang diunggah ke room berada di memori server dan hilang saat proses server restart. Untuk server yang memakai disk persisten, set `RYNC_ROOM_STORE_PATH` ke lokasi file yang persisten dan sertakan file itu dalam backup. Room dibatasi lima perangkat aktif dan 500 item antrean.
 
----
-
-## 🌐 Deploy ke Vercel (Vercel Setup)
-
-Proyek ini memiliki konfigurasi [`vercel.json`](vercel.json):
+Pencarian YouTube memerlukan YouTube Data API v3 key pada environment server:
 
 ```bash
-# Deploy via Vercel CLI
-npx vercel
-```
-Atau hubungkan repository Git ini langsung ke dashboard [Vercel](https://vercel.com) dengan nama project `Rync432`.
-
----
-
-## 📂 Struktur Project
-
-```
-Rync432/
-├── api/
-│   └── health.js              # Serverless health endpoint untuk Vercel
-├── docs/
-│   └── superpowers/plans/     # Implementation plans
-├── public/
-│   ├── css/
-│   │   └── style.css          # Spotify Design System tokens & layout
-│   ├── js/
-│   │   ├── audio/
-│   │   │   ├── AudioEngine.js # Web Audio API & Synthwave generator
-│   │   │   ├── ClockSync.js   # NTP Cristian's algorithm
-│   │   │   ├── LatencyTuner.js# Precision offset calculator (±1ms, presets)
-│   │   │   └── Metronome.js   # 2-tone keep-alive audio warmer
-│   │   ├── network/
-│   │   │   └── SocketClient.js# WebSocket sync & binary audio relay
-│   │   ├── ui/
-│   │   │   ├── UIManager.js   # Spotify DOM controller & Google Auth
-│   │   │   └── Visualizer.js  # 60fps Spotify Green canvas spectrum
-│   │   └── app.js             # Main application bootstrapper
-│   └── index.html             # Spotify-styled HTML5 application
-├── server/
-│   ├── roomManager.js         # Room lifecycle & peer state
-│   └── server.js              # HTTP & WebSocket sync server
-├── tests/
-│   ├── clockSync.test.js      # Clock offset unit tests
-│   ├── latencyTuner.test.js   # Latency calculation unit tests
-│   └── roomManager.test.js    # Room peer join/leave tests
-├── package.json
-├── vercel.json                # Vercel routing configuration
-└── README.md
+YOUTUBE_DATA_API_KEY=isi_key_di_environment_server
 ```
 
----
+Jangan masukkan API key ke kode frontend atau commit ke Git. Pemutaran YouTube menggunakan player embed resmi. Video yang menolak embed, kebijakan autoplay browser, kuota API dan ketersediaan jaringan dapat membatasi pencarian atau pemutaran.
 
-## 📜 Lisensi
-MIT License • Dibuat untuk performa audio mesh berkecepatan tinggi.
+## Sumber audio dan room
+
+- YouTube diputar melalui player embed resmi; audio YouTube tidak diunduh menjadi file.
+- URL audio langsung dan file lokal didukung sesuai validasi dan batas ukuran aplikasi.
+- File lokal untuk room harus dibagikan oleh host melalui WebRTC atau relay yang tersedia. Host perlu tetap terhubung untuk menyiapkan dan mengirim sumber audio.
+- Room memakai WebRTC bila tersedia dan beralih ke relay untuk sumber yang mendukungnya. Jaringan, NAT, browser, autoplay dan perangkat keluaran memengaruhi keberhasilan serta waktu mulai.
+- Batas server saat ini: lima perangkat aktif, 500 item antrean, payload signaling 64 KiB, 256 sinyal tertunda per room, TTL room tiga jam.
+
+Jumlah perangkat tersebut adalah batas konfigurasi, bukan hasil uji kapasitas. Ukuran sinkronisasi dan keberhasilan P2P perlu diukur pada perangkat serta jaringan yang akan digunakan; Bluetooth dan tab browser di latar belakang dapat menambah latensi.
+
+## Pemeriksaan lokal
+
+```bash
+npm test
+npm run build
+```
+
+Untuk instalasi homeserver, pastikan folder penyimpanan room persisten. Deploy ke Vercel tidak menyediakan penyimpanan file room persisten secara otomatis; gunakan layanan penyimpanan yang sesuai sebelum mengandalkannya untuk room yang harus bertahan antar-instance.
