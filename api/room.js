@@ -40,6 +40,11 @@ function isValidRoomQueueSource(item) {
 }
 
 const queueRevisionOf = room => Number.isSafeInteger(room?.queueRevision) ? room.queueRevision : 0;
+const queueItemKey = item => item?.queueItemId || item?.id;
+const sameQueueItem = (item, track) => item && track && (item.queueItemId && track.queueItemId
+  ? item.queueItemId === track.queueItemId
+  : item.id === track.id);
+const currentQueueItem = (queue, track) => queue.find(item => sameQueueItem(item, track));
 const updateQueueRevision = (room, previousQueue) => {
   if (previousQueue !== JSON.stringify(room.queue || [])) room.queueRevision = queueRevisionOf(room) + 1;
 };
@@ -77,24 +82,26 @@ function chooseNextTrack(room, automatic, preparedTrackId) {
   const queue = room.queue || [];
   let nextTrack = null;
   let playedIds = [...(room.shufflePlayedIds || [])];
+  const currentQueueItemInQueue = currentQueueItem(queue, room.track);
+  const currentQueueItemId = currentQueueItemInQueue ? queueItemKey(currentQueueItemInQueue) : queueItemKey(room.track);
   if (automatic && room.repeatMode === 'one' && room.track) {
     nextTrack = room.track;
   } else if (queue.length > 0) {
-    const currentIndex = room.track ? queue.findIndex(item => item.id === room.track.id) : -1;
+    const currentIndex = room.track ? queue.indexOf(currentQueueItemInQueue) : -1;
     if (room.shuffle) {
       const played = new Set(playedIds);
-      if (room.track?.id) played.add(room.track.id);
-      let candidates = queue.filter(item => !played.has(item.id));
+      if (room.track?.id) played.add(currentQueueItemId);
+      let candidates = queue.filter(item => !played.has(queueItemKey(item)));
       if (!candidates.length && room.repeatMode === 'all') {
         if (queue.length === 1) candidates = queue;
-        else candidates = queue.filter(item => item.id !== room.track?.id);
+        else candidates = queue.filter(item => queueItemKey(item) !== currentQueueItemId);
         played.clear();
-        if (room.track?.id) played.add(room.track.id);
+        if (room.track?.id) played.add(currentQueueItemId);
       }
       nextTrack = preparedTrackId
-        ? candidates.find(item => item.id === preparedTrackId) || null
+        ? candidates.find(item => queueItemKey(item) === preparedTrackId || item.id === preparedTrackId) || null
         : (candidates.length ? candidates[Math.floor(Math.random() * candidates.length)] : null);
-      if (nextTrack) played.add(nextTrack.id);
+      if (nextTrack) played.add(queueItemKey(nextTrack));
       playedIds = [...played];
     } else if (currentIndex < 0) {
       nextTrack = queue[0];
@@ -108,7 +115,7 @@ function chooseNextTrack(room, automatic, preparedTrackId) {
   return {
     nextTrack,
     playedIds,
-    preparedTrackChanged: !!preparedTrackId && nextTrack?.id !== preparedTrackId
+    preparedTrackChanged: !!preparedTrackId && nextTrack?.id !== preparedTrackId && queueItemKey(nextTrack) !== preparedTrackId
   };
 }
 
@@ -215,7 +222,7 @@ export default async function handler(req, res) {
     const audioBase64 = body.audioBase64;
     const trackName = body.trackName || 'Uploaded Track';
     const duration = body.duration || 0;
-    const targetQueueId = body.id || body.queueId;
+    const targetQueueId = body.queueItemId || body.queueId || body.id;
 
     if (audioBase64 && roomId) {
       const room = rooms.get(roomId);
@@ -223,7 +230,7 @@ export default async function handler(req, res) {
       if (!room.queue) room.queue = [];
       if (!checkQueueRevision(room, body, res)) return;
       const previousQueueSnapshot = JSON.stringify(room.queue);
-      let item = targetQueueId ? room.queue.find(q => q.id === targetQueueId) : null;
+      let item = targetQueueId ? room.queue.find(q => queueItemKey(q) === targetQueueId || (!q.queueItemId && q.id === targetQueueId)) : null;
       if (!item) {
         item = room.queue.find(q => q.name === trackName && Math.abs((q.duration || 0) - duration) < 1);
       }
@@ -254,7 +261,8 @@ export default async function handler(req, res) {
         item.audioUrl = audioUrl;
       } else {
         item = {
-          id: targetQueueId || ('q_' + Math.random().toString(36).substring(2, 9)),
+          id: body.id || ('q_' + Math.random().toString(36).substring(2, 9)),
+          ...(body.queueItemId ? { queueItemId: body.queueItemId } : {}),
           audioId,
           name: trackName,
           artist: 'File Audio',
@@ -264,14 +272,14 @@ export default async function handler(req, res) {
         };
         room.queue.push(item);
       }
-      if (targetQueueId) item.id = targetQueueId;
+      if (!body.queueItemId && targetQueueId) item.id = targetQueueId;
       item.sourceType = 'local-file';
 
       if (!room.track) {
         room.track = item;
         room.state = 'PAUSED';
         room.startOffsetSec = 0;
-      } else if (room.track.id === item.id) {
+      } else if (queueItemKey(room.track) === queueItemKey(item)) {
         room.track.audioId = audioId;
         room.track.audioUrl = audioUrl;
       }
@@ -419,7 +427,9 @@ export default async function handler(req, res) {
         return res.status(413).json({ exists: true, error: 'QUEUE_LIMIT_REACHED', maxItems: MAX_QUEUE_ITEMS });
       }
       if (Array.isArray(body.queue) && body.queue.some(item => !item || typeof item.id !== 'string'
-        || !item.id || item.id.length > 160 || !isValidRoomQueueSource(item))) {
+        || !item.id || item.id.length > 160
+        || (item.queueItemId !== undefined && (typeof item.queueItemId !== 'string' || !item.queueItemId || item.queueItemId.length > 160))
+        || !isValidRoomQueueSource(item))) {
         return res.status(400).json({ exists: true, error: 'INVALID_QUEUE_ITEMS' });
       }
       if (Array.isArray(body.deletedQueueIds) && body.deletedQueueIds.length > MAX_QUEUE_ITEMS) {
@@ -427,14 +437,15 @@ export default async function handler(req, res) {
       }
       if (body.track) {
         room.track = body.track;
-        if (room.shuffle) room.shufflePlayedIds = [body.track.id];
+        if (room.shuffle) room.shufflePlayedIds = [queueItemKey(currentQueueItem(room.queue || [], body.track) || body.track)];
       }
       if (body.state) room.state = body.state;
       if (body.targetServerTime) room.targetServerTime = body.targetServerTime;
       if (['off', 'all', 'one'].includes(body.repeatMode)) room.repeatMode = body.repeatMode;
       if (typeof body.shuffle === 'boolean' && body.shuffle !== room.shuffle) {
         room.shuffle = body.shuffle;
-        room.shufflePlayedIds = body.shuffle && room.track?.id ? [room.track.id] : [];
+        room.shufflePlayedIds = body.shuffle && room.track?.id
+          ? [queueItemKey(currentQueueItem(room.queue || [], room.track) || room.track)] : [];
       }
     }
 
@@ -444,12 +455,12 @@ export default async function handler(req, res) {
     // Keep host order, while retaining items added by peers since its last snapshot.
     if (isThisHost && hostQueueRevisionMatches && Array.isArray(body.queue) && body.queue.length > 0) {
       const deletedIds = new Set(Array.isArray(body.deletedQueueIds) ? body.deletedQueueIds : []);
-      const orderedQueue = body.queue.filter(item => item && item.id && !deletedIds.has(item.id));
-      const knownIds = new Set(orderedQueue.map(item => item.id));
+      const orderedQueue = body.queue.filter(item => item && item.id && !deletedIds.has(queueItemKey(item)));
+      const knownIds = new Set(orderedQueue.map(queueItemKey));
       (room.queue || []).forEach(item => {
-        if (item && item.id && !knownIds.has(item.id) && !deletedIds.has(item.id)) {
+        if (item && item.id && !knownIds.has(queueItemKey(item)) && !deletedIds.has(queueItemKey(item))) {
           orderedQueue.push(item);
-          knownIds.add(item.id);
+          knownIds.add(queueItemKey(item));
         }
       });
       room.queue = orderedQueue;
@@ -457,7 +468,7 @@ export default async function handler(req, res) {
 
     if (isThisHost && hostQueueRevisionMatches && Array.isArray(body.deletedQueueIds) && body.deletedQueueIds.length > 0) {
       const delSet = new Set(body.deletedQueueIds);
-      room.queue = (room.queue || []).filter(item => !delSet.has(item.id));
+      room.queue = (room.queue || []).filter(item => !delSet.has(queueItemKey(item)));
     }
     if (isThisHost && hostQueueRevisionMatches) updateQueueRevision(room, previousQueueSnapshot);
 
@@ -517,7 +528,9 @@ export default async function handler(req, res) {
       return res.status(413).json({ success: false, error: 'QUEUE_LIMIT_REACHED', maxItems: MAX_QUEUE_ITEMS });
     }
     if (Array.isArray(body.queue) && body.queue.some(item => !item || typeof item.id !== 'string'
-      || !item.id || item.id.length > 160 || !isValidRoomQueueSource(item))) {
+      || !item.id || item.id.length > 160
+      || (item.queueItemId !== undefined && (typeof item.queueItemId !== 'string' || !item.queueItemId || item.queueItemId.length > 160))
+      || !isValidRoomQueueSource(item))) {
       return res.status(400).json({ success: false, error: 'INVALID_QUEUE_ITEMS' });
     }
     if (Array.isArray(body.queue) && room && !checkQueueRevision(room, body, res)) return;
@@ -573,7 +586,7 @@ export default async function handler(req, res) {
     if (!requireHost(room, body.hostToken)) return;
     if (body.track) {
       room.track = body.track;
-      if (room.shuffle) room.shufflePlayedIds = [body.track.id];
+      if (room.shuffle) room.shufflePlayedIds = [queueItemKey(currentQueueItem(room.queue || [], body.track) || body.track)];
     }
     room.updatedAt = now;
     return res.status(200).json({ success: true, track: room.track });
@@ -590,7 +603,8 @@ export default async function handler(req, res) {
     if (body.repeatMode !== undefined) room.repeatMode = body.repeatMode;
     if (body.shuffle !== undefined && body.shuffle !== room.shuffle) {
       room.shuffle = body.shuffle;
-      room.shufflePlayedIds = body.shuffle && room.track?.id ? [room.track.id] : [];
+      room.shufflePlayedIds = body.shuffle && room.track?.id
+        ? [queueItemKey(currentQueueItem(room.queue || [], room.track) || room.track)] : [];
     }
     room.updatedAt = now;
     return res.status(200).json({ success: true, repeatMode: room.repeatMode, shuffle: room.shuffle });
@@ -613,14 +627,16 @@ export default async function handler(req, res) {
           || !isValidRoomQueueSource(item)
           || (item.sourceId !== undefined && (typeof item.sourceId !== 'string' || !/^[A-Za-z0-9_-]{11}$/.test(item.sourceId)))
           || (item.sourceUrl !== undefined && (typeof item.sourceUrl !== 'string' || item.sourceUrl.length > 4096))
+          || (item.queueItemId !== undefined && (typeof item.queueItemId !== 'string' || !item.queueItemId || item.queueItemId.length > 160))
           || (item.duration !== undefined && (!Number.isFinite(item.duration) || item.duration < 0)))) {
         return res.status(400).json({ success: false, error: 'INVALID_QUEUE_ITEMS' });
       }
-      const existingIds = new Set(room.queue.map(item => item.id));
+      const existingIds = new Set(room.queue.map(queueItemKey));
       const additions = [];
       body.items.forEach(item => {
-        if (!existingIds.has(item.id)) {
-          existingIds.add(item.id);
+        const key = queueItemKey(item);
+        if (!existingIds.has(key)) {
+          existingIds.add(key);
           additions.push(item);
         }
       });
@@ -629,7 +645,7 @@ export default async function handler(req, res) {
       }
       additions.forEach(item => {
         room.queue.push(item);
-        room.shufflePlayedIds = (room.shufflePlayedIds || []).filter(id => id !== item.id);
+        room.shufflePlayedIds = (room.shufflePlayedIds || []).filter(id => id !== queueItemKey(item));
       });
     } else {
       if ((body.id !== undefined && typeof body.id !== 'string')
@@ -639,6 +655,7 @@ export default async function handler(req, res) {
         || !isValidRoomQueueSource(body)
         || (body.sourceId !== undefined && (typeof body.sourceId !== 'string' || !/^[A-Za-z0-9_-]{11}$/.test(body.sourceId)))
         || (body.sourceUrl !== undefined && (typeof body.sourceUrl !== 'string' || body.sourceUrl.length > 4096))
+        || (body.queueItemId !== undefined && (typeof body.queueItemId !== 'string' || !body.queueItemId || body.queueItemId.length > 160))
         || (body.duration !== undefined && (!Number.isFinite(body.duration) || body.duration < 0))) {
         return res.status(400).json({ success: false, error: 'INVALID_QUEUE_ITEM' });
       }
@@ -647,6 +664,7 @@ export default async function handler(req, res) {
       }
       const item = {
         id: body.id || ('q_' + Math.random().toString(36).substring(2, 9)),
+        ...(body.queueItemId ? { queueItemId: body.queueItemId } : {}),
         name: body.name || 'Untitled',
         artist: body.artist || 'Artist',
         duration: body.duration || 0,
@@ -664,13 +682,13 @@ export default async function handler(req, res) {
         return res.status(400).json({ success: false, error: 'INVALID_QUEUE_ITEM' });
       }
 
-      const exists = room.queue.some(q => q.id === item.id);
+      const exists = room.queue.some(q => queueItemKey(q) === queueItemKey(item));
       if (!exists) {
         if (room.queue.length >= MAX_QUEUE_ITEMS) {
           return res.status(413).json({ success: false, error: 'QUEUE_LIMIT_REACHED', maxItems: MAX_QUEUE_ITEMS });
         }
         room.queue.push(item);
-        room.shufflePlayedIds = (room.shufflePlayedIds || []).filter(id => id !== item.id);
+        room.shufflePlayedIds = (room.shufflePlayedIds || []).filter(id => id !== queueItemKey(item));
       }
     }
 
@@ -693,18 +711,19 @@ export default async function handler(req, res) {
     if (room && Array.isArray(body.queue)) {
       const previousQueueSnapshot = JSON.stringify(room.queue || []);
       const currentQueue = room.queue || [];
-      const currentById = new Map(currentQueue.filter(item => item?.id).map(item => [item.id, item]));
+      const currentById = new Map(currentQueue.filter(item => item?.id).map(item => [queueItemKey(item), item]));
       const reorderedQueue = [];
       const includedIds = new Set();
       body.queue.forEach(item => {
-        if (!item?.id || includedIds.has(item.id) || !currentById.has(item.id)) return;
-        reorderedQueue.push(currentById.get(item.id));
-        includedIds.add(item.id);
+        const key = queueItemKey(item);
+        if (!item?.id || includedIds.has(key) || !currentById.has(key)) return;
+        reorderedQueue.push(currentById.get(key));
+        includedIds.add(key);
       });
       currentQueue.forEach(item => {
-        if (item?.id && !includedIds.has(item.id)) {
+        if (item?.id && !includedIds.has(queueItemKey(item))) {
           reorderedQueue.push(item);
-          includedIds.add(item.id);
+          includedIds.add(queueItemKey(item));
         }
       });
       room.queue = reorderedQueue;
@@ -721,11 +740,11 @@ export default async function handler(req, res) {
     if (!checkQueueRevision(room, body, res)) return;
     if (room && room.queue) {
       const qId = body.queueId;
-      const targetIdx = room.queue.findIndex(q => q.id === qId);
+      const targetIdx = room.queue.findIndex(q => queueItemKey(q) === qId || (!q.queueItemId && q.id === qId));
       if (targetIdx !== -1) {
         const previousQueueSnapshot = JSON.stringify(room.queue);
         const [item] = room.queue.splice(targetIdx, 1);
-        const currentIdx = room.track ? room.queue.findIndex(q => q.id === room.track.id) : -1;
+        const currentIdx = room.track ? room.queue.indexOf(currentQueueItem(room.queue, room.track)) : -1;
         const insertIdx = currentIdx >= 0 ? currentIdx + 1 : 0;
         room.queue.splice(insertIdx, 0, item);
         updateQueueRevision(room, previousQueueSnapshot);
@@ -742,10 +761,10 @@ export default async function handler(req, res) {
     if (!checkQueueRevision(room, body, res)) return;
     if (room && room.queue) {
       const qId = body.queueId;
-      const target = room.queue.find(q => q.id === qId);
+      const target = room.queue.find(q => queueItemKey(q) === qId || (!q.queueItemId && q.id === qId));
       if (target) {
         room.track = target;
-        if (room.shuffle) room.shufflePlayedIds = [target.id];
+        if (room.shuffle) room.shufflePlayedIds = [queueItemKey(target)];
         room.state = 'PAUSED';
         room.targetServerTime = null;
         room.startOffsetSec = 0;
@@ -771,7 +790,7 @@ export default async function handler(req, res) {
     if (room && room.queue) {
       const previousQueueSnapshot = JSON.stringify(room.queue);
       const qId = body.queueId;
-      room.queue = room.queue.filter(q => q.id !== qId);
+      room.queue = room.queue.filter(q => queueItemKey(q) !== qId);
       updateQueueRevision(room, previousQueueSnapshot);
       room.updatedAt = now;
       return res.status(200).json({ success: true, queue: room.queue, queueRevision: queueRevisionOf(room) });
@@ -789,10 +808,10 @@ export default async function handler(req, res) {
     }
     const previousQueueSnapshot = JSON.stringify(room.queue || []);
     const ids = new Set(body.queueIds);
-    const currentTrackId = room.track?.id;
+    const currentTrackId = queueItemKey(currentQueueItem(room.queue || [], room.track) || room.track);
     const removed = [];
     room.queue = (room.queue || []).filter((item, index) => {
-      if (ids.has(item.id) && item.id !== currentTrackId) {
+      if (ids.has(queueItemKey(item)) && queueItemKey(item) !== currentTrackId) {
         removed.push({ item, index });
         return false;
       }
@@ -813,10 +832,11 @@ export default async function handler(req, res) {
     }
     const queue = [...(room.queue || [])];
     const previousQueueSnapshot = JSON.stringify(queue);
-    const existingIds = new Set(queue.map(item => item.id));
+    const existingIds = new Set(queue.map(queueItemKey));
     const additions = body.removed.filter(entry => {
-      if (existingIds.has(entry.item.id)) return false;
-      existingIds.add(entry.item.id);
+      const key = queueItemKey(entry.item);
+      if (existingIds.has(key)) return false;
+      existingIds.add(key);
       return true;
     });
     if (queue.length + additions.length > MAX_QUEUE_ITEMS) {
@@ -890,7 +910,7 @@ export default async function handler(req, res) {
     if (!requireHost(room, body.hostToken)) return;
     if (room) {
       if (room.queue && room.queue.length > 0) {
-        const currentIndex = room.track ? room.queue.findIndex(q => q.id === room.track.id) : 0;
+        const currentIndex = room.track ? room.queue.indexOf(currentQueueItem(room.queue, room.track)) : 0;
         const prevIndex = (currentIndex > 0) ? currentIndex - 1 : room.queue.length - 1;
         
         room.track = room.queue[prevIndex] || room.queue[0];

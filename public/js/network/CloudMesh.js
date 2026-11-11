@@ -14,6 +14,14 @@ const QUEUE_CONFLICT_RETRY_LIMIT = 5;
 const ROOM_POLL_TIMEOUT_MS = 8_000;
 const ROOM_JOIN_TIMEOUT_MS = 8_000;
 const AUDIO_ROUTES = new Set(['unknown', 'p2p', 'relay', 'direct', 'youtube', 'local', 'cache']);
+const queueItemKey = item => item?.queueItemId || item?.id;
+const resolveQueueItemKey = (queue, id) => {
+  const exact = queue.find(item => queueItemKey(item) === id);
+  if (exact) return queueItemKey(exact);
+  const matches = queue.filter(item => item?.id === id);
+  return matches.length === 1 ? queueItemKey(matches[0]) : id;
+};
+const createQueueItemId = () => `qi_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 
 async function fetchRoomJoin(url, options) {
   const controller = new AbortController();
@@ -301,10 +309,10 @@ export class CloudMesh {
     }
 
     const previous = this.lastKnownTrack;
-    const trackChanged = !previous || (track.id && previous.id
-      ? track.id !== previous.id
-      : track.name !== previous.name);
-    const metadataKeys = ['name', 'artist', 'duration', 'thumbnail', 'sourceType', 'sourceId', 'sourceUrl', 'audioId', 'audioUrl'];
+    const trackChanged = !previous || (track.queueItemId || previous.queueItemId
+      ? track.queueItemId !== previous.queueItemId
+      : (track.id && previous.id ? track.id !== previous.id : track.name !== previous.name));
+    const metadataKeys = ['name', 'artist', 'duration', 'thumbnail', 'sourceType', 'sourceId', 'sourceUrl', 'audioId', 'audioUrl', 'queueItemId'];
     const metadataChanged = trackChanged || metadataKeys.some(key => track[key] !== previous?.[key]);
     const sourceChanged = trackChanged || ['sourceType', 'sourceId', 'audioId', 'audioUrl'].some(key => track[key] !== previous?.[key]);
 
@@ -849,10 +857,10 @@ export class CloudMesh {
         if (this.isHost) {
           const mergedMap = new Map();
           (this.lastKnownQueue || []).forEach(item => {
-            if (item && item.id && !this.deletedQueueIds.has(item.id)) mergedMap.set(item.id, item);
+            if (item && item.id && !this.deletedQueueIds.has(queueItemKey(item))) mergedMap.set(queueItemKey(item), item);
           });
           data.queue.forEach(item => {
-            if (item && item.id && !this.deletedQueueIds.has(item.id)) mergedMap.set(item.id, item);
+            if (item && item.id && !this.deletedQueueIds.has(queueItemKey(item))) mergedMap.set(queueItemKey(item), item);
           });
           mergedQueue = Array.from(mergedMap.values());
         } else {
@@ -1011,12 +1019,13 @@ export class CloudMesh {
   async addQueueItems(tracks) {
     if (!Array.isArray(tracks) || tracks.length === 0) return true;
     const currentQueue = this.lastKnownQueue || [];
-    const knownIds = new Set(currentQueue.map(item => item?.id).filter(Boolean));
+    const knownIds = new Set(currentQueue.map(queueItemKey).filter(Boolean));
     const additions = [];
     for (const track of tracks) {
       if (!track || typeof track !== 'object') continue;
       const item = {
         id: track.id || ('q_' + Math.random().toString(36).substring(2, 9)),
+        queueItemId: track.queueItemId || createQueueItemId(),
         name: track.name || 'Untitled',
         artist: track.artist || 'Artist',
         duration: track.duration || 0,
@@ -1028,8 +1037,9 @@ export class CloudMesh {
         isSynthetic: !!track.isSynthetic,
         addedBy: track.addedBy || this.deviceName
       };
-      if (knownIds.has(item.id)) continue;
-      knownIds.add(item.id);
+      track.queueItemId = item.queueItemId;
+      if (knownIds.has(queueItemKey(item))) continue;
+      knownIds.add(queueItemKey(item));
       additions.push(item);
     }
     if (!additions.length) return true;
@@ -1070,8 +1080,8 @@ export class CloudMesh {
         return false;
       }
       if (Array.isArray(data.queue)) {
-        const serverIds = new Set(data.queue.map(item => item?.id).filter(Boolean));
-        const pendingItems = this.lastKnownQueue.filter(item => item?.id && !serverIds.has(item.id) && !this.deletedQueueIds.has(item.id));
+        const serverIds = new Set(data.queue.map(queueItemKey).filter(Boolean));
+        const pendingItems = this.lastKnownQueue.filter(item => item?.id && !serverIds.has(queueItemKey(item)) && !this.deletedQueueIds.has(queueItemKey(item)));
         this.lastKnownQueue = [...data.queue, ...pendingItems];
         this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
         this.saveLocalQueue(this.lastKnownQueue);
@@ -1098,6 +1108,7 @@ export class CloudMesh {
     const currentQ = this.lastKnownQueue || [];
     const item = {
       id: track.id || ('q_' + Math.random().toString(36).substring(2, 9)),
+      queueItemId: track.queueItemId || createQueueItemId(),
       name: track.name || 'Untitled',
       artist: track.artist || 'Artist',
       duration: track.duration || 0,
@@ -1109,11 +1120,14 @@ export class CloudMesh {
       isSynthetic: !!track.isSynthetic,
       addedBy: track.addedBy || this.deviceName
     };
+    track.queueItemId = item.queueItemId;
+    const itemKey = queueItemKey(item);
+    this.deletedQueueIds.delete(itemKey);
     this.deletedQueueIds.delete(item.id);
 
-    if (this.queueAdditionAcknowledgements.has(item.id)) return true;
+    if (this.queueAdditionAcknowledgements.has(itemKey)) return true;
 
-    if (!currentQ.some(q => q.id === item.id)) {
+    if (!currentQ.some(q => queueItemKey(q) === itemKey)) {
       this.lastKnownQueue = [...currentQ, item];
       this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
       this.saveLocalQueue(this.lastKnownQueue);
@@ -1152,10 +1166,10 @@ export class CloudMesh {
         return false;
       }
       if (data.queue) {
-        const confirmedTracks = data.queue.filter(track => !this.deletedQueueIds.has(track.id));
-        const serverIds = new Set(confirmedTracks.map(track => track.id));
+        const confirmedTracks = data.queue.filter(track => !this.deletedQueueIds.has(queueItemKey(track)));
+        const serverIds = new Set(confirmedTracks.map(queueItemKey));
         const pendingLocalTracks = (this.lastKnownQueue || []).filter(track =>
-          !serverIds.has(track.id) && !this.deletedQueueIds.has(track.id)
+          !serverIds.has(queueItemKey(track)) && !this.deletedQueueIds.has(queueItemKey(track))
         );
         const mergedQueue = [...confirmedTracks, ...pendingLocalTracks];
         this.lastKnownQueue = mergedQueue;
@@ -1177,18 +1191,21 @@ export class CloudMesh {
       this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Antrean tersimpan di perangkat ini, sinkronisasi room gagal.' });
       return false;
     });
-    this.queueAdditionAcknowledgements.set(item.id, acknowledgement);
+    this.queueAdditionAcknowledgements.set(itemKey, acknowledgement);
     acknowledgement.finally(() => {
-      if (this.queueAdditionAcknowledgements.get(item.id) === acknowledgement) {
-        this.queueAdditionAcknowledgements.delete(item.id);
+      if (this.queueAdditionAcknowledgements.get(itemKey) === acknowledgement) {
+        this.queueAdditionAcknowledgements.delete(itemKey);
       }
     }).catch(() => {});
     acknowledgement.catch(() => {});
     return true;
   }
 
-  waitForQueueItemAcknowledgement(trackId) {
-    return this.queueAdditionAcknowledgements?.get(trackId) || Promise.resolve(false);
+  waitForQueueItemAcknowledgement(queueItemId) {
+    const exact = this.queueAdditionAcknowledgements?.get(queueItemId);
+    if (exact) return exact;
+    const key = resolveQueueItemKey(this.lastKnownQueue || [], queueItemId);
+    return this.queueAdditionAcknowledgements?.get(key) || Promise.resolve(false);
   }
 
   requestControl(action, details = {}) {
@@ -1403,10 +1420,11 @@ export class CloudMesh {
 
   async removeFromQueue(queueId) {
     if (!this.isHost) return;
+    queueId = resolveQueueItemKey(this.lastKnownQueue || [], queueId);
     const previousQueue = [...(this.lastKnownQueue || [])];
     if (queueId) {
       this.deletedQueueIds.add(queueId);
-      this.lastKnownQueue = (this.lastKnownQueue || []).filter(q => q.id !== queueId);
+      this.lastKnownQueue = (this.lastKnownQueue || []).filter(q => queueItemKey(q) !== queueId);
       this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
       this.saveLocalQueue(this.lastKnownQueue);
       this.onEvent('QUEUE_UPDATED', { queue: this.lastKnownQueue });
@@ -1436,7 +1454,7 @@ export class CloudMesh {
       }
       if (!res.ok || !data.success) throw new Error('QUEUE_REMOVE_FAILED');
       if (data.queue) {
-        this.lastKnownQueue = data.queue.filter(q => !this.deletedQueueIds.has(q.id));
+        this.lastKnownQueue = data.queue.filter(q => !this.deletedQueueIds.has(queueItemKey(q)));
         this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
         this.onEvent('QUEUE_UPDATED', { queue: this.lastKnownQueue });
       }
@@ -1451,10 +1469,11 @@ export class CloudMesh {
 
   async clearQueue(queueIds) {
     if (!this.isHost || !Array.isArray(queueIds) || queueIds.length === 0) return { removed: [], queue: this.lastKnownQueue || [] };
-    const currentTrackId = this.lastKnownTrack?.id;
+    queueIds = queueIds.map(id => resolveQueueItemKey(this.lastKnownQueue || [], id));
+    const currentTrackId = queueItemKey(this.lastKnownTrack);
     const ids = new Set(queueIds.filter(id => id && id !== currentTrackId));
     const previousQueue = this.lastKnownQueue || [];
-    this.lastKnownQueue = previousQueue.filter(item => !ids.has(item.id));
+    this.lastKnownQueue = previousQueue.filter(item => !ids.has(queueItemKey(item)));
     ids.forEach(id => this.deletedQueueIds.add(id));
     this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
     this.saveLocalQueue(this.lastKnownQueue);
@@ -1496,7 +1515,7 @@ export class CloudMesh {
 
   async restoreQueue(removed) {
     if (!this.isHost || !Array.isArray(removed) || removed.length === 0) return false;
-    removed.forEach(entry => this.deletedQueueIds.delete(entry.item?.id));
+    removed.forEach(entry => this.deletedQueueIds.delete(queueItemKey(entry.item)));
     try {
       const res = await fetchQueueMutation('/api/room?action=restore_queue', {
         method: 'POST',
@@ -1506,7 +1525,7 @@ export class CloudMesh {
       const data = await res.json();
       this.rememberQueueRevision(data);
       if (res.status === 409) {
-        removed.forEach(entry => this.deletedQueueIds.add(entry.item.id));
+        removed.forEach(entry => this.deletedQueueIds.add(queueItemKey(entry.item)));
         this.applyCanonicalQueue(data.queue);
         this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Antrean berubah di perangkat lain. Undo tidak diterapkan.' });
         return false;
@@ -1520,7 +1539,7 @@ export class CloudMesh {
       this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
       return true;
     } catch (error) {
-      removed.forEach(entry => this.deletedQueueIds.add(entry.item.id));
+      removed.forEach(entry => this.deletedQueueIds.add(queueItemKey(entry.item)));
       this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Undo gagal disinkronkan. Coba lagi.' });
       return false;
     }

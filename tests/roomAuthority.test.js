@@ -16,6 +16,53 @@ async function callRoom(action, body) {
 }
 
 describe('room authority', () => {
+  it('keeps duplicate tracks as distinct queue items and targets mutations by queue item id', async () => {
+    const roomId = `D${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    const first = { id: 'same-track', queueItemId: 'queue-first', name: 'Same song' };
+    const second = { id: 'same-track', queueItemId: 'queue-second', name: 'Same song' };
+
+    const added = await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [first, second] });
+    const addedIds = added.body.queue.map(item => item.queueItemId);
+    const retried = await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [first, second] });
+    const retriedIds = retried.body.queue.map(item => item.queueItemId);
+    const moved = await callRoom('play_next', {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken, queueId: 'queue-second'
+    });
+    const selected = await callRoom('play_queue_item', {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken, queueId: 'queue-second'
+    });
+    const next = await callRoom('next_track', {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken
+    });
+    const removed = await callRoom('remove_queue', {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken, queueId: 'queue-first'
+    });
+
+    expect(addedIds).toEqual(['queue-first', 'queue-second']);
+    expect(retriedIds).toEqual(['queue-first', 'queue-second']);
+    expect(moved.body.queue.map(item => item.queueItemId)).toEqual(['queue-second', 'queue-first']);
+    expect(selected.body.track.queueItemId).toBe('queue-second');
+    expect(next.body.track.queueItemId).toBe('queue-first');
+    expect(removed.body.queue.map(item => item.queueItemId)).toEqual(['queue-second']);
+  });
+
+  it('advances from a legacy current track to the next matching queue item', async () => {
+    const roomId = `L${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
+      { id: 'same-track', queueItemId: 'legacy-first', name: 'Same song' },
+      { id: 'same-track', queueItemId: 'legacy-second', name: 'Same song' }
+    ] });
+    await callRoom('track', {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken, track: { id: 'same-track', name: 'Same song' }
+    });
+
+    const next = await callRoom('next_track', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken });
+
+    expect(next.body.track.queueItemId).toBe('legacy-second');
+  });
+
   it('stores only validated audio routes for room peers', async () => {
     const roomId = `A${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });

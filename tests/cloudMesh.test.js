@@ -421,18 +421,18 @@ describe('CloudMesh audio transfer', () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({
       success: true,
       queueRevision: 1,
-      queue: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }]
+      queue: [{ id: 'a', queueItemId: 'a-1', name: 'A' }, { id: 'b', queueItemId: 'b-1', name: 'B' }, { id: 'a', queueItemId: 'a-2', name: 'A' }]
     }) });
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await mesh.addQueueItems([
-      { id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'a', name: 'A' }
+      { id: 'a', queueItemId: 'a-1', name: 'A' }, { id: 'b', queueItemId: 'b-1', name: 'B' }, { id: 'a', queueItemId: 'a-2', name: 'A' }
     ]);
 
     expect(result).toBe(true);
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body).items.map(item => item.id)).toEqual(['a', 'b']);
-    expect(mesh.lastKnownQueue.map(item => item.id)).toEqual(['a', 'b']);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).items.map(item => item.queueItemId)).toEqual(['a-1', 'b-1', 'a-2']);
+    expect(mesh.lastKnownQueue.map(item => item.id)).toEqual(['a', 'b', 'a']);
   });
 
   it('rebases a batched room queue addition once on a revision conflict', async () => {
@@ -1395,13 +1395,14 @@ describe('CloudMesh audio transfer', () => {
     mesh.roomId = 'ROOM';
     mesh.peerId = 'peer-1';
     mesh.deviceName = 'Host';
+    const track = { id: 'local-track', name: 'Local track' };
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ success: true, queue: [{ id: 'local-track' }], queueRevision: 4 })
+      json: async () => ({ success: true, queue: [{ ...track }], queueRevision: 4 })
     }));
 
-    await mesh.addToQueue({ id: 'local-track', name: 'Local track' });
-    await expect(mesh.waitForQueueItemAcknowledgement('local-track')).resolves.toBe(true);
+    await mesh.addToQueue(track);
+    await expect(mesh.waitForQueueItemAcknowledgement(track.queueItemId)).resolves.toBe(true);
   });
 
   it('ends a stalled room queue acknowledgement after a bounded timeout', async () => {
@@ -1414,8 +1415,9 @@ describe('CloudMesh audio transfer', () => {
       options.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
     })));
 
-    await mesh.addToQueue({ id: 'stalled-track', name: 'Stalled track' });
-    const acknowledgement = mesh.waitForQueueItemAcknowledgement('stalled-track');
+    const track = { id: 'stalled-track', name: 'Stalled track' };
+    await mesh.addToQueue(track);
+    const acknowledgement = mesh.waitForQueueItemAcknowledgement(track.queueItemId);
     let settled = false;
     acknowledgement.then(() => { settled = true; });
     await vi.advanceTimersByTimeAsync(8_000);
@@ -1434,43 +1436,52 @@ describe('CloudMesh audio transfer', () => {
     let resolveFetch;
     vi.stubGlobal('fetch', vi.fn(() => new Promise(resolve => { resolveFetch = resolve; })));
 
-    await mesh.addToQueue({ id: 'local-track', name: 'Local track', sourceType: 'local-file' });
+    const track = { id: 'local-track', name: 'Local track', sourceType: 'local-file' };
+    await mesh.addToQueue(track);
     expect(mesh.lastKnownQueue.map(track => track.id)).toEqual(['local-track']);
 
-    resolveFetch({ ok: true, json: async () => ({ success: true, queue: [{ id: 'local-track' }], queueRevision: 1 }) });
-    await expect(mesh.waitForQueueItemAcknowledgement('local-track')).resolves.toBe(true);
+    resolveFetch({ ok: true, json: async () => ({ success: true, queue: [{ ...track }], queueRevision: 1 }) });
+    await expect(mesh.waitForQueueItemAcknowledgement(track.queueItemId)).resolves.toBe(true);
   });
 
-  it('deduplicates repeated adds of the same stable queue id', async () => {
+  it('adds repeated tracks as separate queue items with stable retry ids', async () => {
     const mesh = new CloudMesh(() => {});
     mesh.roomId = 'ROOM';
     mesh.peerId = 'peer-1';
     mesh.deviceName = 'Host';
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, queue: [{ id: 'demo_synthwave', name: 'Demo' }] }) }));
+    const serverQueue = [];
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (_url, options) => {
+      const body = JSON.parse(options.body);
+      const item = body.items?.[0] || body;
+      if (!serverQueue.some(queued => queued.queueItemId === item.queueItemId)) serverQueue.push(item);
+      return { ok: true, json: async () => ({ success: true, queue: [...serverQueue] }) };
+    }));
 
     await mesh.addToQueue({ id: 'demo_synthwave', name: 'Demo', isSynthetic: true });
     await mesh.addToQueue({ id: 'demo_synthwave', name: 'Demo', isSynthetic: true });
     await new Promise(resolve => setTimeout(resolve, 0));
 
-    expect(mesh.lastKnownQueue.map(track => track.id)).toEqual(['demo_synthwave']);
+    expect(mesh.lastKnownQueue.map(track => track.id)).toEqual(['demo_synthwave', 'demo_synthwave']);
+    expect(new Set(mesh.lastKnownQueue.map(track => track.queueItemId)).size).toBe(2);
   });
 
   it('retries a failed queue addition with the same stable id', async () => {
     const mesh = new CloudMesh(() => {});
     mesh.roomId = 'ROOM';
     mesh.peerId = 'peer-1';
+    const track = { id: 'retry-track', name: 'Retry track' };
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) })
       .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({
-        success: true, queue: [{ id: 'retry-track', name: 'Retry track' }], queueRevision: 1
+        success: true, queue: [{ ...track }], queueRevision: 1
       }) });
     vi.stubGlobal('fetch', fetchMock);
 
-    await mesh.addToQueue({ id: 'retry-track', name: 'Retry track' });
-    await expect(mesh.waitForQueueItemAcknowledgement('retry-track')).resolves.toBe(false);
-    await mesh.addToQueue({ id: 'retry-track', name: 'Retry track' });
+    await mesh.addToQueue(track);
+    await expect(mesh.waitForQueueItemAcknowledgement(track.queueItemId)).resolves.toBe(false);
+    await mesh.addToQueue(track);
 
-    await expect(mesh.waitForQueueItemAcknowledgement('retry-track')).resolves.toBe(true);
+    await expect(mesh.waitForQueueItemAcknowledgement(track.queueItemId)).resolves.toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(mesh.lastKnownQueue.map(track => track.id)).toEqual(['retry-track']);
   });
@@ -1545,9 +1556,10 @@ describe('CloudMesh audio transfer', () => {
     const responses = [];
     vi.stubGlobal('fetch', () => new Promise(resolve => responses.push(resolve)));
 
-    await mesh.addToQueue({ id: 'track-x', name: 'Track X' });
-    const removal = mesh.removeFromQueue('track-x');
-    responses[0]({ json: async () => ({ queue: [{ id: 'track-x', name: 'Track X' }] }) });
+    const track = { id: 'track-x', name: 'Track X' };
+    await mesh.addToQueue(track);
+    const removal = mesh.removeFromQueue(track.queueItemId);
+    responses[0]({ json: async () => ({ queue: [{ ...track }] }) });
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(mesh.lastKnownQueue.map(track => track.id)).toEqual([]);
     responses[1]({ ok: true, json: async () => ({ success: true, queue: [] }) });

@@ -24,10 +24,24 @@ const peerAudioRouteLabel = peer => peer?.audioRoute === 'unknown' && peer?.read
   ? 'Belum ada audio'
   : AUDIO_ROUTE_LABELS[peer?.audioRoute] || AUDIO_ROUTE_LABELS.unknown;
 
-export function upcomingQueueItems(queue, currentTrackId, currentTrackName) {
-  if (!Array.isArray(queue)) return [];
-  return queue.filter(item => currentTrackId ? item.id !== currentTrackId : !currentTrackName || item.name !== currentTrackName);
+export function currentQueueItem(queue, track, fallbackName) {
+  if (!Array.isArray(queue)) return null;
+  if (!track) return fallbackName ? queue.find(item => item.name === fallbackName) || null : null;
+  return track.queueItemId
+    ? queue.find(item => (item.queueItemId || item.id) === track.queueItemId) || null
+    : queue.find(item => item.id === (typeof track === 'string' ? track : track.id)) || null;
 }
+
+export function upcomingQueueItems(queue, currentTrack, currentTrackName) {
+  if (!Array.isArray(queue)) return [];
+  const activeItem = currentQueueItem(queue, currentTrack, currentTrackName);
+  if (activeItem) return queue.filter(item => item !== activeItem);
+  const currentId = typeof currentTrack === 'string' ? currentTrack : currentTrack?.id;
+  return currentId ? queue : queue.filter(item => !currentTrackName || item.name !== currentTrackName);
+}
+
+const queueItemKey = item => item?.queueItemId || item?.id;
+const createQueueItemId = () => `qi_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 
 export function moveQueueItem(queue, fromIndex, toIndex) {
   if (!Array.isArray(queue) || !Number.isInteger(fromIndex) || !Number.isInteger(toIndex)
@@ -1369,9 +1383,8 @@ export class UIManager {
 
   addToSoloQueue(track) {
     if (!track?.id) return;
-    this.soloQueue = this.soloQueue.some(item => item.id === track.id)
-      ? this.soloQueue
-      : [...this.soloQueue, track];
+    track.queueItemId ||= `qi_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    if (!this.soloQueue.some(item => queueItemKey(item) === queueItemKey(track))) this.soloQueue = [...this.soloQueue, track];
     try { localStorage.setItem('rync_solo_queue', JSON.stringify(this.soloQueue)); } catch (error) {}
     if (!this.app.socketClient?.roomId) this.renderQueue(this.soloQueue);
   }
@@ -1426,11 +1439,13 @@ export class UIManager {
       return item;
     }
     const socketClient = this.app.socketClient;
-    const alreadyQueued = (socketClient.cloudMesh?.lastKnownQueue || []).some(queued => queued.id === item.id);
+    const existingQueueItem = (socketClient.cloudMesh?.lastKnownQueue || []).find(queued => queued.id === item.id);
+    const alreadyQueued = !!existingQueueItem;
+    if (existingQueueItem) item.queueItemId = queueItemKey(existingQueueItem);
     const queueSync = alreadyQueued ? Promise.resolve(true) : Promise.resolve(socketClient.addToQueue(item)).then(added => {
       if (added === false) return false;
       const waitForAck = socketClient.cloudMesh?.waitForQueueItemAcknowledgement;
-      return waitForAck ? waitForAck.call(socketClient.cloudMesh, item.id) : added;
+      return waitForAck ? waitForAck.call(socketClient.cloudMesh, queueItemKey(item)) : added;
     });
     this.updateTrackUI(item.name, item.duration, item.thumbnail);
     this.setYouTubePlayerVisible(true);
@@ -1443,10 +1458,10 @@ export class UIManager {
       }
       if (socketClient.isHost) {
         socketClient.cloudMesh.lastKnownTrack = item;
-        const selected = await socketClient.playQueueItem(item.id, true);
+        const selected = await socketClient.playQueueItem(queueItemKey(item), true);
         if (!selected) this.showUrlFeedback('Room gagal memilih lagu. Refresh antrean lalu coba lagi.', 'error');
       } else {
-        const requested = socketClient.requestControl('play_queue_item', { queueId: item.id, name: item.name });
+        const requested = socketClient.requestControl('play_queue_item', { queueId: queueItemKey(item), name: item.name });
         if (!requested) this.showUrlFeedback('Permintaan putar tidak terkirim. Coba lagi.', 'error');
       }
     }).catch(() => this.showUrlFeedback('Room gagal memulai lagu. Refresh antrean atau coba lagi.', 'error'));
@@ -1457,11 +1472,13 @@ export class UIManager {
     const socketClient = this.app.socketClient;
     if (!item?.audioUrl) throw new Error('URL audio tidak tersedia');
     if (socketClient.roomId) {
-      const alreadyQueued = (socketClient.cloudMesh?.lastKnownQueue || []).some(queued => queued.id === item.id);
+      const existingQueueItem = (socketClient.cloudMesh?.lastKnownQueue || []).find(queued => queued.id === item.id);
+      const alreadyQueued = !!existingQueueItem;
+      if (existingQueueItem) item.queueItemId = queueItemKey(existingQueueItem);
       const queueSync = alreadyQueued ? Promise.resolve(true) : Promise.resolve(socketClient.addToQueue(item)).then(added => {
         if (added === false) return false;
         const waitForAck = socketClient.cloudMesh?.waitForQueueItemAcknowledgement;
-        return waitForAck ? waitForAck.call(socketClient.cloudMesh, item.id) : added;
+        return waitForAck ? waitForAck.call(socketClient.cloudMesh, queueItemKey(item)) : added;
       });
       this.updateTrackUI(item.name, item.duration || 0, item.thumbnail || '');
       this.setTrackLoading(`Menyiapkan ${item.name}…`);
@@ -1473,10 +1490,10 @@ export class UIManager {
         this.showUrlFeedback('Lagu siap di antrean room.', 'success');
         if (socketClient.isHost) {
           socketClient.cloudMesh.lastKnownTrack = item;
-          const selected = await socketClient.playQueueItem(item.id, true);
+          const selected = await socketClient.playQueueItem(queueItemKey(item), true);
           if (!selected) this.showUrlFeedback('Room gagal memilih lagu. Refresh antrean lalu coba lagi.', 'error');
         } else {
-          const requested = socketClient.requestControl('play_queue_item', { queueId: item.id, name: item.name });
+          const requested = socketClient.requestControl('play_queue_item', { queueId: queueItemKey(item), name: item.name });
           if (!requested) this.showUrlFeedback('Permintaan putar tidak terkirim. Coba lagi.', 'error');
         }
       }).catch(() => this.showUrlFeedback('Room gagal memulai lagu. Refresh antrean atau coba lagi.', 'error'));
@@ -1526,18 +1543,18 @@ export class UIManager {
     const inRoom = Boolean(socketClient?.roomId);
     if (inRoom && !socketClient.isHost) return;
     const currentTrack = inRoom ? socketClient.cloudMesh?.lastKnownTrack : this.currentTrack;
-    const upcoming = upcomingQueueItems(this.cachedQueue, currentTrack?.id, currentTrack?.name);
+    const upcoming = upcomingQueueItems(this.cachedQueue, currentTrack, currentTrack?.name);
     if (!upcoming.length) return;
     let removed;
     if (inRoom) {
-      const result = await socketClient.clearQueue(upcoming.map(item => item.id));
+      const result = await socketClient.clearQueue(upcoming.map(queueItemKey));
       removed = result?.removed;
     } else {
-      const upcomingIds = new Set(upcoming.map(item => item.id));
+      const upcomingIds = new Set(upcoming.map(queueItemKey));
       removed = this.cachedQueue
         .map((item, index) => ({ item, index }))
-        .filter(entry => upcomingIds.has(entry.item.id));
-      this.soloQueue = this.soloQueue.filter(item => !upcomingIds.has(item.id));
+        .filter(entry => upcomingIds.has(queueItemKey(entry.item)));
+      this.soloQueue = this.soloQueue.filter(item => !upcomingIds.has(queueItemKey(item)));
       try { localStorage.setItem('rync_solo_queue', JSON.stringify(this.soloQueue)); } catch (error) {}
       this.renderQueue(this.soloQueue);
     }
@@ -1585,7 +1602,7 @@ export class UIManager {
     const socketClient = this.app.socketClient;
     if (socketClient?.roomId && !socketClient.isHost) return false;
     if (![-1, 1].includes(direction)) return false;
-    const fromIndex = this.cachedQueue.findIndex(item => item.id === trackId);
+    const fromIndex = this.cachedQueue.findIndex(item => queueItemKey(item) === trackId);
     const toIndex = fromIndex + direction;
     if (fromIndex < 0 || toIndex < 0 || toIndex >= this.cachedQueue.length) return false;
     this.commitQueueReorder(moveQueueItem(this.cachedQueue, fromIndex, toIndex));
@@ -1615,7 +1632,9 @@ export class UIManager {
     const currentTrack = this.app.socketClient?.cloudMesh?.lastKnownTrack;
     const isInRoom = Boolean(this.app.socketClient?.roomId);
     const activeTrack = isInRoom ? currentTrack : this.currentTrack;
-    const upcoming = upcomingQueueItems(queue, activeTrack?.id, activeTrack?.name);
+    const currentTrackName = this.app.audioEngine?.currentTrackName || '';
+    const activeQueueItem = currentQueueItem(queue, activeTrack, !activeTrack ? currentTrackName : undefined);
+    const upcoming = upcomingQueueItems(queue, activeTrack, activeTrack?.name);
     if (this.elements.clearUpcomingBtn) {
       this.elements.clearUpcomingBtn.hidden = (isInRoom && !this.app.socketClient?.isHost) || upcoming.length === 0;
     }
@@ -1639,16 +1658,14 @@ export class UIManager {
     }
 
     container.innerHTML = '';
-    const currentTrackName = this.app.audioEngine?.currentTrackName || '';
-    const currentTrackId = activeTrack?.id || '';
-
     queue.forEach((item, index) => {
-      const isCurrent = currentTrackId ? (item.id === currentTrackId) : (currentTrackName && item.name === currentTrackName);
+      const isCurrent = item === activeQueueItem;
       const div = document.createElement('div');
       div.className = `queue-item ${isCurrent ? 'active-track' : ''}`;
       div.setAttribute('draggable', String(!isInRoom || !!this.app.socketClient?.isHost));
       div.dataset.index = index;
       div.dataset.id = item.id;
+      div.dataset.queueItemId = queueItemKey(item);
 
       div.innerHTML = `
         <div class="drag-handle" title="Tahan & geser utk ubah urutan">
@@ -1708,7 +1725,7 @@ export class UIManager {
           event.stopPropagation();
           dropdown.classList.remove('active');
           menuBtn?.setAttribute('aria-expanded', 'false');
-          this.moveQueueItemById(item.id, -1);
+          this.moveQueueItemById(queueItemKey(item), -1);
         });
       }
       if (moveDownButton) {
@@ -1717,7 +1734,7 @@ export class UIManager {
           event.stopPropagation();
           dropdown.classList.remove('active');
           menuBtn?.setAttribute('aria-expanded', 'false');
-          this.moveQueueItemById(item.id, 1);
+          this.moveQueueItemById(queueItemKey(item), 1);
         });
       }
 
@@ -1730,14 +1747,14 @@ export class UIManager {
           return;
         }
         if (!this.app.socketClient.isHost) {
-          this.app.socketClient.requestControl('play_queue_item', { queueId: item.id, name: item.name });
+          this.app.socketClient.requestControl('play_queue_item', { queueId: queueItemKey(item), name: item.name });
           return;
         }
         this.app.audioEngine.ensureContext();
         this.app.audioEngine.stopLocalPlayback();
         this.setPlayState(false);
         this.setTrackLoading(`Memuat ${item.name}...`);
-        this.app.socketClient.playQueueItem(item.id, true);
+        this.app.socketClient.playQueueItem(queueItemKey(item), true);
       });
 
       // 2. Play Next Action
@@ -1746,8 +1763,8 @@ export class UIManager {
         dropdown.classList.remove('active');
         if (!this.app.socketClient.roomId) {
           this.addToSoloQueue(item);
-          const queue = this.soloQueue.filter(entry => entry.id !== item.id);
-          const currentIndex = queue.findIndex(entry => entry.id === this.currentTrack?.id);
+          const queue = this.soloQueue.filter(entry => queueItemKey(entry) !== queueItemKey(item));
+          const currentIndex = queue.findIndex(entry => queueItemKey(entry) === queueItemKey(this.currentTrack));
           queue.splice(currentIndex < 0 ? 0 : currentIndex + 1, 0, item);
           this.soloQueue = queue;
           this.renderQueue(queue);
@@ -1755,10 +1772,10 @@ export class UIManager {
           return;
         }
         if (!this.app.socketClient.isHost) {
-          this.app.socketClient.requestControl('play_next', { queueId: item.id, name: item.name });
+          this.app.socketClient.requestControl('play_next', { queueId: queueItemKey(item), name: item.name });
           return;
         }
-        this.app.socketClient.playNext(item.id);
+        this.app.socketClient.playNext(queueItemKey(item));
       });
 
       // 3. Download Audio File Action
@@ -1793,16 +1810,16 @@ export class UIManager {
         e.stopPropagation();
         dropdown.classList.remove('active');
         if (!this.app.socketClient.roomId) {
-          this.soloQueue = this.soloQueue.filter(entry => entry.id !== item.id);
+          this.soloQueue = this.soloQueue.filter(entry => queueItemKey(entry) !== queueItemKey(item));
           try { localStorage.setItem('rync_solo_queue', JSON.stringify(this.soloQueue)); } catch (error) {}
           this.renderQueue(this.soloQueue);
           return;
         }
         if (!this.app.socketClient.isHost) {
-          this.app.socketClient.requestControl('remove_queue', { queueId: item.id, name: item.name });
+          this.app.socketClient.requestControl('remove_queue', { queueId: queueItemKey(item), name: item.name });
           return;
         }
-        this.app.socketClient.removeFromQueue(item.id);
+        this.app.socketClient.removeFromQueue(queueItemKey(item));
       });
 
       // Click row to select/load track (with autoplay)
@@ -1813,7 +1830,7 @@ export class UIManager {
           return;
         }
         if (!this.app.socketClient.isHost) {
-          this.app.socketClient.requestControl('play_queue_item', { queueId: item.id, name: item.name });
+          this.app.socketClient.requestControl('play_queue_item', { queueId: queueItemKey(item), name: item.name });
           return;
         }
         this.app.audioEngine.ensureContext();
@@ -1824,7 +1841,7 @@ export class UIManager {
           const buffer = this.app.audioEngine.generateSyntheticTrack('synthwave');
           this.updateTrackUI(item.name, buffer.duration);
         }
-        this.app.socketClient.playQueueItem(item.id, true);
+        this.app.socketClient.playQueueItem(queueItemKey(item), true);
       });
 
       // Desktop HTML5 Drag and Drop
@@ -2055,13 +2072,16 @@ export class UIManager {
     if (!mesh?.isHost || !mesh.hostToken) throw new Error('Hanya host room yang bisa membagikan file lokal');
     const queuedTrack = { ...track, sourceType: 'local-file', audioUrl: '' };
     mesh.localAudioBufferCache.set(track.id, arrayBuffer);
-    const alreadyQueued = mesh.lastKnownQueue?.some(item => item.id === track.id);
+    const existingQueueItem = mesh.lastKnownQueue?.find(item => queueItemKey(item) === queueItemKey(track))
+      || (!track.queueItemId ? mesh.lastKnownQueue?.find(item => item.id === track.id) : null);
+    const alreadyQueued = !!existingQueueItem;
+    if (existingQueueItem) queuedTrack.queueItemId = queueItemKey(existingQueueItem);
     if (!alreadyQueued) {
       await this.app.socketClient.addToQueue(queuedTrack);
-      const added = await mesh.waitForQueueItemAcknowledgement(track.id);
+      const added = await mesh.waitForQueueItemAcknowledgement(queueItemKey(queuedTrack));
       if (!added) throw new Error('File lokal tidak masuk ke queue room');
     }
-    const selected = mesh.lastKnownTrack?.id === track.id;
+    const selected = queueItemKey(mesh.lastKnownTrack) === queueItemKey(queuedTrack);
     const openPeerCount = [...mesh.dataChannels.values()].filter(channel => channel.readyState === 'open').length;
     if (openPeerCount > 0 && arrayBuffer.byteLength <= 64 * 1024 * 1024) {
       const transfer = await mesh.streamAudioToRoom(arrayBuffer, track.name, track.id);
@@ -2084,6 +2104,7 @@ export class UIManager {
         peerId: mesh.peerId,
         hostToken: mesh.hostToken,
         id: track.id,
+        queueItemId: queueItemKey(queuedTrack),
         audioBase64: btoa(binary),
         trackName: track.name,
         duration: track.duration,
@@ -2095,7 +2116,7 @@ export class UIManager {
     mesh.rememberQueueRevision(result);
     mesh.applyCanonicalQueue(result.queue);
     mesh.localAudioBufferCache.set(result.item.audioUrl, arrayBuffer);
-    if (result.track?.id === track.id) await mesh.sendTrackMetadata(result.track);
+    if (queueItemKey(result.track) === queueItemKey(queuedTrack)) await mesh.sendTrackMetadata(result.track);
     else if (selected) mesh.lastKnownTrack = result.item;
     mesh.loadTrackBuffer(result.item);
     return result.item;
@@ -2481,7 +2502,9 @@ export class UIManager {
   }
 
   async playPlaylist(playlist, { shuffle = false } = {}) {
-    const tracks = Array.isArray(playlist?.tracks) ? [...playlist.tracks] : [];
+    const tracks = Array.isArray(playlist?.tracks)
+      ? playlist.tracks.map(track => ({ ...track, queueItemId: createQueueItemId() }))
+      : [];
     if (!tracks.length) {
       this.showUrlFeedback('Playlist ini masih kosong.', 'info');
       return;
@@ -2508,12 +2531,12 @@ export class UIManager {
     }
     try {
       for (const track of tracks) {
-        const alreadyQueued = (socketClient.cloudMesh?.lastKnownQueue || []).some(item => item.id === track.id);
-        if (alreadyQueued) continue;
-        const added = await socketClient.addToQueue({ ...track, addedBy: this.getDeviceName() });
+        const queuedTrack = { ...track, queueItemId: createQueueItemId(), addedBy: this.getDeviceName() };
+        const added = await socketClient.addToQueue(queuedTrack);
+        track.queueItemId = queuedTrack.queueItemId;
         if (added === false) throw new Error('Playlist gagal dimasukkan ke antrean room.');
         const waitForAck = socketClient.cloudMesh?.waitForQueueItemAcknowledgement;
-        if (waitForAck && !await waitForAck.call(socketClient.cloudMesh, track.id)) {
+        if (waitForAck && !await waitForAck.call(socketClient.cloudMesh, queueItemKey(queuedTrack))) {
           throw new Error('Antrean room gagal disinkronkan. Coba lagi.');
         }
       }
@@ -2524,9 +2547,9 @@ export class UIManager {
           if (!localTrack?.audioData) throw new Error(`File ${firstTrack.name} tidak tersedia di perangkat ini.`);
           await this.uploadLocalTrackToRoom(firstTrack, localTrack.audioData);
         }
-        const selected = await socketClient.playQueueItem(firstTrack.id, true);
+        const selected = await socketClient.playQueueItem(queueItemKey(firstTrack), true);
         if (!selected) throw new Error('Room gagal memulai playlist. Refresh antrean lalu coba lagi.');
-      } else if (!socketClient.requestControl('play_queue_item', { queueId: tracks[0].id, name: tracks[0].name })) {
+      } else if (!socketClient.requestControl('play_queue_item', { queueId: queueItemKey(tracks[0]), name: tracks[0].name })) {
         throw new Error('Permintaan putar playlist tidak terkirim. Coba lagi.');
       }
       this.setView('home');
@@ -2667,7 +2690,7 @@ export class UIManager {
         const localTrack = await this.localLibrary.getLocalAudio(track.id);
         if (!localTrack?.audioData) throw new Error('File lokal sudah tidak tersedia');
         await this.uploadLocalTrackToRoom(track, localTrack.audioData);
-        const selected = await socketClient.playQueueItem(track.id, true);
+        const selected = await socketClient.playQueueItem(queueItemKey(track), true);
         if (!selected) this.showUrlFeedback('Room gagal memilih file. Refresh antrean lalu coba lagi.', 'error');
         this.setView('home');
         return;
@@ -2702,7 +2725,7 @@ export class UIManager {
 
   async goToPreviousTrack() {
     if (!this.app.socketClient.roomId) {
-      const index = this.soloQueue.findIndex(track => track.id === this.currentTrack?.id);
+      const index = this.soloQueue.findIndex(track => queueItemKey(track) === queueItemKey(this.currentTrack));
       if (this.currentTrack?.sourceType === 'youtube' && (index < 0 || this.app.youtubePlayer?.getCurrentTime?.() > 3)) {
         this.app.audioEngine.pauseOffsetSec = 0;
         return this.app.youtubePlayer?.seekTo(0);
@@ -2724,7 +2747,7 @@ export class UIManager {
 
   async goToNextTrack(options = {}) {
     if (!this.app.socketClient.roomId) {
-      const index = this.soloQueue.findIndex(track => track.id === this.currentTrack?.id);
+      const index = this.soloQueue.findIndex(track => queueItemKey(track) === queueItemKey(this.currentTrack));
       if (this.repeatMode === 'one' && this.currentTrack?.sourceType === 'youtube') {
         this.app.audioEngine.pauseOffsetSec = 0;
         return this.app.youtubePlayer?.playAt(this.currentTrack.sourceId, this.getYouTubeTargetServerTime(), 0);
@@ -2763,7 +2786,7 @@ export class UIManager {
         return false;
       }
     }
-    return room.nextTrack(automatic, next?.id || null);
+    return room.nextTrack(automatic, queueItemKey(next) || null);
   }
 
   async syncLocalQueueToRoom() {
@@ -2775,7 +2798,11 @@ export class UIManager {
       await this.uploadLocalTrackToRoom(activeTrack, localTrack.audioData);
     }
     const items = [...this.soloQueue];
-    if (activeTrack?.id && !items.some(item => item?.id === activeTrack.id)) items.unshift(activeTrack);
+    const activeQueueItem = activeTrack?.queueItemId
+      ? items.find(item => queueItemKey(item) === queueItemKey(activeTrack))
+      : items.find(item => item?.id === activeTrack?.id);
+    if (activeQueueItem && activeTrack && !activeTrack.queueItemId) activeTrack.queueItemId = queueItemKey(activeQueueItem);
+    if (activeTrack?.id && !activeQueueItem) items.unshift(activeTrack);
     const seenIds = new Set();
     let queueBatch = [];
     const flushQueueBatch = async () => {
@@ -2790,9 +2817,11 @@ export class UIManager {
       }
     };
     for (const item of items) {
-      if (!item?.id || seenIds.has(item.id)) continue;
-      seenIds.add(item.id);
-      if (item.id === activeTrack?.id && item.sourceType === 'local-file' && room.cloudMesh?.lastKnownTrack?.audioUrl) {
+      if (!item?.id) continue;
+      item.queueItemId ||= createQueueItemId();
+      if (seenIds.has(queueItemKey(item))) continue;
+      seenIds.add(queueItemKey(item));
+      if (queueItemKey(item) === queueItemKey(activeTrack) && item.sourceType === 'local-file' && room.cloudMesh?.lastKnownTrack?.audioUrl) {
         continue;
       }
       if (item.sourceType === 'local-file') {
@@ -2829,6 +2858,7 @@ export class UIManager {
       : { audioUrl: track.audioUrl };
     const roomTrack = {
       id: track.id || `q_${Math.random().toString(36).slice(2, 10)}`,
+      queueItemId: track.queueItemId,
       name: track.name || 'Untitled',
       artist: track.artist || 'Rync',
       duration: track.duration || 0,
@@ -2843,7 +2873,7 @@ export class UIManager {
       if (this.currentTrack && wasPlaying) {
         const offset = getTrackPosition();
         const selectionStartedAt = Date.now();
-        const selected = await this.app.socketClient.playQueueItem(sharedTrack.id, false);
+        const selected = await this.app.socketClient.playQueueItem(queueItemKey(sharedTrack), false);
         if (selected) this.app.socketClient.schedulePlay(800, offset + (Date.now() - selectionStartedAt) / 1000);
       }
       return;
@@ -2855,7 +2885,7 @@ export class UIManager {
       const offset = getTrackPosition();
       const selectionStartedAt = Date.now();
       const selected = this.currentTrack && wasPlaying
-        ? await this.app.socketClient.playQueueItem(roomTrack.id, false)
+        ? await this.app.socketClient.playQueueItem(queueItemKey(roomTrack), false)
         : true;
       if (selected && this.currentTrack && wasPlaying) {
         this.app.socketClient.schedulePlay(800, offset + (Date.now() - selectionStartedAt) / 1000);

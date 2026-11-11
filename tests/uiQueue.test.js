@@ -6,7 +6,7 @@ vi.mock('../public/js/auth/FirebaseAuth.js', () => ({
   firebaseAuth: { onAuthStateChanged() {} }
 }));
 
-import { UIManager, moveQueueItem, upcomingQueueItems } from '../public/js/ui/UIManager.js';
+import { UIManager, currentQueueItem, moveQueueItem, upcomingQueueItems } from '../public/js/ui/UIManager.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -122,6 +122,23 @@ describe('YouTube search queue UI', () => {
     expect(upcomingQueueItems(queue, 'current').map(item => item.id)).toEqual(['next-a', 'next-b']);
   });
 
+  it('distinguishes duplicate queue rows by queue item id', () => {
+    const queue = [
+      { id: 'same-track', queueItemId: 'row-a', name: 'Same song' },
+      { id: 'same-track', queueItemId: 'row-b', name: 'Same song' }
+    ];
+    const ui = new UIManager({ socketClient: { roomId: null, isHost: false } });
+    ui.cachedQueue = queue;
+    ui.commitQueueReorder = vi.fn();
+
+    expect(upcomingQueueItems(queue, { id: 'same-track', queueItemId: 'row-b' }).map(item => item.queueItemId)).toEqual(['row-a']);
+    expect(upcomingQueueItems(queue, { id: 'same-track' }).map(item => item.queueItemId)).toEqual(['row-b']);
+    expect(currentQueueItem(queue, { id: 'same-track' })).toBe(queue[0]);
+    expect(currentQueueItem(queue, null, 'Same song')).toBe(queue[0]);
+    expect(ui.moveQueueItemById('row-b', -1)).toBe(true);
+    expect(ui.commitQueueReorder).toHaveBeenCalledWith([queue[1], queue[0]]);
+  });
+
   it('moves one queued track without changing the input order', () => {
     const original = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
 
@@ -188,7 +205,19 @@ describe('YouTube search queue UI', () => {
     await ui.playPlaylist({ id: 'playlist-1', tracks });
 
     expect(ui.soloQueue.map(track => track.id)).toEqual(['a', 'b']);
-    expect(ui.playLibraryTrack).toHaveBeenCalledWith(tracks[0]);
+    expect(ui.playLibraryTrack).toHaveBeenCalledWith(expect.objectContaining({ id: 'a', queueItemId: expect.any(String) }));
+  });
+
+  it('preserves repeated tracks in a playlist as distinct queue rows', async () => {
+    const track = { id: 'same', name: 'Same song' };
+    const ui = new UIManager({ socketClient: { roomId: null } });
+    ui.renderQueue = vi.fn();
+    ui.playLibraryTrack = vi.fn().mockResolvedValue(undefined);
+
+    await ui.playPlaylist({ id: 'playlist-repeat', tracks: [track, track] });
+
+    expect(ui.soloQueue.map(item => item.id)).toEqual(['same', 'same']);
+    expect(new Set(ui.soloQueue.map(item => item.queueItemId)).size).toBe(2);
   });
 
   it('shuffles a playlist before saving and starting its personal queue', async () => {
@@ -219,8 +248,9 @@ describe('YouTube search queue UI', () => {
     await ui.playPlaylist({ id: 'mix', tracks });
 
     expect(socketClient.addToQueue.mock.calls.map(([track]) => track.id)).toEqual(['yt_first', 'yt_second']);
-    expect(socketClient.cloudMesh.waitForQueueItemAcknowledgement.mock.calls.map(([id]) => id)).toEqual(['yt_first', 'yt_second']);
-    expect(socketClient.playQueueItem).toHaveBeenCalledWith('yt_first', true);
+    const queuedIds = socketClient.addToQueue.mock.calls.map(([track]) => track.queueItemId);
+    expect(socketClient.cloudMesh.waitForQueueItemAcknowledgement.mock.calls.map(([id]) => id)).toEqual(queuedIds);
+    expect(socketClient.playQueueItem).toHaveBeenCalledWith(queuedIds[0], true);
   });
 
   it('queues a room playlist with local tracks and shares only its first track before playback', async () => {
@@ -249,8 +279,8 @@ describe('YouTube search queue UI', () => {
 
     expect(socketClient.addToQueue.mock.calls.map(([track]) => track.id)).toEqual(['local-a', 'yt-b', 'local-c']);
     expect(ui.uploadLocalTrackToRoom).toHaveBeenCalledOnce();
-    expect(ui.uploadLocalTrackToRoom).toHaveBeenCalledWith(tracks[0], expect.any(ArrayBuffer));
-    expect(socketClient.playQueueItem).toHaveBeenCalledWith('local-a', true);
+    expect(ui.uploadLocalTrackToRoom).toHaveBeenCalledWith(expect.objectContaining({ id: 'local-a', queueItemId: expect.any(String) }), expect.any(ArrayBuffer));
+    expect(socketClient.playQueueItem).toHaveBeenCalledWith(socketClient.addToQueue.mock.calls[0][0].queueItemId, true);
     expect(ui.showUrlFeedback).not.toHaveBeenCalled();
   });
 
@@ -916,7 +946,7 @@ describe('YouTube search queue UI', () => {
     expect(schedulePlay).not.toHaveBeenCalled();
   });
 
-  it('adds a solo search result only once when the same song is queued twice', async () => {
+  it('keeps repeated solo search selections as separate queue items', async () => {
     const mesh = { lastKnownTrack: null, loadTrackBuffer: vi.fn() };
     const ui = new UIManager({ socketClient: { roomId: null, cloudMesh: mesh }, audioEngine: { ensureContext: vi.fn(), stopLocalPlayback: vi.fn() } });
     ui.renderQueue = vi.fn();
@@ -925,7 +955,8 @@ describe('YouTube search queue UI', () => {
     await ui.addYoutubeTrackToQueue(url, 'Song');
     await ui.addYoutubeTrackToQueue(url, 'Song');
 
-    expect(ui.soloQueue).toHaveLength(1);
+    expect(ui.soloQueue).toHaveLength(2);
+    expect(new Set(ui.soloQueue.map(track => track.queueItemId)).size).toBe(2);
   });
 
   it('counts only explicitly ready room peers as ready', () => {
