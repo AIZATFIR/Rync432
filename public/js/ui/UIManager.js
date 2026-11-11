@@ -71,6 +71,7 @@ export class UIManager {
     this.nowPlayingOpen = false;
     this.nowPlayingPreviousView = 'home';
     this.currentTrack = null;
+    this.youtubePlaybackRequestSequence = 0;
     this.repeatMode = 'off';
     this.shuffle = false;
     this.youtubeSearchController = null;
@@ -1463,6 +1464,7 @@ export class UIManager {
   }
 
   async streamAudioFromUrl(url, trackTitle, artist = 'YouTube', duration = 210, thumbnail = '') {
+    const playRequestId = ++this.youtubePlaybackRequestSequence;
     const videoId = url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([A-Za-z0-9_-]{11})/)?.[1];
     if (!videoId) throw new Error('ID video YouTube tidak valid');
     const item = {
@@ -1489,7 +1491,9 @@ export class UIManager {
     const existingQueueItem = (socketClient.cloudMesh?.lastKnownQueue || []).find(queued => queued.id === item.id);
     const alreadyQueued = !!existingQueueItem;
     if (existingQueueItem) item.queueItemId = queueItemKey(existingQueueItem);
-    const queueSync = alreadyQueued ? Promise.resolve(true) : Promise.resolve(socketClient.addToQueue(item)).then(added => {
+    const alreadyConfirmed = alreadyQueued && (!socketClient.cloudMesh?.isQueueItemConfirmed
+      || socketClient.cloudMesh.isQueueItemConfirmed(queueItemKey(item)));
+    const queueSync = alreadyConfirmed ? Promise.resolve(true) : Promise.resolve(socketClient.addToQueue(item)).then(added => {
       if (added === false) return false;
       const waitForAck = socketClient.cloudMesh?.waitForQueueItemAcknowledgement;
       return waitForAck ? waitForAck.call(socketClient.cloudMesh, queueItemKey(item)) : added;
@@ -1497,21 +1501,35 @@ export class UIManager {
     this.updateTrackUI(item.name, item.duration, item.thumbnail);
     this.setYouTubePlayerVisible(true);
     if (this.app.socketClient.isHost) this.setYouTubePlayerStatus('Menyiapkan pemutaran room…');
-    else this.setYouTubePlayerStatus('Meminta host memutar lagu…');
+    else this.setYouTubePlayerStatus('Mengirim permintaan putar…');
     queueSync.then(async synced => {
+      if (playRequestId !== this.youtubePlaybackRequestSequence) return;
       if (synced === false) {
         this.showUrlFeedback('Antrean room gagal disinkronkan. Coba tambahkan lagu lagi.', 'error');
+        this.setYouTubePlayerStatus('Antrean room gagal disinkronkan. Coba lagi.');
         return;
       }
       if (socketClient.isHost) {
         socketClient.cloudMesh.lastKnownTrack = item;
         const selected = await socketClient.playQueueItem(queueItemKey(item), true);
-        if (!selected) this.showUrlFeedback('Room gagal memilih lagu. Refresh antrean lalu coba lagi.', 'error');
+        if (!selected) {
+          this.showUrlFeedback('Room gagal memilih lagu. Refresh antrean lalu coba lagi.', 'error');
+          this.setYouTubePlayerStatus('Pemutaran room gagal. Lagu tetap ada di antrean.');
+        }
       } else {
         const requested = socketClient.requestControl('play_queue_item', { queueId: queueItemKey(item), name: item.name });
-        if (!requested) this.showUrlFeedback('Permintaan putar tidak terkirim. Coba lagi.', 'error');
+        if (!requested) {
+          this.showUrlFeedback('Permintaan putar tidak terkirim. Coba lagi.', 'error');
+          this.setYouTubePlayerStatus('Permintaan putar tidak terkirim. Coba lagi.');
+        } else {
+          this.setYouTubePlayerStatus('Permintaan putar dikirim ke host.');
+        }
       }
-    }).catch(() => this.showUrlFeedback('Room gagal memulai lagu. Refresh antrean atau coba lagi.', 'error'));
+    }).catch(() => {
+      if (playRequestId !== this.youtubePlaybackRequestSequence) return;
+      this.showUrlFeedback('Room gagal memulai lagu. Refresh antrean atau coba lagi.', 'error');
+      this.setYouTubePlayerStatus('Room gagal memulai lagu. Coba lagi.');
+    });
     return item;
   }
 

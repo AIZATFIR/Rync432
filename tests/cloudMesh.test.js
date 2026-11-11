@@ -1403,6 +1403,19 @@ describe('CloudMesh audio transfer', () => {
     expect(mesh.queueRevisionRoomId).toBe('ROOM-B');
   });
 
+  it('marks only server-confirmed queue items as safe to reuse for playback', () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    const confirmed = { id: 'song-a', queueItemId: 'qi-a' };
+    const optimistic = { id: 'song-b', queueItemId: 'qi-b' };
+    mesh.lastKnownQueue = [confirmed, optimistic];
+
+    mesh.rememberQueueRevision({ queueRevision: 3, queue: [confirmed] }, 'ROOM');
+
+    expect(mesh.isQueueItemConfirmed('qi-a')).toBe(true);
+    expect(mesh.isQueueItemConfirmed('qi-b')).toBe(false);
+  });
+
   it('does not send a P2P buffer above the configured size limit', async () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));

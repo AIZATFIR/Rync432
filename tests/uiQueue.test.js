@@ -640,6 +640,62 @@ describe('YouTube search queue UI', () => {
     expect(socketClient.playQueueItem).toHaveBeenCalledWith(item.id, true);
   });
 
+  it('retries an unconfirmed YouTube queue item instead of assuming its earlier add succeeded', async () => {
+    const item = { id: 'yt_dQw4w9WgXcQ', queueItemId: 'qi-pending', name: 'Song', sourceType: 'youtube' };
+    const socketClient = {
+      roomId: 'ROOM', isHost: true,
+      cloudMesh: {
+        lastKnownQueue: [item], lastKnownTrack: null,
+        isQueueItemConfirmed: vi.fn(() => false),
+        waitForQueueItemAcknowledgement: vi.fn().mockResolvedValue(false)
+      },
+      addToQueue: vi.fn().mockResolvedValue(true),
+      playQueueItem: vi.fn()
+    };
+    const ui = new UIManager({ socketClient, audioEngine: {}, youtubePlayer: {} });
+    ui.updateTrackUI = vi.fn();
+    ui.setYouTubePlayerVisible = vi.fn();
+    ui.setYouTubePlayerStatus = vi.fn();
+    ui.showUrlFeedback = vi.fn();
+
+    await ui.streamAudioFromUrl('https://youtu.be/dQw4w9WgXcQ', 'Song');
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(socketClient.addToQueue).toHaveBeenCalledWith(expect.objectContaining({ queueItemId: 'qi-pending' }));
+    expect(socketClient.cloudMesh.waitForQueueItemAcknowledgement).toHaveBeenCalledWith('qi-pending');
+    expect(socketClient.playQueueItem).not.toHaveBeenCalled();
+    expect(ui.setYouTubePlayerStatus).toHaveBeenLastCalledWith('Antrean room gagal disinkronkan. Coba lagi.');
+  });
+
+  it('does not let a slower earlier YouTube selection replace the latest choice', async () => {
+    const acknowledgements = new Map();
+    const socketClient = {
+      roomId: 'ROOM', isHost: true,
+      cloudMesh: {
+        lastKnownQueue: [], lastKnownTrack: null,
+        waitForQueueItemAcknowledgement: vi.fn(id => new Promise(resolve => acknowledgements.set(id, resolve)))
+      },
+      addToQueue: vi.fn().mockResolvedValue(true),
+      playQueueItem: vi.fn().mockResolvedValue(true)
+    };
+    const ui = new UIManager({ socketClient, audioEngine: {}, youtubePlayer: {} });
+    ui.updateTrackUI = vi.fn();
+    ui.setYouTubePlayerVisible = vi.fn();
+    ui.setYouTubePlayerStatus = vi.fn();
+    ui.showUrlFeedback = vi.fn();
+
+    await ui.streamAudioFromUrl('https://youtu.be/dQw4w9WgXcQ', 'Earlier');
+    await ui.streamAudioFromUrl('https://youtu.be/9bZkp7q19f0', 'Latest');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    acknowledgements.get('yt_9bZkp7q19f0')(true);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    acknowledgements.get('yt_dQw4w9WgXcQ')(true);
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(socketClient.playQueueItem).toHaveBeenCalledOnce();
+    expect(socketClient.playQueueItem).toHaveBeenCalledWith('yt_9bZkp7q19f0', true);
+  });
+
   it('shows a retryable message when the host cannot select the acknowledged YouTube item', async () => {
     const socketClient = {
       roomId: 'ROOM', isHost: true,

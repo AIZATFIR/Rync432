@@ -131,6 +131,7 @@ export class CloudMesh {
     this.audioRouteByTrack = new Map();
     this.queueAdditionAcknowledgements = new Map();
     this.queueAdditionResults = new Map();
+    this.confirmedQueueItemIds = new Set();
     this.activeBufferTransfers = new WeakSet();
     this.pendingAudioTransferAcks = new Map();
     this.deletedQueueIds = new Set();
@@ -355,8 +356,11 @@ export class CloudMesh {
   }
 
   rememberQueueRevision(snapshot = {}, responseRoomId = this.roomId) {
+    if (!responseRoomId || responseRoomId !== this.roomId) return;
+    if (Array.isArray(snapshot.queue)) {
+      this.confirmedQueueItemIds = new Set(snapshot.queue.map(queueItemKey).filter(Boolean));
+    }
     if (Number.isSafeInteger(snapshot.queueRevision) && snapshot.queueRevision >= 0) {
-      if (!responseRoomId || responseRoomId !== this.roomId) return;
       if (this.queueRevisionRoomId !== responseRoomId) {
         this.queueRevisionRoomId = responseRoomId;
         this.queueRevision = snapshot.queueRevision;
@@ -370,6 +374,12 @@ export class CloudMesh {
     this.deletedQueueIds.clear();
     this.queueAdditionAcknowledgements.clear();
     this.queueAdditionResults.clear();
+    this.confirmedQueueItemIds.clear();
+  }
+
+  isQueueItemConfirmed(queueItemId) {
+    const key = resolveQueueItemKey(this.lastKnownQueue || [], queueItemId);
+    return this.confirmedQueueItemIds.has(key);
   }
 
   setHostDisconnected(disconnected) {
@@ -1173,6 +1183,7 @@ export class CloudMesh {
     this.deletedQueueIds.delete(itemKey);
     this.deletedQueueIds.delete(item.id);
 
+    if (this.confirmedQueueItemIds.has(itemKey)) return true;
     if (this.queueAdditionAcknowledgements.has(itemKey)) return true;
     if (this.queueAdditionResults.has(itemKey) && currentQ.some(q => queueItemKey(q) === itemKey)) return true;
     this.queueAdditionResults.delete(itemKey);
