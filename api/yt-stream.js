@@ -1,17 +1,9 @@
+import { extractYouTubeVideoId } from '../public/js/music/sources/YouTubeSource.js';
+
 function extractVideoId(input) {
   const value = String(input || '').trim();
   if (/^[A-Za-z0-9_-]{11}$/.test(value)) return value;
-  try {
-    const url = new URL(value);
-    const host = url.hostname.toLowerCase();
-    if (host === 'youtu.be') return url.pathname.split('/').filter(Boolean)[0] || null;
-    if (host === 'youtube.com' || host.endsWith('.youtube.com')) {
-      return url.searchParams.get('v')
-        || url.pathname.match(/\/(?:shorts|embed)\/([A-Za-z0-9_-]{11})/)?.[1]
-        || null;
-    }
-  } catch (error) {}
-  return null;
+  return extractYouTubeVideoId(value);
 }
 
 export default async function handler(req, res) {

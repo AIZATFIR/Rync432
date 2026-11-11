@@ -37,4 +37,22 @@ describe('YouTube stream API', () => {
     expect(fetchMock).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
+
+  it.each([
+    ['YouTube Live', 'https://www.youtube.com/live/dQw4w9WgXcQ'],
+    ['YouTube Music', 'https://music.youtube.com/watch?v=dQw4w9WgXcQ'],
+    ['short links', 'https://youtu.be/dQw4w9WgXcQ']
+  ])('routes %s URLs to the official embed player', async (_label, url) => {
+    const result = await callStream({ url });
+
+    expect(result.statusCode).toBe(410);
+    expect(result.body).toMatchObject({ error: 'EMBED_PLAYER_REQUIRED', videoId: 'dQw4w9WgXcQ' });
+  });
+
+  it('does not treat a YouTube lookalike domain as a YouTube video URL', async () => {
+    const result = await callStream({ url: 'https://youtube.com.attacker.test/live/dQw4w9WgXcQ' });
+
+    expect(result.statusCode).toBe(302);
+    expect(result.redirectUrl).toContain('/api/stream?url=');
+  });
 });
