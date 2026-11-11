@@ -1,5 +1,6 @@
 const RESULT_LIMIT = 8;
 const QUERY_MAX_LENGTH = 200;
+const PROVIDER_REQUEST_TIMEOUT_MS = 3_000;
 const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
 const SEARCH_CACHE_MAX_ITEMS = 100;
 const searchCache = new Map();
@@ -37,9 +38,21 @@ function sendProviderError(res, response, payload) {
 
 async function fetchJson(url) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 6000);
+  let timeout;
   try {
-    return await fetch(url, { signal: controller.signal });
+    const request = (async () => {
+      const response = await fetch(url, { signal: controller.signal });
+      return { response, data: (await response.json().catch(() => ({}))) || {} };
+    })();
+    return await Promise.race([
+      request,
+      new Promise((resolve, reject) => {
+        timeout = setTimeout(() => {
+          controller.abort();
+          reject(Object.assign(new Error('PROVIDER_TIMEOUT'), { name: 'TimeoutError' }));
+        }, PROVIDER_REQUEST_TIMEOUT_MS);
+      })
+    ]);
   } finally {
     clearTimeout(timeout);
   }
@@ -73,8 +86,7 @@ export default async function handler(req, res) {
       videoCategoryId: '10',
       maxResults: String(RESULT_LIMIT)
     });
-    const searchResponse = await fetchJson(searchUrl);
-    const searchData = await searchResponse.json().catch(() => ({}));
+    const { response: searchResponse, data: searchData } = await fetchJson(searchUrl);
     if (!searchResponse.ok) return sendProviderError(res, searchResponse, searchData);
 
     const videos = (Array.isArray(searchData.items) ? searchData.items : [])
@@ -84,8 +96,13 @@ export default async function handler(req, res) {
 
     const detailsUrl = new URL('https://www.googleapis.com/youtube/v3/videos');
     detailsUrl.search = new URLSearchParams({ key, part: 'contentDetails', id: videos.map(item => item.id.videoId).join(',') });
-    const detailsResponse = await fetchJson(detailsUrl);
-    const detailsData = detailsResponse.ok ? await detailsResponse.json().catch(() => ({})) : {};
+    let detailsData = {};
+    try {
+      const { response: detailsResponse, data } = await fetchJson(detailsUrl);
+      if (detailsResponse.ok) detailsData = data;
+    } catch (error) {
+      // Duration is supplemental; valid video results remain usable if enrichment is slow.
+    }
     const durations = new Map((detailsData.items || []).map(item => [item.id, parseIsoDuration(item.contentDetails?.duration)]));
     const results = videos.map(item => {
       const id = item.id.videoId;
@@ -108,7 +125,7 @@ export default async function handler(req, res) {
     return res.status(200).json({ results, cached: false });
   } catch (error) {
     if (cached) return res.status(200).json({ results: cached.results, cached: true, stale: true });
-    const timedOut = error?.name === 'AbortError';
+    const timedOut = error?.name === 'AbortError' || error?.name === 'TimeoutError';
     return res.status(timedOut ? 504 : 502).json({
       error: timedOut ? 'PROVIDER_TIMEOUT' : 'PROVIDER_UNAVAILABLE',
       provider: 'youtube',
