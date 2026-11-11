@@ -1264,18 +1264,20 @@ export class UIManager {
     this.setYouTubePlayerVisible(true);
     if (this.app.socketClient.isHost) this.setYouTubePlayerStatus('Menyiapkan pemutaran room…');
     else this.setYouTubePlayerStatus('Meminta host memutar lagu…');
-    queueSync.then(synced => {
+    queueSync.then(async synced => {
       if (synced === false) {
         this.showUrlFeedback('Antrean room gagal disinkronkan. Coba tambahkan lagu lagi.', 'error');
         return;
       }
       if (socketClient.isHost) {
         socketClient.cloudMesh.lastKnownTrack = item;
-        socketClient.playQueueItem(item.id, true);
+        const selected = await socketClient.playQueueItem(item.id, true);
+        if (!selected) this.showUrlFeedback('Room gagal memilih lagu. Refresh antrean lalu coba lagi.', 'error');
       } else {
-        socketClient.requestControl('play_queue_item', { queueId: item.id, name: item.name });
+        const requested = socketClient.requestControl('play_queue_item', { queueId: item.id, name: item.name });
+        if (!requested) this.showUrlFeedback('Permintaan putar tidak terkirim. Coba lagi.', 'error');
       }
-    }).catch(() => this.showUrlFeedback('Antrean room gagal disinkronkan. Coba tambahkan lagu lagi.', 'error'));
+    }).catch(() => this.showUrlFeedback('Room gagal memulai lagu. Refresh antrean atau coba lagi.', 'error'));
     return item;
   }
 
@@ -1291,7 +1293,7 @@ export class UIManager {
       });
       this.updateTrackUI(item.name, item.duration || 0, item.thumbnail || '');
       this.setTrackLoading(`Menyiapkan ${item.name}…`);
-      queueSync.then(synced => {
+      queueSync.then(async synced => {
         if (synced === false) {
           this.showUrlFeedback('Antrean room gagal disinkronkan. Coba lagi.', 'error');
           return;
@@ -1299,11 +1301,13 @@ export class UIManager {
         this.showUrlFeedback('Lagu siap di antrean room.', 'success');
         if (socketClient.isHost) {
           socketClient.cloudMesh.lastKnownTrack = item;
-          socketClient.playQueueItem(item.id, true);
+          const selected = await socketClient.playQueueItem(item.id, true);
+          if (!selected) this.showUrlFeedback('Room gagal memilih lagu. Refresh antrean lalu coba lagi.', 'error');
         } else {
-          socketClient.requestControl('play_queue_item', { queueId: item.id, name: item.name });
+          const requested = socketClient.requestControl('play_queue_item', { queueId: item.id, name: item.name });
+          if (!requested) this.showUrlFeedback('Permintaan putar tidak terkirim. Coba lagi.', 'error');
         }
-      }).catch(() => this.showUrlFeedback('Antrean room gagal disinkronkan. Coba lagi.', 'error'));
+      }).catch(() => this.showUrlFeedback('Room gagal memulai lagu. Refresh antrean atau coba lagi.', 'error'));
       return item;
     }
 

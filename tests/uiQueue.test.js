@@ -123,6 +123,25 @@ describe('YouTube search queue UI', () => {
     expect(socketClient.playQueueItem).toHaveBeenCalledWith(item.id, true);
   });
 
+  it('shows a retryable message when the host cannot select the acknowledged YouTube item', async () => {
+    const socketClient = {
+      roomId: 'ROOM', isHost: true,
+      cloudMesh: { lastKnownQueue: [], waitForQueueItemAcknowledgement: vi.fn().mockResolvedValue(true) },
+      addToQueue: vi.fn().mockResolvedValue(true),
+      playQueueItem: vi.fn().mockResolvedValue(false)
+    };
+    const ui = new UIManager({ socketClient, audioEngine: {}, youtubePlayer: {} });
+    ui.updateTrackUI = vi.fn();
+    ui.setYouTubePlayerVisible = vi.fn();
+    ui.setYouTubePlayerStatus = vi.fn();
+    ui.showUrlFeedback = vi.fn();
+
+    await ui.streamAudioFromUrl('https://youtu.be/dQw4w9WgXcQ', 'Song');
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(ui.showUrlFeedback).toHaveBeenCalledWith('Room gagal memilih lagu. Refresh antrean lalu coba lagi.', 'error');
+  });
+
   it('starts a selected solo YouTube track in the official player', async () => {
     const mesh = { lastKnownTrack: null, loadTrackBuffer: vi.fn() };
     const player = { setVolume: vi.fn(), playAt: vi.fn().mockResolvedValue(undefined) };
