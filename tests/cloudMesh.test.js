@@ -913,6 +913,42 @@ describe('CloudMesh audio transfer', () => {
     expect(fetchMock).toHaveBeenCalledTimes(10);
   });
 
+  it('ignores an older queue mutation snapshot after a newer reorder has applied', async () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'host';
+    mesh.isHost = true;
+    mesh.hostToken = 'token';
+    mesh.queueRevisionRoomId = 'ROOM';
+    mesh.lastKnownQueue = [{ id: 'a', queueItemId: 'a-row' }, { id: 'b', queueItemId: 'b-row' }];
+    mesh.publishMqtt = vi.fn();
+    mesh.broadcastDataChannelMessage = vi.fn();
+    let resolveAddition;
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => new Promise(resolve => { resolveAddition = resolve; }))
+      .mockImplementationOnce((_url, options) => ({
+        ok: true,
+        json: async () => ({ success: true, queueRevision: 2, queue: JSON.parse(options.body).queue })
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    mesh.addToQueue({ id: 'c', name: 'C' });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const added = JSON.parse(fetchMock.mock.calls[0][1].body);
+    await mesh.reorderQueue([
+      { id: 'b', queueItemId: 'b-row' }, { id: 'a', queueItemId: 'a-row' }, { id: 'c', queueItemId: added.queueItemId, name: 'C' }
+    ]);
+    resolveAddition({ ok: true, json: async () => ({
+      success: true, queueRevision: 1, queue: [
+        { id: 'a', queueItemId: 'a-row' }, { id: 'b', queueItemId: 'b-row' }, { id: 'c', queueItemId: added.queueItemId, name: 'C' }
+      ]
+    }) });
+    await expect(mesh.waitForQueueItemAcknowledgement(added.queueItemId)).resolves.toBe(true);
+
+    expect(mesh.queueRevision).toBe(2);
+    expect(mesh.lastKnownQueue.map(item => item.id)).toEqual(['b', 'a', 'c']);
+  });
+
   it('clears upcoming tracks optimistically while keeping the active track', async () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
