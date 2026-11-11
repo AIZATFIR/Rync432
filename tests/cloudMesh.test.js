@@ -78,6 +78,25 @@ describe('CloudMesh audio transfer', () => {
     expect(mesh.lastKnownQueue).toEqual([{ id: 'canonical' }]);
   });
 
+  it('rejects a room snapshot whose queue differs at the same revision', () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.roomId = 'ROOM';
+    mesh.queueRevision = 4;
+    mesh.queueRevisionRoomId = 'ROOM';
+    mesh.lastKnownQueue = [{ id: 'canonical' }];
+    mesh.lastKnownQueueStr = JSON.stringify(mesh.lastKnownQueue);
+
+    mesh.applyRoomSnapshot({
+      queue: [{ id: 'optimistic' }], queueRevision: 4,
+      track: { id: 'stale-track' }, state: 'PAUSED'
+    }, 'ROOM');
+
+    expect(mesh.lastKnownQueue).toEqual([{ id: 'canonical' }]);
+    expect(mesh.lastKnownTrack).toBeNull();
+    expect(events).toEqual([]);
+  });
+
   it('includes the authoritative queue revision on every realtime transport', () => {
     const mesh = new CloudMesh(() => {});
     mesh.roomId = 'ROOM';

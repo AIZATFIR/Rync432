@@ -298,19 +298,18 @@ export class CloudMesh {
 
   applyRoomSnapshot(snapshot, responseRoomId = this.roomId) {
     if (!snapshot) return;
-    const queueSnapshotCurrent = this.rememberQueueRevision(snapshot, responseRoomId);
+    if (this.isHost) {
+      if (!this.rememberQueueRevision(snapshot, responseRoomId)) return;
+      this.applyPlaybackOptions(snapshot);
+      this.setHostDisconnected(snapshot.hostDisconnected === true);
+      return;
+    }
+    const queueSnapshotCurrent = Array.isArray(snapshot.queue)
+      ? this.applyRealtimeQueue(snapshot.queue, snapshot.queueRevision, responseRoomId)
+      : this.rememberQueueRevision(snapshot, responseRoomId);
+    if (!queueSnapshotCurrent) return;
     this.applyPlaybackOptions(snapshot);
     this.setHostDisconnected(snapshot.hostDisconnected === true);
-    if (this.isHost) return;
-    if (queueSnapshotCurrent && Array.isArray(snapshot.queue)) {
-      const queueStr = JSON.stringify(snapshot.queue);
-      if (queueStr !== this.lastKnownQueueStr) {
-        this.lastKnownQueue = snapshot.queue;
-        this.lastKnownQueueStr = queueStr;
-        this.saveLocalQueue(snapshot.queue);
-        this.onEvent('QUEUE_UPDATED', { queue: snapshot.queue });
-      }
-    }
     const trackChanged = this.updateTrackFromSnapshot(snapshot.track);
     const offset = snapshot.startOffsetSec || 0;
     if (snapshot.state === 'PLAYING' && snapshot.targetServerTime) {
@@ -381,14 +380,12 @@ export class CloudMesh {
   applyRealtimeQueue(queue, queueRevision, responseRoomId = this.roomId) {
     if (!Array.isArray(queue) || responseRoomId !== this.roomId) return false;
     const hasRevision = Number.isSafeInteger(queueRevision) && queueRevision >= 0;
-    const revisionKnown = this.queueRevisionRoomId === responseRoomId;
+    const revisionKnown = responseRoomId != null && this.queueRevisionRoomId === responseRoomId;
     const currentRevision = this.queueRevision;
     if (!hasRevision) return false;
-    if (hasRevision) {
-      if (!this.rememberQueueRevision({ queueRevision }, responseRoomId)) return false;
-      const sameRevision = revisionKnown && queueRevision === currentRevision;
-      if (sameRevision && JSON.stringify(queue) !== this.lastKnownQueueStr) return false;
-    }
+    const sameRevision = revisionKnown && queueRevision === currentRevision;
+    if (sameRevision && JSON.stringify(queue) !== this.lastKnownQueueStr) return false;
+    if (!this.rememberQueueRevision({ queueRevision, queue }, responseRoomId)) return false;
     const queueStr = JSON.stringify(queue);
     if (queueStr === this.lastKnownQueueStr) return true;
     this.lastKnownQueue = queue;
