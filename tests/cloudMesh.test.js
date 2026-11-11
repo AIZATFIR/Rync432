@@ -581,6 +581,37 @@ describe('CloudMesh audio transfer', () => {
     }));
   });
 
+  it('gives the audio proxy fallback its own full response deadline', async () => {
+    vi.useFakeTimers();
+    const mesh = new CloudMesh(() => {});
+    mesh.requestTrackBufferFromPeers = vi.fn();
+    mesh.broadcastReadiness = vi.fn();
+    mesh.updateLoadingState = vi.fn();
+    const proxyStarted = vi.fn();
+    vi.stubGlobal('fetch', vi.fn((url, { signal }) => {
+      if (url === 'https://audio.example.test/song.mp3') {
+        return new Promise((_resolve, reject) => {
+          setTimeout(() => reject(new TypeError('Failed to fetch')), 4_000);
+          signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+        });
+      }
+      proxyStarted();
+      return new Promise((resolve, reject) => {
+        setTimeout(() => resolve({ ok: true, headers: { get: () => '3' }, body: null, arrayBuffer: async () => new ArrayBuffer(3) }), 4_000);
+        signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+      });
+    }));
+
+    const loading = mesh.fetchRemoteAudioUrl('https://audio.example.test/song.mp3', 'Song', 'song-1');
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(proxyStarted).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(4_000);
+    await loading;
+
+    expect(mesh.localAudioBufferCache.has('song-1')).toBe(true);
+    expect(mesh.requestTrackBufferFromPeers).not.toHaveBeenCalled();
+  });
+
   it('keeps a room audio relay alive while bytes continue arriving beyond five seconds', async () => {
     vi.useFakeTimers();
     const events = [];

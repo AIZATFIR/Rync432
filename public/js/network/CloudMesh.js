@@ -1917,6 +1917,7 @@ export class CloudMesh {
         if (timedOut) throw new Error('AUDIO_FETCH_TIMEOUT');
         if (url.startsWith('http') && !url.includes('/api/stream') && !url.includes('/api/room')) {
           const proxyUrl = `/api/stream?url=${encodeURIComponent(url)}`;
+          resetTimeout();
           response = await fetch(proxyUrl, { signal });
           resetTimeout();
         } else {
