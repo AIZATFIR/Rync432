@@ -675,10 +675,10 @@ export class CloudMesh {
       return 6000;
     }
 
-    // 2. If WebRTC mesh is established with peers, communication is 100% P2P (0 server cost)
+    // 2. Keep host heartbeats modest, but check for an absent host promptly on guests.
     const hasOpenDataChannels = Array.from(this.dataChannels.values()).some(ch => ch && ch.readyState === 'open');
     if (hasOpenDataChannels) {
-      return 5000;
+      return this.isHost ? 5000 : 1500;
     }
 
     // 3. During initial peer discovery / signaling phase

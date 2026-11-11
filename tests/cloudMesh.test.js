@@ -631,6 +631,19 @@ describe('CloudMesh audio transfer', () => {
     expect(mesh.broadcastDataChannelMessage).not.toHaveBeenCalled();
   });
 
+  it('polls an established guest room frequently enough to detect a host loss', () => {
+    vi.stubGlobal('document', { hidden: false });
+    const guest = new CloudMesh(() => {});
+    guest.isHost = false;
+    guest.dataChannels.set('host-peer', { readyState: 'open' });
+    const host = new CloudMesh(() => {});
+    host.isHost = true;
+    host.dataChannels.set('guest-peer', { readyState: 'open' });
+
+    expect(guest.getOptimalPollInterval()).toBe(1500);
+    expect(host.getOptimalPollInterval()).toBe(5000);
+  });
+
   it('rejects oversized P2P audio headers before allocating transfer state', () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));

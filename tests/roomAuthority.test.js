@@ -207,6 +207,28 @@ describe('room authority', () => {
     }
   });
 
+  it('marks an unresponsive host disconnected within the foreground recovery window', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    try {
+      const roomId = `R${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+      await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+      await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
+      vi.setSystemTime(Date.now() + 7_999);
+      const beforeThreshold = await callRoom('poll', { roomId, peerId: 'guest-peer' });
+      expect(beforeThreshold.body.hostDisconnected).toBe(false);
+
+      vi.setSystemTime(Date.now() + 2);
+
+      const status = await callRoom('poll', { roomId, peerId: 'guest-peer' });
+
+      expect(status.body.hostDisconnected).toBe(true);
+      expect(status.body.state).toBe('PAUSED');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('marks a stale host before a newly invited guest receives the room snapshot', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));

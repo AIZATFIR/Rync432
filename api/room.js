@@ -6,7 +6,7 @@ import { createRoomPersistence, ROOM_TTL_MS } from './roomPersistence.js';
 
 const MAX_ROOM_PEERS = 5;
 const AUDIO_ROUTES = new Set(['unknown', 'p2p', 'relay', 'direct', 'youtube', 'local', 'cache']);
-const HOST_STALE_MS = 10_000;
+const HOST_STALE_MS = 8_000;
 const MAX_QUEUE_ITEMS = 500;
 const MAX_SIGNAL_BYTES = 64 * 1024;
 const MAX_PENDING_SIGNALS = 256;
