@@ -7,9 +7,27 @@ const MAX_P2P_AUDIO_BYTES = 64 * 1024 * 1024;
 const P2P_AUDIO_TRANSFER_TIMEOUT_MS = 30_000;
 const P2P_AUDIO_BACKPRESSURE_TIMEOUT_MS = 15_000;
 
+function youtubeVideoId(track) {
+  if (!track) return null;
+  if (track.sourceType === 'youtube') {
+    const sourceId = track.sourceId || track.youtubeVideoId || (track.id?.startsWith('yt_') ? track.id.slice(3) : track.id);
+    if (/^[A-Za-z0-9_-]{11}$/.test(sourceId || '')) return sourceId;
+  }
+  if (track.id?.startsWith('yt_')) {
+    const sourceId = track.id.slice(3);
+    if (/^[A-Za-z0-9_-]{11}$/.test(sourceId)) return sourceId;
+  }
+  if (typeof track.audioUrl === 'string' && track.audioUrl.startsWith('/api/yt-stream')) {
+    const id = new URL(track.audioUrl, globalThis.location?.origin || 'https://rync.invalid').searchParams.get('id');
+    if (/^[A-Za-z0-9_-]{11}$/.test(id || '')) return id;
+  }
+  return null;
+}
+
 export class CloudMesh {
   constructor(onEvent) {
     this.onEvent = onEvent;
+    this.clockSync = null;
     this.roomId = null;
     this.peerId = null;
     this.deviceName = 'Speaker';
@@ -50,6 +68,10 @@ export class CloudMesh {
 
   hostTokenStorageKey(roomId) {
     return `rync_host_token_${roomId}`;
+  }
+
+  serverTimeNow() {
+    return this.clockSync?.getServerTime?.() || Date.now();
   }
 
   loadHostToken(roomId) {
@@ -212,7 +234,7 @@ export class CloudMesh {
     } else {
       const changed = !this.isPaused || this.lastKnownState !== 'PAUSED' || this.lastKnownOffsetSec !== offset;
       this.isPaused = true;
-      this.lastKnownState = 'PAUSED';
+      this.lastKnownState = this.serverTimeNow() - (offset * 1000);
       if (changed) this.onEvent('PAUSED', { currentOffsetSec: offset });
     }
     this.lastKnownOffsetSec = offset;
@@ -367,6 +389,7 @@ export class CloudMesh {
             case 'PAUSED':
               this.isPaused = true;
               this.lastPauseTime = Date.now();
+              this.lastKnownOffsetSec = msg.payload?.currentOffsetSec || msg.currentOffsetSec || 0;
               this.lastKnownState = 'PAUSED';
               this.onEvent('PAUSED', msg.payload || msg);
               break;
@@ -529,6 +552,8 @@ export class CloudMesh {
         case 'PAUSED':
           this.isPaused = true;
           this.lastPauseTime = Date.now();
+          this.lastKnownOffsetSec = msg.payload?.currentOffsetSec || msg.currentOffsetSec || 0;
+          this.lastKnownState = 'PAUSED';
           this.onEvent('PAUSED', msg.payload);
           break;
 
@@ -763,7 +788,7 @@ export class CloudMesh {
           this.lastKnownOffsetSec = data.startOffsetSec || 0;
           if (data.targetServerTime) this.lastKnownState = data.targetServerTime;
           this.onEvent('SCHEDULED_PLAY', {
-            targetServerTime: data.targetServerTime || (Date.now() + 600),
+            targetServerTime: data.targetServerTime || (this.serverTimeNow() + 600),
             startOffsetSec: data.startOffsetSec || 0,
             track: data.track || this.lastKnownTrack
           });
@@ -771,8 +796,8 @@ export class CloudMesh {
       } else if (data.state === 'PAUSED') {
         if (this.lastKnownState !== 'PAUSED' || !this.isPaused) {
           this.isPaused = true;
-          this.lastKnownState = 'PAUSED';
           this.lastKnownOffsetSec = data.startOffsetSec || 0;
+          this.lastKnownState = 'PAUSED';
           this.lastPauseTime = Date.now();
           this.onEvent('PAUSED', {
             currentOffsetSec: data.startOffsetSec || 0
@@ -795,6 +820,18 @@ export class CloudMesh {
       this.currentFetchingTrackKey = null;
       this.updateLoadingState(false, 'Siap');
       this.onEvent('SYNTHETIC_TRACK_REQUESTED', track);
+      return;
+    }
+
+    const videoId = youtubeVideoId(track);
+    if (videoId) {
+      track.sourceType = 'youtube';
+      track.sourceId = videoId;
+      this.currentFetchingTrackKey = null;
+      this.pendingTrackBufferRequest = null;
+      this.updateLoadingState(false, 'Siap');
+      this.broadcastReadiness('READY', track.id || videoId);
+      this.onEvent('YOUTUBE_TRACK_REQUESTED', track);
       return;
     }
 
@@ -984,7 +1021,7 @@ export class CloudMesh {
         this.lastKnownTrack = data.track;
         this.isPaused = !autoplay;
         this.lastKnownOffsetSec = 0;
-        this.lastKnownState = autoplay ? (data.targetServerTime || Date.now() + 800) : 'PAUSED';
+        this.lastKnownState = autoplay ? (data.targetServerTime || this.serverTimeNow() + 800) : 'PAUSED';
         this.onEvent('TRACK_METADATA', data.track);
         this.loadTrackBuffer(data.track);
         this.publishMqtt(this.roomTopic, { type: 'TRACK_METADATA', metadata: data.track });
@@ -1014,6 +1051,7 @@ export class CloudMesh {
           }).catch(() => {});
         } else {
           this.onEvent('PAUSED', { currentOffsetSec: 0 });
+        this.broadcastChannel?.postMessage({ type: 'PAUSED', payload: { currentOffsetSec: 0 } });
           this.publishMqtt(this.roomTopic, { type: 'PAUSED', payload: { currentOffsetSec: 0 } });
           this.broadcastDataChannelMessage({ type: 'PAUSED', currentOffsetSec: 0 });
         }
@@ -1232,7 +1270,7 @@ export class CloudMesh {
         this.broadcastDataChannelMessage({ type: 'TRACK_METADATA', metadata: data.track });
         if (data.state === 'PLAYING') {
           const payload = {
-            targetServerTime: data.targetServerTime || (Date.now() + 800),
+            targetServerTime: data.targetServerTime || this.serverTimeNow() + 800,
             startOffsetSec: data.startOffsetSec || 0,
             track: data.track
           };
@@ -1280,7 +1318,7 @@ export class CloudMesh {
         this.broadcastDataChannelMessage({ type: 'TRACK_METADATA', metadata: data.track });
         if (data.state === 'PLAYING') {
           const payload = {
-            targetServerTime: data.targetServerTime || (Date.now() + 800),
+            targetServerTime: data.targetServerTime || this.serverTimeNow() + 800,
             startOffsetSec: data.startOffsetSec || 0,
             track: data.track
           };
@@ -1517,9 +1555,15 @@ export class CloudMesh {
   async broadcastPlay(targetServerTime, startOffsetSec, track) {
     if (!this.isHost) return;
     this.isPaused = false;
-    this.lastKnownState = targetServerTime;
+    this.lastKnownState = track && youtubeVideoId(track)
+      ? this.serverTimeNow() - ((Number(startOffsetSec) || 0) * 1000)
+      : targetServerTime;
     this.lastKnownOffsetSec = startOffsetSec;
     const trackPayload = track || this.lastKnownTrack;
+    if (trackPayload) {
+      this.lastKnownTrack = trackPayload;
+      this.onEvent('TRACK_METADATA', trackPayload);
+    }
 
     this.publishMqtt(this.roomTopic, {
       type: 'SCHEDULED_PLAY',
@@ -1558,7 +1602,9 @@ export class CloudMesh {
     if (!this.isHost) return;
     this.isPaused = true;
     this.lastPauseTime = Date.now();
-    this.lastKnownState = 'PAUSED';
+    this.lastKnownState = youtubeVideoId(this.lastKnownTrack)
+      ? this.serverTimeNow() - (Math.max(0, Number(currentOffsetSec) || 0) * 1000)
+      : 'PAUSED';
     this.lastKnownOffsetSec = currentOffsetSec;
 
     this.publishMqtt(this.roomTopic, {

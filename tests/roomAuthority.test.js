@@ -503,6 +503,25 @@ describe('room authority', () => {
     expect(result.body.track).toBeNull();
   });
 
+  it('preserves validated YouTube provider ids in shared queue items', async () => {
+    const roomId = `Y${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    const added = await callRoom('add_queue', {
+      roomId,
+      peerId: 'host-peer',
+      items: [{ id: 'yt_dQw4w9WgXcQ', name: 'Song', sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ', sourceUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }]
+    });
+
+    expect(added.statusCode).toBe(200);
+    expect(added.body.queue[0]).toMatchObject({ sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ' });
+    const invalid = await callRoom('add_queue', {
+      roomId,
+      peerId: 'host-peer',
+      items: [{ id: 'yt_invalid', sourceType: 'youtube', sourceId: 'short' }]
+    });
+    expect(invalid.statusCode).toBe(400);
+  });
+
   it('prevents a room member from changing another peer device state', async () => {
     const roomId = `M${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
     await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });

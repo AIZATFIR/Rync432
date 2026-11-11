@@ -2,6 +2,13 @@ import { AudioEngine } from './audio/AudioEngine.js';
 import { SocketClient } from './network/SocketClient.js';
 import { UIManager } from './ui/UIManager.js';
 import { Visualizer } from './ui/Visualizer.js';
+import { YouTubeEmbedPlayer } from './music/YouTubeEmbedPlayer.js';
+
+function youtubeVideoId(track) {
+  if (!track || track.sourceType !== 'youtube') return null;
+  const sourceId = track.sourceId || track.youtubeVideoId || (track.id?.startsWith('yt_') ? track.id.slice(3) : track.id);
+  return /^[A-Za-z0-9_-]{11}$/.test(sourceId || '') ? sourceId : null;
+}
 
 class App {
   constructor() {
@@ -9,6 +16,7 @@ class App {
     this.audioEngine = null;
     this.uiManager = null;
     this.visualizer = null;
+    this.youtubePlayer = null;
     this.wakeLock = null;
   }
 
@@ -17,6 +25,11 @@ class App {
     this.audioEngine = new AudioEngine(this.socketClient.clockSync);
     this.uiManager = new UIManager(this);
     this.uiManager.init();
+    this.youtubePlayer = new YouTubeEmbedPlayer('youtubePlayerContainer', {
+      onStateChange: (state, player) => this.handleYouTubePlayerState(state, player),
+      onError: code => this.handleYouTubePlayerError(code),
+      onAutoplayBlocked: () => this.uiManager.setYouTubePlayerStatus('Tekan Play di player YouTube untuk mengizinkan audio di perangkat ini.')
+    });
 
     const canvas = document.getElementById('visualizerCanvas');
     if (canvas) {
@@ -62,6 +75,43 @@ class App {
     } catch (e) {}
   }
 
+  handleYouTubePlayerState(state, player) {
+    const YT = globalThis.YT;
+    if (state === YT?.PlayerState?.PLAYING || state === 1) {
+      const duration = player?.getDuration?.() || 0;
+      if (duration) {
+        this.audioEngine.currentTrackDuration = duration;
+        if (this.uiManager.elements.totalTimeText) {
+          this.uiManager.elements.totalTimeText.textContent = this.uiManager.formatTime(duration);
+        }
+        if (this.uiManager.currentTrack) this.uiManager.currentTrack.duration = duration;
+      }
+      this.audioEngine.pauseOffsetSec = player?.getCurrentTime?.() || 0;
+      this.uiManager.setYouTubePlayerStatus('');
+      this.uiManager.setPlayState(true);
+    } else if (state === YT?.PlayerState?.PAUSED || state === 2) {
+      this.audioEngine.pauseOffsetSec = player?.getCurrentTime?.() || this.audioEngine.pauseOffsetSec;
+      this.uiManager.setPlayState(false);
+    } else if (state === YT?.PlayerState?.BUFFERING || state === 3) {
+      this.uiManager.setPlayState(false);
+      this.uiManager.setYouTubePlayerStatus('Memuat video YouTube…');
+    } else if (state === YT?.PlayerState?.ENDED || state === 0) {
+      this.uiManager.setPlayState(false);
+      if (this.socketClient?.isHost) this.socketClient.nextTrack(true);
+    }
+  }
+
+  handleYouTubePlayerError(code) {
+    const messages = {
+      100: 'Video YouTube tidak tersedia. Pilih video lain.',
+      101: 'Pemilik video tidak mengizinkan pemutaran sematan. Pilih video lain.',
+      150: 'Pemilik video tidak mengizinkan pemutaran sematan. Pilih video lain.',
+      153: 'Player YouTube tidak menerima identitas situs. Muat ulang halaman.'
+    };
+    this.uiManager.setPlayState(false);
+    this.uiManager.setYouTubePlayerStatus(messages[code] || 'Video YouTube gagal diputar. Coba video lain.');
+  }
+
   async handleNetworkEvent(type, payload) {
     const { uiManager, audioEngine, socketClient } = this;
 
@@ -98,7 +148,9 @@ class App {
             this.socketClient.cloudMesh.lastKnownTrack = payload.currentTrack;
           }
           uiManager.updateTrackUI(payload.currentTrack.name || 'Shared Track', payload.currentTrack.duration || 0, payload.currentTrack.thumbnail || '');
-          if (payload.currentTrack.isSynthetic) {
+          if (youtubeVideoId(payload.currentTrack)) {
+            this.socketClient.cloudMesh.loadTrackBuffer(payload.currentTrack);
+          } else if (payload.currentTrack.isSynthetic) {
             audioEngine.generateSyntheticTrack();
           } else if (this.socketClient?.cloudMesh) {
             this.socketClient.cloudMesh.loadTrackBuffer(payload.currentTrack);
@@ -106,11 +158,19 @@ class App {
         }
 
         if (payload.playbackState && payload.playbackState.isPlaying) {
-          audioEngine.schedulePlayAtServerTime(
-            payload.playbackState.startServerTime,
-            payload.playbackState.startOffsetSec || 0
-          );
-          uiManager.setPlayState(true);
+          if (youtubeVideoId(payload.currentTrack)) {
+            this.youtubePlayer.playAt(
+              youtubeVideoId(payload.currentTrack),
+              payload.playbackState.startServerTime,
+              payload.playbackState.startOffsetSec || 0
+            ).catch(() => uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.'));
+          } else {
+            audioEngine.schedulePlayAtServerTime(
+              payload.playbackState.startServerTime,
+              payload.playbackState.startOffsetSec || 0
+            );
+            uiManager.setPlayState(true);
+          }
         }
         break;
 
@@ -122,6 +182,27 @@ class App {
       case 'ROOM_LEFT':
         uiManager.setSoloState();
         break;
+
+      case 'YOUTUBE_TRACK_REQUESTED': {
+        const videoId = youtubeVideoId(payload);
+        if (!videoId) {
+          uiManager.setYouTubePlayerStatus('ID video YouTube tidak valid.');
+          break;
+        }
+        uiManager.setYouTubePlayerVisible(true);
+        uiManager.setYouTubePlayerStatus('Memuat player YouTube…');
+        const schedule = socketClient.cloudMesh?.lastKnownState;
+        if (typeof schedule === 'number' && schedule > Date.now()) {
+          this.youtubePlayer.playAt(videoId, schedule, payload.startOffsetSec || 0)
+            .then(() => uiManager.setYouTubePlayerStatus(''))
+            .catch(() => uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.'));
+          break;
+        }
+        this.youtubePlayer.cueVideo(videoId, payload.startOffsetSec || 0)
+          .then(() => uiManager.setYouTubePlayerStatus(''))
+          .catch(() => uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.'));
+        break;
+      }
 
       case 'PEER_JOINED':
       case 'PEER_LEFT':
@@ -167,7 +248,9 @@ class App {
             socketClient.schedulePlay(800, audioEngine.pauseOffsetSec || 0);
             break;
           case 'pause': {
-            const offset = audioEngine.getCurrentPlaybackPosition();
+            const offset = youtubeVideoId(socketClient.cloudMesh?.lastKnownTrack)
+              ? this.youtubePlayer?.getCurrentTime() || 0
+              : audioEngine.getCurrentPlaybackPosition();
             audioEngine.stopLocalPlayback();
             audioEngine.pauseOffsetSec = offset;
             uiManager.setPlayState(false);
@@ -179,7 +262,10 @@ class App {
           case 'play_queue_item': socketClient.playQueueItem(payload.details?.queueId, true); break;
           case 'play_next': socketClient.playNext(payload.details?.queueId); break;
           case 'remove_queue': socketClient.removeFromQueue(payload.details?.queueId); break;
-          case 'seek': socketClient.schedulePlay(800, payload.details?.position || 0); break;
+          case 'seek':
+            if (youtubeVideoId(socketClient.cloudMesh?.lastKnownTrack)) socketClient.seekPlayback(payload.details?.position || 0);
+            else socketClient.schedulePlay(800, payload.details?.position || 0);
+            break;
           case 'playback_options':
             socketClient.updatePlaybackOptions(payload.details || {}).catch(() => {
               uiManager.showUrlFeedback('Mode pemutaran gagal disinkronkan. Coba lagi.', 'error');
@@ -191,10 +277,12 @@ class App {
 
       case 'TRACK_METADATA':
       case 'TRACK_LOADED':
+        uiManager.setYouTubePlayerVisible(!!youtubeVideoId(payload));
         if (payload.isSynthetic) {
           audioEngine.generateSyntheticTrack();
           uiManager.updateTrackUI(payload.name || 'Neon Groove Synthwave', 20, payload.thumbnail || '');
         } else {
+          if (youtubeVideoId(payload)) this.socketClient?.cloudMesh?.loadTrackBuffer(payload);
           uiManager.updateTrackUI(payload.name || 'Pilih trek lagu', payload.duration || 0, payload.thumbnail || '');
           if (payload.name && audioEngine.currentTrackName && audioEngine.currentTrackName !== payload.name) {
             audioEngine.stopLocalPlayback();
@@ -206,6 +294,7 @@ class App {
         break;
 
       case 'SYNTHETIC_TRACK_REQUESTED':
+        uiManager.setYouTubePlayerVisible(false);
         audioEngine.generateSyntheticTrack();
         uiManager.updateTrackUI(payload.name || 'Neon Groove Synthwave', 20, payload.thumbnail || '');
         uiManager.renderQueue(uiManager.cachedQueue);
@@ -259,6 +348,21 @@ class App {
 
       case 'SCHEDULED_PLAY':
       case 'PLAYBACK_SCHEDULED':
+        {
+          const track = payload.track || socketClient?.cloudMesh?.lastKnownTrack;
+          if (track && youtubeVideoId(track)) {
+            socketClient.cloudMesh.lastKnownTrack = track;
+            uiManager.setYouTubePlayerVisible(true);
+            uiManager.updateTrackUI(track.name || 'YouTube video', track.duration || 0, track.thumbnail || '');
+            uiManager.renderQueue(uiManager.cachedQueue);
+            this.youtubePlayer.playAt(
+              youtubeVideoId(track),
+              payload.targetServerTime || payload.scheduledServerTime,
+              payload.startOffsetSec || 0
+            ).catch(() => uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.'));
+            break;
+          }
+        }
         if (payload.track) {
           if (this.socketClient?.cloudMesh) {
             this.socketClient.cloudMesh.lastKnownTrack = payload.track;
@@ -304,6 +408,14 @@ class App {
 
       case 'PAUSED':
       case 'PLAYBACK_PAUSED':
+        if (youtubeVideoId(socketClient?.cloudMesh?.lastKnownTrack)) {
+          const offset = payload.currentOffsetSec ?? this.youtubePlayer.getCurrentTime();
+          this.youtubePlayer.pause();
+          audioEngine.pauseOffsetSec = offset;
+          this.youtubePlayer.seekTo(offset);
+          uiManager.setPlayState(false);
+          break;
+        }
         audioEngine.stopLocalPlayback();
         audioEngine.pauseOffsetSec = payload.currentOffsetSec || 0;
         uiManager.setPlayState(false);

@@ -22,6 +22,7 @@ export class SocketClient {
     this.cloudMesh = new CloudMesh((event, payload) => {
       this.handleCloudMeshEvent(event, payload);
     });
+    this.cloudMesh.clockSync = this.clockSync;
   }
 
   connect() {
@@ -113,8 +114,7 @@ export class SocketClient {
   schedulePlay(delayMs = 800, startOffsetSec = 0) {
     if (!this.isHost) return false;
     const targetServerTime = this.clockSync.getServerTime() + delayMs;
-    this.cloudMesh.broadcastPlay(targetServerTime, startOffsetSec);
-    this.onEvent('SCHEDULED_PLAY', { targetServerTime, startOffsetSec });
+    this.broadcastPlay(targetServerTime, startOffsetSec);
     return true;
   }
 
@@ -122,6 +122,18 @@ export class SocketClient {
     if (!this.isHost) return false;
     this.cloudMesh.broadcastPause(currentOffsetSec);
     this.onEvent('PAUSED', { currentOffsetSec });
+    return true;
+  }
+
+  seekPlayback(positionSec) {
+    if (!this.isHost || !Number.isFinite(positionSec) || positionSec < 0) return false;
+    return this.schedulePlay(250, positionSec);
+  }
+
+  broadcastPlay(targetServerTime, startOffsetSec, track) {
+    if (!this.isHost) return false;
+    this.cloudMesh.broadcastPlay(targetServerTime, startOffsetSec, track);
+    this.onEvent('SCHEDULED_PLAY', { targetServerTime, startOffsetSec, track: track || this.cloudMesh.lastKnownTrack });
     return true;
   }
 
@@ -217,6 +229,8 @@ export class SocketClient {
       this.onEvent('PEER_JOINED', payload);
     } else if (event === 'TRACK_METADATA') {
       this.onEvent('TRACK_METADATA', payload);
+    } else if (event === 'YOUTUBE_TRACK_REQUESTED') {
+      this.onEvent('YOUTUBE_TRACK_REQUESTED', payload);
     } else if (event === 'QUEUE_UPDATED') {
       this.onEvent('QUEUE_UPDATED', payload);
     } else if (event === 'PLAYBACK_OPTIONS_UPDATED') {

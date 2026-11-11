@@ -503,6 +503,9 @@ export default async function handler(req, res) {
           || (item.name !== undefined && (typeof item.name !== 'string' || item.name.length > 512))
           || (item.artist !== undefined && (typeof item.artist !== 'string' || item.artist.length > 512))
           || (item.audioUrl !== undefined && (typeof item.audioUrl !== 'string' || item.audioUrl.length > 4096))
+          || (item.sourceType !== undefined && item.sourceType !== 'youtube')
+          || (item.sourceId !== undefined && (typeof item.sourceId !== 'string' || !/^[A-Za-z0-9_-]{11}$/.test(item.sourceId)))
+          || (item.sourceUrl !== undefined && (typeof item.sourceUrl !== 'string' || item.sourceUrl.length > 4096))
           || (item.duration !== undefined && (!Number.isFinite(item.duration) || item.duration < 0)))) {
         return res.status(400).json({ success: false, error: 'INVALID_QUEUE_ITEMS' });
       }
@@ -526,7 +529,13 @@ export default async function handler(req, res) {
         || (body.name !== undefined && typeof body.name !== 'string')
         || (body.artist !== undefined && typeof body.artist !== 'string')
         || (body.audioUrl !== undefined && typeof body.audioUrl !== 'string')
+        || (body.sourceType !== undefined && body.sourceType !== 'youtube')
+        || (body.sourceId !== undefined && (typeof body.sourceId !== 'string' || !/^[A-Za-z0-9_-]{11}$/.test(body.sourceId)))
+        || (body.sourceUrl !== undefined && (typeof body.sourceUrl !== 'string' || body.sourceUrl.length > 4096))
         || (body.duration !== undefined && (!Number.isFinite(body.duration) || body.duration < 0))) {
+        return res.status(400).json({ success: false, error: 'INVALID_QUEUE_ITEM' });
+      }
+      if (body.sourceType === 'youtube' && (!body.sourceId || !body.sourceUrl)) {
         return res.status(400).json({ success: false, error: 'INVALID_QUEUE_ITEM' });
       }
       const item = {
@@ -536,11 +545,15 @@ export default async function handler(req, res) {
         duration: body.duration || 0,
         thumbnail: body.thumbnail || '',
         audioUrl: body.audioUrl || '',
+        sourceType: body.sourceType,
+        sourceId: body.sourceId,
+        sourceUrl: body.sourceUrl,
+        thumbnail: body.thumbnail || '',
         isSynthetic: !!body.isSynthetic,
         addedBy: deviceName
       };
 
-      if (item.id.length > 160 || item.name.length > 512 || item.artist.length > 512 || item.audioUrl.length > 4096) {
+      if (item.id.length > 160 || item.name.length > 512 || item.artist.length > 512 || item.audioUrl.length > 4096 || item.sourceUrl?.length > 4096) {
         return res.status(400).json({ success: false, error: 'INVALID_QUEUE_ITEM' });
       }
 

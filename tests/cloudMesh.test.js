@@ -24,6 +24,20 @@ function makeAudioChunkFrame(sequence, timestamp, bytes) {
 }
 
 describe('CloudMesh audio transfer', () => {
+  it('routes YouTube tracks to the embed player without an audio fetch or P2P request', () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.requestTrackBufferFromPeers = vi.fn();
+    vi.stubGlobal('fetch', vi.fn());
+    const track = { id: 'yt_dQw4w9WgXcQ', sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ', name: 'Song' };
+
+    mesh.loadTrackBuffer(track);
+
+    expect(events).toContainEqual({ type: 'YOUTUBE_TRACK_REQUESTED', payload: track });
+    expect(fetch).not.toHaveBeenCalledWith('/api/yt-stream?id=dQw4w9WgXcQ', expect.anything());
+    expect(mesh.requestTrackBufferFromPeers).not.toHaveBeenCalled();
+  });
+
   it('retries P2P buffer requests while an open peer channel has no cached audio yet', () => {
     vi.useFakeTimers();
     const mesh = new CloudMesh(() => {});

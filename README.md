@@ -14,7 +14,7 @@ Rync adalah pemutar musik browser dengan antrean bersama dan room untuk mendenga
 - Mode repeat dan shuffle yang dibagikan ke anggota room.
 - Favorit, playlist, dan riwayat lokal pada browser.
 
-Ketersediaan sumber YouTube bergantung pada provider dan kebijakan yang berlaku. Metode provider saat ini belum ditinjau untuk peluncuran publik; jangan menganggap endpoint YouTube sebagai layanan produksi yang dijamin tersedia.
+Hasil pencarian memakai YouTube Data API v3; pemutaran memakai player embed resmi YouTube. Buat API key di Google Cloud, aktifkan YouTube Data API v3, lalu set `YOUTUBE_DATA_API_KEY` pada environment server. Jangan commit key ke Git. Video yang tidak mengizinkan embed dan kebijakan autoplay browser dapat membatasi pemutaran.
 
 ---
 

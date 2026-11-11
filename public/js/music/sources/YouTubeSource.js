@@ -29,20 +29,18 @@ export class YouTubeSource {
       }
     }
 
-    const streamEndpoint = `/api/yt-stream?id=${videoId}`;
     const assetId = `yt_${videoId}`;
 
     return {
       trackId: assetId,
+      id: assetId,
       title: customMetadata.title || 'YouTube Track',
       artist: customMetadata.artist || 'YouTube',
       duration: customMetadata.duration || 0,
       sourceType: this.type,
-      playableUrl: streamEndpoint,
-      streamUrl: streamEndpoint,
-      mimeType: 'audio/mp4',
-      supportsRange: true,
-      requiresProxy: true,
+      sourceId: videoId,
+      sourceUrl: `https://www.youtube.com/watch?v=${videoId}`,
+      thumbnail: customMetadata.thumbnailUrl || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
       thumbnailUrl: customMetadata.thumbnailUrl || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
     };
   }
@@ -62,9 +60,11 @@ export class YouTubeSource {
       artist: item.channel,
       duration: item.duration,
       thumbnailUrl: item.thumbnail,
+      thumbnail: item.thumbnail,
       sourceType: this.type,
       sourceUrl: item.url,
-      streamUrl: `/api/yt-stream?url=${encodeURIComponent(item.url)}`
+      sourceId: item.id,
+      sourceUrl: item.url
     }));
   }
 }

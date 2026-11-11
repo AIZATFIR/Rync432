@@ -46,8 +46,8 @@ describe('Music Sources & Resolver Layer', () => {
       const resolved = await ytSource.resolve('https://youtu.be/dQw4w9WgXcQ');
       expect(resolved.trackId).toBe('yt_dQw4w9WgXcQ');
       expect(resolved.sourceType).toBe(MusicSourceType.YOUTUBE);
-      expect(resolved.playableUrl).toContain('dQw4w9WgXcQ');
-      expect(resolved.requiresProxy).toBe(true);
+      expect(resolved.sourceId).toBe('dQw4w9WgXcQ');
+      expect(resolved.sourceUrl).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
     });
   });
 

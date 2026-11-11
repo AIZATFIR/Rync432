@@ -1,0 +1,145 @@
+const IFRAME_API_URL = 'https://www.youtube.com/iframe_api';
+let apiPromise;
+
+function loadIframeApi() {
+  if (globalThis.YT?.Player) return Promise.resolve(globalThis.YT);
+  if (apiPromise) return apiPromise;
+
+  apiPromise = new Promise((resolve, reject) => {
+    const previousReady = globalThis.onYouTubeIframeAPIReady;
+    const timeout = setTimeout(() => reject(new Error('YOUTUBE_PLAYER_TIMEOUT')), 12_000);
+    globalThis.onYouTubeIframeAPIReady = () => {
+      clearTimeout(timeout);
+      try { previousReady?.(); } catch (error) {}
+      if (globalThis.YT?.Player) resolve(globalThis.YT);
+      else reject(new Error('YOUTUBE_PLAYER_UNAVAILABLE'));
+    };
+    let script = document.querySelector(`script[src="${IFRAME_API_URL}"]`);
+    if (!script) {
+      script = document.createElement('script');
+      script.src = IFRAME_API_URL;
+      script.async = true;
+      script.onerror = () => {
+        clearTimeout(timeout);
+        reject(new Error('YOUTUBE_PLAYER_UNAVAILABLE'));
+      };
+      document.head.appendChild(script);
+    }
+  }).catch(error => {
+    apiPromise = null;
+    throw error;
+  });
+  return apiPromise;
+}
+
+export class YouTubeEmbedPlayer {
+  constructor(elementId, { onStateChange = () => {}, onError = () => {}, onAutoplayBlocked = () => {} } = {}) {
+    this.elementId = elementId;
+    this.onStateChange = onStateChange;
+    this.onError = onError;
+    this.onAutoplayBlocked = onAutoplayBlocked;
+    this.player = null;
+    this.readyPromise = null;
+    this.videoId = null;
+    this.scheduledPlay = null;
+  }
+
+  async ensurePlayer(videoId = '') {
+    if (this.player && this.readyPromise) {
+      await this.readyPromise;
+      if (videoId && videoId !== this.videoId) {
+        this.player.cueVideoById({ videoId });
+        this.videoId = videoId;
+      }
+      return this.player;
+    }
+    const YT = await loadIframeApi();
+    this.readyPromise = new Promise((resolve, reject) => {
+      this.player = new YT.Player(this.elementId, {
+        width: '480',
+        height: '270',
+        videoId: videoId || undefined,
+        playerVars: {
+          autoplay: 0,
+          controls: 1,
+          enablejsapi: 1,
+          playsinline: 1,
+          origin: globalThis.location?.origin || ''
+        },
+        events: {
+          onReady: event => resolve(event.target),
+          onStateChange: event => {
+            this.onStateChange(event.data, event.target);
+          },
+          onError: event => this.onError(event.data),
+          onAutoplayBlocked: () => this.onAutoplayBlocked()
+        }
+      });
+    }).catch(error => {
+      this.player = null;
+      this.readyPromise = null;
+      throw error;
+    });
+    await this.readyPromise;
+    this.videoId = videoId || null;
+    return this.player;
+  }
+
+  async cueVideo(videoId, startSeconds = 0) {
+    if (!/^[A-Za-z0-9_-]{11}$/.test(videoId || '')) throw new Error('INVALID_YOUTUBE_VIDEO_ID');
+    const player = await this.ensurePlayer();
+    player.cueVideoById({ videoId, startSeconds: Math.max(0, Number(startSeconds) || 0) });
+    this.videoId = videoId;
+  }
+
+  hasVideo(videoId) {
+    return this.videoId === videoId;
+  }
+
+  async playAt(videoId, targetServerTime, startSeconds = 0) {
+    if (videoId && videoId !== this.videoId) await this.cueVideo(videoId, startSeconds);
+    const player = await this.ensurePlayer();
+    if (Number.isFinite(targetServerTime) && targetServerTime > Date.now()) {
+      clearTimeout(this.scheduledPlay);
+      this.scheduledPlay = setTimeout(() => {
+        player.seekTo(Math.max(0, Number(startSeconds) || 0), true);
+        player.playVideo();
+      }, targetServerTime - Date.now());
+    } else {
+      player.seekTo(Math.max(0, Number(startSeconds) || 0), true);
+      player.playVideo();
+    }
+  }
+
+  async pause() {
+    clearTimeout(this.scheduledPlay);
+    this.scheduledPlay = null;
+    if (this.player && this.readyPromise) (await this.readyPromise).pauseVideo();
+  }
+
+  async seekTo(seconds) {
+    if (this.player && this.readyPromise) (await this.readyPromise).seekTo(Math.max(0, Number(seconds) || 0), true);
+  }
+
+  async setVolume(value) {
+    if (this.player && this.readyPromise) {
+      (await this.readyPromise).setVolume(Math.round(Math.max(0, Math.min(1, Number(value) || 0)) * 100));
+    }
+  }
+
+  getCurrentTime() {
+    try { return this.player?.getCurrentTime?.() || 0; } catch (error) { return 0; }
+  }
+
+  getDuration() {
+    try { return this.player?.getDuration?.() || 0; } catch (error) { return 0; }
+  }
+
+  destroy() {
+    clearTimeout(this.scheduledPlay);
+    try { this.player?.destroy?.(); } catch (error) {}
+    this.player = null;
+    this.readyPromise = null;
+    this.videoId = null;
+  }
+}
