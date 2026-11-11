@@ -10,6 +10,7 @@ const P2P_AUDIO_BACKPRESSURE_TIMEOUT_MS = 10_000;
 const P2P_BACKPRESSURE_POLL_INTERVAL_MS = 100;
 const P2P_BUFFER_REQUEST_MAX_ATTEMPTS = 10;
 const QUEUE_MUTATION_TIMEOUT_MS = 8_000;
+const QUEUE_CONFLICT_RETRY_LIMIT = 5;
 const ROOM_POLL_TIMEOUT_MS = 8_000;
 const ROOM_JOIN_TIMEOUT_MS = 8_000;
 const AUDIO_ROUTES = new Set(['unknown', 'p2p', 'relay', 'direct', 'youtube', 'local', 'cache']);
@@ -1041,7 +1042,7 @@ export class CloudMesh {
     this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
     if (!this.roomId || !this.peerId) return true;
 
-    const submit = async (expectedQueueRevision, retryConflict) => {
+    const submit = async (expectedQueueRevision, conflictRetries = 0) => {
       const res = await fetchQueueMutation('/api/room?action=add_queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1055,10 +1056,10 @@ export class CloudMesh {
       });
       const data = await res.json();
       this.rememberQueueRevision(data);
-      if (res.status === 409 && retryConflict && Array.isArray(data.queue)
+      if (res.status === 409 && conflictRetries < QUEUE_CONFLICT_RETRY_LIMIT && Array.isArray(data.queue)
         && Number.isSafeInteger(data.queueRevision)) {
         this.applyCanonicalQueue(data.queue);
-        return submit(data.queueRevision, false);
+        return submit(data.queueRevision, conflictRetries + 1);
       }
       if (!res.ok || !data.success) {
         if (Array.isArray(data.queue)) this.applyCanonicalQueue(data.queue);
@@ -1082,7 +1083,7 @@ export class CloudMesh {
     };
 
     try {
-      return await submit(this.queueRevision, true);
+      return await submit(this.queueRevision);
     } catch (error) {
       this.onEvent('QUEUE_SYNC_ERROR', {
         queue: this.lastKnownQueue,
@@ -1122,7 +1123,7 @@ export class CloudMesh {
     }
     if (!this.roomId || !this.peerId) return true;
 
-    const submitAddition = async (expectedQueueRevision, retryConflict) => {
+    const submitAddition = async (expectedQueueRevision, conflictRetries = 0) => {
       const res = await fetchQueueMutation('/api/room?action=add_queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1136,10 +1137,10 @@ export class CloudMesh {
       });
       const data = await res.json();
       this.rememberQueueRevision(data);
-      if (res.status === 409 && retryConflict && Array.isArray(data.queue)
+      if (res.status === 409 && conflictRetries < QUEUE_CONFLICT_RETRY_LIMIT && Array.isArray(data.queue)
         && Number.isSafeInteger(data.queueRevision)) {
         this.applyCanonicalQueue(data.queue);
-        return submitAddition(data.queueRevision, false);
+        return submitAddition(data.queueRevision, conflictRetries + 1);
       }
       if (!res.ok || !data.success) {
         if (res.status === 409) {
@@ -1172,7 +1173,7 @@ export class CloudMesh {
       }
       return true;
     };
-    const acknowledgement = submitAddition(this.queueRevision, true).catch(() => {
+    const acknowledgement = submitAddition(this.queueRevision).catch(() => {
       this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Antrean tersimpan di perangkat ini, sinkronisasi room gagal.' });
       return false;
     });

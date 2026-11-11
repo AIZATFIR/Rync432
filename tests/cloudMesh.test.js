@@ -729,6 +729,32 @@ describe('CloudMesh audio transfer', () => {
     expect(events.some(event => event.type === 'QUEUE_SYNC_ERROR')).toBe(false);
   });
 
+  it('rebases concurrent queue additions until each accepted revision is reached', async () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'guest-peer';
+    let revision = 0;
+    const queue = [];
+    const fetchMock = vi.fn(async (_url, options) => {
+      const body = JSON.parse(options.body);
+      if (body.expectedQueueRevision !== revision) {
+        return { ok: false, status: 409, json: async () => ({ queue: [...queue], queueRevision: revision }) };
+      }
+      queue.push(body);
+      revision += 1;
+      return { ok: true, status: 200, json: async () => ({ success: true, queue: [...queue], queueRevision: revision }) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await Promise.all(['a', 'b', 'c', 'd'].map(id => mesh.addToQueue({ id, name: id })));
+    await vi.waitFor(() => expect(revision).toBe(4));
+
+    expect(queue.map(item => item.id)).toEqual(['a', 'b', 'c', 'd']);
+    expect(mesh.lastKnownQueue.map(item => item.id)).toEqual(['a', 'b', 'c', 'd']);
+    expect(mesh.queueRevision).toBe(4);
+    expect(fetchMock).toHaveBeenCalledTimes(10);
+  });
+
   it('clears upcoming tracks optimistically while keeping the active track', async () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
