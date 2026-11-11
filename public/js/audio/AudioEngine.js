@@ -18,6 +18,7 @@ export class AudioEngine {
     this.gainNode = null;
     this.analyserNode = null;
     this.isPlaying = false;
+    this.volume = 1;
     this.currentTrackName = 'No track loaded';
     this.currentTrackId = null;
     this.currentTrackDuration = 0;
@@ -448,8 +449,9 @@ export class AudioEngine {
   }
 
   setVolume(vol) {
+    this.volume = Math.max(0, Math.min(1, Number(vol) || 0));
     if (this.gainNode && this.ctx) {
-      this.gainNode.gain.setValueAtTime(Math.max(0, Math.min(1, vol)), this.ctx.currentTime);
+      this.gainNode.gain.setValueAtTime(this.volume, this.ctx.currentTime);
     }
   }
 

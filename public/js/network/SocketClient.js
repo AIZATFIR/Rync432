@@ -72,7 +72,6 @@ export class SocketClient {
     this.peerId = 'peer_' + Math.random().toString(36).substring(2, 9);
     this.roomId = Math.random().toString(36).substring(2, 6).toUpperCase();
     this.isHost = true;
-
     this.roomReady = this.cloudMesh.createRoom(this.roomId, this.peerId, deviceName);
     this.roomReady.catch(() => {});
     this.roomReady.then(() => {
@@ -150,7 +149,7 @@ export class SocketClient {
   }
 
   playQueueItem(queueId, autoplay = false) {
-    this.cloudMesh.playQueueItem(queueId, autoplay);
+    return this.cloudMesh.playQueueItem(queueId, autoplay);
   }
 
   playNext(queueId) {

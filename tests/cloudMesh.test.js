@@ -38,6 +38,40 @@ describe('CloudMesh audio transfer', () => {
     expect(mesh.requestTrackBufferFromPeers).not.toHaveBeenCalled();
   });
 
+  it('creates a fresh room with an empty authoritative queue', async () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.lastKnownQueue = [{ id: 'old-room-track' }];
+    mesh.initBroadcastChannel = vi.fn();
+    mesh.initMqttBus = vi.fn();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, hostToken: 'token', room: { queueRevision: 0 } })
+    }));
+
+    await mesh.createRoom('NEW', 'peer', 'Speaker');
+
+    expect(JSON.parse(fetch.mock.calls[0][1].body).queue).toEqual([]);
+    mesh.stopPolling();
+  });
+
+  it('keeps YouTube source metadata in the optimistic and server queue mutation', async () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'peer';
+    mesh.lastKnownQueue = [];
+    mesh.publishMqtt = vi.fn();
+    mesh.broadcastDataChannelMessage = vi.fn();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, queue: [] }) }));
+
+    await mesh.addToQueue({
+      id: 'yt_dQw4w9WgXcQ', name: 'Song', sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ',
+      sourceUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+    });
+
+    expect(mesh.lastKnownQueue[0]).toMatchObject({ sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ' });
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toMatchObject({ sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ' });
+  });
+
   it('retries P2P buffer requests while an open peer channel has no cached audio yet', () => {
     vi.useFakeTimers();
     const mesh = new CloudMesh(() => {});

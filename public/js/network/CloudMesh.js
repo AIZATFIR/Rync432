@@ -116,14 +116,7 @@ export class CloudMesh {
     this.isHost = true;
     this.hostToken = null;
 
-    // Restore cached queue from localStorage if available
-    const savedQueue = this.loadLocalQueue(roomId);
-    if (savedQueue && (!this.lastKnownQueue || this.lastKnownQueue.length === 0)) {
-      this.lastKnownQueue = savedQueue;
-      this.lastKnownQueueStr = JSON.stringify(savedQueue);
-      this.onEvent('QUEUE_UPDATED', { queue: savedQueue });
-    }
-
+    // New rooms start with a clean authoritative queue.
     this.initBroadcastChannel(roomId, deviceName);
     this.initMqttBus(roomId, deviceName);
 
@@ -135,7 +128,7 @@ export class CloudMesh {
           roomId,
           peerId,
           deviceName,
-          queue: this.lastKnownQueue || []
+          queue: []
         })
       });
       if (!response.ok) throw new Error(`Room creation failed (${response.status})`);
@@ -209,6 +202,10 @@ export class CloudMesh {
     }
     let trackChanged = false;
     if (snapshot.track) {
+      if (snapshot.track.sourceType === 'youtube' && !snapshot.track.sourceId) {
+        const videoId = youtubeVideoId(snapshot.track);
+        if (videoId) snapshot.track.sourceId = videoId;
+      }
       trackChanged = !this.lastKnownTrack
         || (snapshot.track.id && this.lastKnownTrack.id
           ? snapshot.track.id !== this.lastKnownTrack.id
@@ -349,7 +346,7 @@ export class CloudMesh {
                     hostId: this.peerId,
                     track: this.lastKnownTrack,
                     queue: this.lastKnownQueue || [],
-                    state: this.isPaused ? 'PAUSED' : 'PLAYING',
+      state: this.isPaused ? 'PAUSED' : 'PLAYING',
                     targetServerTime: this.lastKnownState,
                     startOffsetSec: this.lastKnownOffsetSec,
                     repeatMode: this.repeatMode,
@@ -382,6 +379,7 @@ export class CloudMesh {
               this.lastKnownState = msg.payload?.targetServerTime || msg.targetServerTime;
               if (msg.payload?.track || msg.track) {
                 this.lastKnownTrack = msg.payload?.track || msg.track;
+                this.loadTrackBuffer(this.lastKnownTrack);
               }
               this.onEvent('SCHEDULED_PLAY', msg.payload || msg);
               break;
@@ -545,7 +543,10 @@ export class CloudMesh {
         case 'SCHEDULED_PLAY':
           this.isPaused = false;
           this.lastKnownState = msg.payload?.targetServerTime;
-          if (msg.payload?.track) this.lastKnownTrack = msg.payload.track;
+          if (msg.payload?.track) {
+            this.lastKnownTrack = msg.payload.track;
+            this.loadTrackBuffer(this.lastKnownTrack);
+          }
           this.onEvent('SCHEDULED_PLAY', msg.payload);
           break;
 
@@ -762,6 +763,10 @@ export class CloudMesh {
       // 3. Track update & Auto-fetch with buffer synchronization
       let trackChanged = false;
       if (data.track) {
+        if (data.track.sourceType === 'youtube' && !data.track.sourceId) {
+          const videoId = youtubeVideoId(data.track);
+          if (videoId) data.track.sourceId = videoId;
+        }
         const isDifferent = !this.lastKnownTrack 
           || (data.track.id && this.lastKnownTrack.id && data.track.id !== this.lastKnownTrack.id)
           || (data.track.name !== this.lastKnownTrack.name);
@@ -904,6 +909,9 @@ export class CloudMesh {
       duration: track.duration || 0,
       thumbnail: track.thumbnail || '',
       audioUrl: track.audioUrl || '',
+      sourceType: track.sourceType,
+      sourceId: track.sourceId,
+      sourceUrl: track.sourceUrl,
       isSynthetic: !!track.isSynthetic,
       addedBy: track.addedBy || this.deviceName
     };
@@ -1003,7 +1011,7 @@ export class CloudMesh {
   }
 
   async playQueueItem(queueId, autoplay = false) {
-    if (!this.isHost) return;
+    if (!this.isHost) return false;
     try {
       const res = await fetch('/api/room?action=play_queue_item', {
         method: 'POST',
@@ -1015,7 +1023,7 @@ export class CloudMesh {
       if (res.status === 409) {
         this.applyCanonicalQueue(data.queue);
         this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Antrean berubah di perangkat lain. Coba lagi.' });
-        return;
+        return false;
       }
       if (data.track) {
         this.lastKnownTrack = data.track;
@@ -1051,7 +1059,7 @@ export class CloudMesh {
           }).catch(() => {});
         } else {
           this.onEvent('PAUSED', { currentOffsetSec: 0 });
-        this.broadcastChannel?.postMessage({ type: 'PAUSED', payload: { currentOffsetSec: 0 } });
+          this.broadcastChannel?.postMessage({ type: 'PAUSED', payload: { currentOffsetSec: 0 } });
           this.publishMqtt(this.roomTopic, { type: 'PAUSED', payload: { currentOffsetSec: 0 } });
           this.broadcastDataChannelMessage({ type: 'PAUSED', currentOffsetSec: 0 });
         }
@@ -1065,7 +1073,10 @@ export class CloudMesh {
         this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: data.queue });
         this.broadcastChannel?.postMessage({ type: 'QUEUE_UPDATED', payload: { queue: data.queue } });
       }
-    } catch (e) { }
+      return data.track || false;
+    } catch (error) {
+      return false;
+    }
   }
 
   async playNext(queueId) {
@@ -1555,12 +1566,17 @@ export class CloudMesh {
   async broadcastPlay(targetServerTime, startOffsetSec, track) {
     if (!this.isHost) return;
     this.isPaused = false;
-    this.lastKnownState = track && youtubeVideoId(track)
+    const trackPayload = track || this.lastKnownTrack;
+    this.lastKnownState = youtubeVideoId(trackPayload)
       ? this.serverTimeNow() - ((Number(startOffsetSec) || 0) * 1000)
       : targetServerTime;
     this.lastKnownOffsetSec = startOffsetSec;
-    const trackPayload = track || this.lastKnownTrack;
     if (trackPayload) {
+      const videoId = youtubeVideoId(trackPayload);
+      if (videoId) {
+        trackPayload.sourceType = 'youtube';
+        trackPayload.sourceId = videoId;
+      }
       this.lastKnownTrack = trackPayload;
       this.onEvent('TRACK_METADATA', trackPayload);
     }
@@ -1602,9 +1618,7 @@ export class CloudMesh {
     if (!this.isHost) return;
     this.isPaused = true;
     this.lastPauseTime = Date.now();
-    this.lastKnownState = youtubeVideoId(this.lastKnownTrack)
-      ? this.serverTimeNow() - (Math.max(0, Number(currentOffsetSec) || 0) * 1000)
-      : 'PAUSED';
+    this.lastKnownState = 'PAUSED';
     this.lastKnownOffsetSec = currentOffsetSec;
 
     this.publishMqtt(this.roomTopic, {

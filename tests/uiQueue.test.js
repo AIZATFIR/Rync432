@@ -34,6 +34,85 @@ describe('YouTube search queue UI', () => {
     expect(moveQueueItem(original, -1, 1)).toEqual(original);
   });
 
+  it('keeps solo YouTube selections in the local queue without creating a room', async () => {
+    const mesh = { lastKnownTrack: null, loadTrackBuffer: vi.fn() };
+    const socketClient = { roomId: null, cloudMesh: mesh };
+    const ui = new UIManager({ socketClient, audioEngine: { ensureContext: vi.fn(), stopLocalPlayback: vi.fn() } });
+    ui.renderQueue = vi.fn();
+
+    await ui.streamAudioFromUrl('https://youtu.be/dQw4w9WgXcQ', 'Song', 'Artist', 180, 'https://img.test/song.jpg');
+
+    expect(socketClient.roomId).toBeNull();
+    expect(mesh.loadTrackBuffer).toHaveBeenCalledWith(expect.objectContaining({ sourceId: 'dQw4w9WgXcQ' }));
+    expect(ui.soloQueue).toHaveLength(1);
+    expect(ui.soloQueue[0]).toMatchObject({ id: 'yt_dQw4w9WgXcQ', sourceType: 'youtube' });
+    expect(ui.renderQueue).toHaveBeenCalledWith(ui.soloQueue);
+  });
+
+  it('starts a selected solo YouTube track in the official player', async () => {
+    const mesh = { lastKnownTrack: null, loadTrackBuffer: vi.fn() };
+    const player = { setVolume: vi.fn(), playAt: vi.fn().mockResolvedValue(undefined) };
+    const socketClient = { roomId: null, cloudMesh: mesh };
+    const audioEngine = { ensureContext: vi.fn().mockResolvedValue(undefined), volume: 0.4, stopLocalPlayback: vi.fn() };
+    const ui = new UIManager({ socketClient, audioEngine, youtubePlayer: player });
+    ui.updateTrackUI = vi.fn();
+    ui.renderQueue = vi.fn();
+    ui.setView = vi.fn();
+
+    await ui.playLibraryTrack({ id: 'yt_dQw4w9WgXcQ', sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ', name: 'Song' });
+
+    expect(player.setVolume).toHaveBeenCalledWith(0.4);
+    expect(player.playAt).toHaveBeenCalledWith('dQw4w9WgXcQ', expect.any(Number), 0);
+    expect(ui.isPlayingState).toBe(true);
+  });
+
+  it('waits for room track selection before scheduling an already playing solo track', async () => {
+    const track = { id: 'yt_dQw4w9WgXcQ', name: 'Song', sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ' };
+    const selected = vi.fn().mockResolvedValue(track);
+    const schedulePlay = vi.fn();
+    const room = { roomId: 'ROOM', isHost: true, cloudMesh: { lastKnownTrack: track }, addToQueue: vi.fn().mockResolvedValue(true), playQueueItem: selected, schedulePlay };
+    const ui = new UIManager({ socketClient: room, youtubePlayer: { getCurrentTime: () => 12 } });
+    ui.currentTrack = track;
+    ui.isPlayingState = true;
+
+    await ui.seedCurrentTrackIntoRoom();
+
+    expect(selected).toHaveBeenCalledWith(track.id, false);
+    expect(schedulePlay).toHaveBeenCalledWith(800, 12);
+  });
+
+  it('does not schedule room playback when the server rejects track selection', async () => {
+    const track = { id: 'yt_dQw4w9WgXcQ', name: 'Song', sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ' };
+    const schedulePlay = vi.fn();
+    const room = { roomId: 'ROOM', isHost: true, cloudMesh: { lastKnownTrack: track }, addToQueue: vi.fn().mockResolvedValue(true), playQueueItem: vi.fn().mockResolvedValue(false), schedulePlay };
+    const ui = new UIManager({ socketClient: room, youtubePlayer: { getCurrentTime: () => 12 } });
+    ui.currentTrack = track;
+    ui.isPlayingState = true;
+
+    await ui.seedCurrentTrackIntoRoom();
+
+    expect(schedulePlay).not.toHaveBeenCalled();
+  });
+
+  it('adds a solo search result only once when the same song is queued twice', async () => {
+    const mesh = { lastKnownTrack: null, loadTrackBuffer: vi.fn() };
+    const ui = new UIManager({ socketClient: { roomId: null, cloudMesh: mesh }, audioEngine: { ensureContext: vi.fn(), stopLocalPlayback: vi.fn() } });
+    ui.renderQueue = vi.fn();
+    const url = 'https://youtu.be/dQw4w9WgXcQ';
+
+    await ui.addYoutubeTrackToQueue(url, 'Song');
+    await ui.addYoutubeTrackToQueue(url, 'Song');
+
+    expect(ui.soloQueue).toHaveLength(1);
+  });
+
+  it('loads an empty solo queue when browser storage is unavailable', () => {
+    vi.stubGlobal('localStorage', undefined);
+    const ui = new UIManager({});
+
+    expect(ui.soloQueue).toEqual([]);
+  });
+
   it('serves repeated search results from the short local cache and can force refresh', async () => {
     const ui = new UIManager({ socketClient: { createRoom: vi.fn(), joinRoom: vi.fn() } });
     const fetchMock = vi.fn()
@@ -121,6 +200,8 @@ describe('YouTube search queue UI', () => {
     }]);
 
     expect(list.children[1].children).toHaveLength(3);
+    expect(list.children[1].children[2].children).toHaveLength(2);
+    expect(list.children[1].children[2].children[0].textContent).toBe('Putar');
     expect(list.children[1].children[1].children[0].textContent).toBe('<img src=x onerror=alert(1)>');
     expect(list.children[1].children[1].children[0]._html).toBeUndefined();
   });

@@ -26,7 +26,8 @@ export class UIManager {
     this.elements = {};
     this.currentUser = null;
     this.cachedPeers = [];
-    this.cachedQueue = [];
+    this.soloQueue = this.loadSoloQueue();
+    this.cachedQueue = [...this.soloQueue];
     this.qrScanner = null;
     this.selectedDeviceForEdit = null;
     this.demoTrackIndex = 0;
@@ -145,6 +146,8 @@ export class UIManager {
       progressBar: document.getElementById('progressBar'),
       progressFill: document.getElementById('progressFill'),
       volumeSlider: document.getElementById('volumeSlider'),
+      miniPlayerPlayBtn: document.getElementById('miniPlayerPlayBtn'),
+      miniPlayerSeek: document.getElementById('miniPlayerSeek'),
 
       // Queue Section
       queueCardSection: document.getElementById('queueCardSection'),
@@ -177,6 +180,7 @@ export class UIManager {
       hostDisconnectedNotice: document.getElementById('hostDisconnectedNotice'),
       youtubePlayerShell: document.getElementById('youtubePlayerShell'),
       youtubePlayerStatus: document.getElementById('youtubePlayerStatus'),
+      sharePlayerRoomBtn: document.getElementById('sharePlayerRoomBtn'),
 
       // Upload & Demo Elements
       dropzone: document.getElementById('audioDropzone'),
@@ -278,6 +282,10 @@ export class UIManager {
       const duration = this.app.audioEngine?.currentTrackDuration || 0;
       const target = (Number(event.target.value) / 1000) * duration;
       if (!duration) return;
+      if (this.currentTrack?.sourceType === 'youtube' && !this.app.socketClient.roomId) {
+        this.app.youtubePlayer?.seekTo(target);
+        return;
+      }
       if (!this.app.socketClient.isHost) this.app.socketClient.requestControl('seek', { position: target });
       else if (this.currentTrack?.sourceType === 'youtube') this.app.socketClient.seekPlayback(target);
       else this.app.socketClient.schedulePlay(800, target);
@@ -350,11 +358,35 @@ export class UIManager {
         try {
           await app.audioEngine.ensureContext();
           await app.socketClient.createRoom(this.getDeviceName());
+          await this.syncLocalQueueToRoom();
+          await this.seedCurrentTrackIntoRoom();
         } catch (error) {
           this.showUrlFeedback('Room gagal dibuat. Periksa koneksi lalu coba lagi.', 'error');
         }
       });
     }
+
+    elements.sharePlayerRoomBtn?.addEventListener('click', async () => {
+      try {
+        if (!app.socketClient.roomId) {
+          await app.socketClient.createRoom(this.getDeviceName());
+          await this.syncLocalQueueToRoom();
+          await this.seedCurrentTrackIntoRoom();
+        } else if (app.socketClient.isHost && this.currentTrack?.id) {
+          await this.seedCurrentTrackIntoRoom();
+        }
+        const url = `${window.location.origin}/?room=${app.socketClient.roomId}`;
+        try {
+          await navigator.clipboard.writeText(url);
+          this.showUrlFeedback('Room dibuat dan link undangan disalin.', 'success');
+        } catch (error) {
+          this.showUrlFeedback(`Room dibuat. Salin link ini: ${url}`, 'info');
+        }
+        this.setView('room');
+      } catch (error) {
+        this.showUrlFeedback('Room gagal dibuat atau link tidak bisa disalin.', 'error');
+      }
+    });
 
     if (elements.joinRoomBtn) {
       elements.joinRoomBtn.addEventListener('click', async () => {
@@ -467,60 +499,23 @@ export class UIManager {
     // 3. Single Alternating Play/Pause Toggle & Redo & Next
     if (elements.playPauseToggleBtn) {
       elements.playPauseToggleBtn.addEventListener('click', () => {
-        if (!app.socketClient.isHost) {
-          app.socketClient.requestControl(this.isPlayingState ? 'pause' : 'play');
-          return;
-        }
-        app.audioEngine.ensureContext();
-
-        if (this.isPlayingState) {
-          const currentPos = app.audioEngine.getCurrentPlaybackPosition();
-          app.audioEngine.stopLocalPlayback();
-          app.audioEngine.pauseOffsetSec = currentPos;
-          this.setPlayState(false);
-          app.socketClient.pausePlayback(currentPos);
-          return;
-        }
-
-        if (!app.audioEngine.audioBuffer && this.currentTrack?.sourceType !== 'youtube') {
-          if (app.socketClient.roomId) {
-            app.socketClient.schedulePlay(800, 0);
-          } else if (this.cachedQueue.length > 0) {
-            app.socketClient.nextTrack();
-          } else {
-            alert('Pilih lagu dari YouTube, upload file, atau tab Demo terlebih dahulu.');
-          }
-          return;
-        }
-
-        const currentPos = this.currentTrack?.sourceType === 'youtube'
-          ? app.youtubePlayer?.getCurrentTime() || 0
-          : app.audioEngine.pauseOffsetSec || 0;
-        app.socketClient.schedulePlay(800, currentPos);
+        this.togglePlayback();
       });
     }
 
     if (elements.redoBtn) {
       elements.redoBtn.addEventListener('click', () => {
-        if (!app.socketClient.isHost) {
-          app.socketClient.requestControl('previous');
-          return;
-        }
-        app.audioEngine.ensureContext();
-        app.audioEngine.stopLocalPlayback();
-        this.setPlayState(false);
-        this.setTrackLoading('Sync audio...');
-        if (this.cachedQueue.length > 1 && app.socketClient.roomId) {
-          app.socketClient.prevTrack();
-        } else if (app.audioEngine.audioBuffer || this.currentTrack?.sourceType === 'youtube') {
-          app.socketClient.schedulePlay(800, 0);
-        }
+        this.goToPreviousTrack();
       });
     }
 
     if (elements.nextBtn) {
       elements.nextBtn.addEventListener('click', () => {
-        if (!app.socketClient.isHost) {
+        if (!app.socketClient.roomId) {
+          this.goToNextTrack();
+          return;
+        }
+        if (!app.socketClient.isHost && app.socketClient.roomId) {
           app.socketClient.requestControl('next');
           return;
         }
@@ -528,14 +523,7 @@ export class UIManager {
         app.audioEngine.stopLocalPlayback();
         this.setPlayState(false);
         this.setTrackLoading('Sync audio...');
-        if (this.cachedQueue.length > 0 && app.socketClient.roomId) {
-          app.socketClient.nextTrack();
-        } else {
-          // Switch demo track
-          this.demoTrackIndex = (this.demoTrackIndex + 1) % 2;
-          if (this.demoTrackIndex === 0) elements.demoSynthBtn?.click();
-          else elements.sampleWavBtn?.click();
-        }
+        this.goToNextTrack();
       });
     }
 
@@ -564,6 +552,10 @@ export class UIManager {
         const clickX = e.clientX - rect.left;
         const pct = Math.max(0, Math.min(1, clickX / rect.width));
         const targetSec = pct * app.audioEngine.currentTrackDuration;
+        if (this.currentTrack?.sourceType === 'youtube' && !app.socketClient.roomId) {
+          app.youtubePlayer?.seekTo(targetSec);
+          return;
+        }
         if (!app.socketClient.isHost) {
           app.socketClient.requestControl('seek', { position: targetSec });
           return;
@@ -577,8 +569,8 @@ export class UIManager {
     if (elements.volumeSlider) {
       elements.volumeSlider.addEventListener('input', (e) => {
         const vol = parseFloat(e.target.value);
+        app.audioEngine.setVolume(vol);
         if (this.currentTrack?.sourceType === 'youtube') app.youtubePlayer?.setVolume(vol);
-        else app.audioEngine.setVolume(vol);
       });
     }
 
@@ -717,7 +709,7 @@ export class UIManager {
       }
 
       if (/^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be|music\.youtube\.com)/i.test(queryOrUrl)) {
-        await this.streamAudioFromUrl(queryOrUrl, 'YouTube Audio');
+        await this.streamAudioFromUrl(queryOrUrl, 'YouTube video').catch(() => this.showUrlFeedback('Link YouTube tidak valid atau player gagal dimuat.', 'error'));
         return;
       }
 
@@ -1172,9 +1164,18 @@ export class UIManager {
       queueButton.className = 'btn-spotify btn-spotify-primary add-yt-queue-btn';
       queueButton.style.cssText = 'padding: 4px 10px; font-size: 0.72rem; min-height: 28px; white-space: nowrap;';
       queueButton.textContent = '+ Queue';
+      const playButton = document.createElement('button');
+      playButton.type = 'button';
+      playButton.className = 'btn-spotify btn-spotify-dark play-yt-result-btn';
+      playButton.textContent = 'Putar';
+      playButton.setAttribute('aria-label', `Putar ${item.title || 'video YouTube'}`);
+      const actions = document.createElement('div');
+      actions.className = 'yt-result-actions';
+      actions.appendChild(playButton);
+      actions.appendChild(queueButton);
       card.appendChild(thumbnail);
       card.appendChild(info);
-      card.appendChild(queueButton);
+      card.appendChild(actions);
 
       const queueBtn = card.querySelector('.add-yt-queue-btn');
       if (queueBtn) {
@@ -1185,7 +1186,11 @@ export class UIManager {
           queueBtn.innerText = '✓ Ditambah';
           queueBtn.style.backgroundColor = 'var(--spotify-green)';
           queueBtn.style.color = '#000';
-          await this.addYoutubeTrackToQueue(item.url, item.title, item.channel, item.duration, thumbSrc);
+          try {
+            await this.addYoutubeTrackToQueue(item.url, item.title, item.channel, item.duration, thumbSrc);
+          } catch (error) {
+            this.showUrlFeedback('Lagu gagal ditambahkan ke antrean. Coba lagi.', 'error');
+          }
           setTimeout(() => {
             if (queueBtn) {
               queueBtn.disabled = false;
@@ -1197,14 +1202,17 @@ export class UIManager {
         });
       }
 
-      let isCardClicking = false;
-      card.addEventListener('click', async () => {
-        if (isCardClicking) return;
-        isCardClicking = true;
+      playButton.addEventListener('click', async event => {
+        event.stopPropagation();
+        playButton.disabled = true;
+        playButton.textContent = 'Memuat…';
         try {
           await this.streamAudioFromUrl(item.url, item.title, item.channel, item.duration, thumbSrc);
+        } catch (error) {
+          this.showUrlFeedback('Video gagal dimuat. Coba lagi atau buka sumber YouTube.', 'error');
         } finally {
-          setTimeout(() => { isCardClicking = false; }, 1000);
+          playButton.disabled = false;
+          playButton.textContent = 'Putar';
         }
       });
 
@@ -1212,11 +1220,26 @@ export class UIManager {
     });
   }
 
-  async addYoutubeTrackToQueueOnly(url, trackTitle, artist = 'YouTube', duration = 210, thumbnail = '') {
-    if (!this.app.socketClient.roomId) {
-      this.app.socketClient.createRoom(this.getDeviceName());
+  loadSoloQueue() {
+    try {
+      if (typeof localStorage === 'undefined') return [];
+      const queue = JSON.parse(localStorage.getItem('rync_solo_queue') || '[]');
+      return Array.isArray(queue) ? queue : [];
+    } catch (error) {
+      return [];
     }
+  }
 
+  addToSoloQueue(track) {
+    if (!track?.id) return;
+    this.soloQueue = this.soloQueue.some(item => item.id === track.id)
+      ? this.soloQueue
+      : [...this.soloQueue, track];
+    try { localStorage.setItem('rync_solo_queue', JSON.stringify(this.soloQueue)); } catch (error) {}
+    if (!this.app.socketClient?.roomId) this.renderQueue(this.soloQueue);
+  }
+
+  async addYoutubeTrackToQueueOnly(url, trackTitle, artist = 'YouTube', duration = 210, thumbnail = '') {
     let thumbUrl = thumbnail;
     if (!thumbUrl || thumbUrl === 'NA' || !thumbUrl.startsWith('http')) {
       const match = url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([a-zA-Z0-9_-]{11})/);
@@ -1243,9 +1266,33 @@ export class UIManager {
   }
 
   async streamAudioFromUrl(url, trackTitle, artist = 'YouTube', duration = 210, thumbnail = '') {
-    this.app.audioEngine.ensureContext();
-    const item = await this.addYoutubeTrackToQueue(url, trackTitle, artist, duration, thumbnail);
+    await this.app.audioEngine.ensureContext();
+    const videoId = url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([A-Za-z0-9_-]{11})/)?.[1];
+    if (!videoId) throw new Error('ID video YouTube tidak valid');
+    const item = {
+      id: `yt_${videoId}`,
+      name: trackTitle,
+      artist,
+      duration: duration || 0,
+      thumbnail: thumbnail || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+      sourceType: 'youtube',
+      sourceId: videoId,
+      sourceUrl: `https://www.youtube.com/watch?v=${videoId}`
+    };
+    if (!this.app.socketClient.roomId) {
+      this.addToSoloQueue(item);
+      this.app.socketClient.cloudMesh.lastKnownTrack = item;
+      this.app.socketClient.cloudMesh.loadTrackBuffer(item);
+      this.app.youtubePlayer?.setVolume(this.app.audioEngine.volume);
+      this.app.youtubePlayer?.playAt(item.sourceId, Date.now() + 50, 0)
+        .catch(() => this.setYouTubePlayerStatus('Tekan Play di player YouTube untuk mulai.'));
+      this.setPlayState(true);
+      this.updateTrackUI(item.name, item.duration, item.thumbnail);
+      return item;
+    }
+    await this.app.socketClient.addToQueue(item);
     if (this.app.socketClient.isHost) {
+      this.app.socketClient.cloudMesh.lastKnownTrack = item;
       this.app.socketClient.playQueueItem(item.id, true);
     } else {
       this.app.socketClient.requestControl('play_queue_item', { queueId: item.id, name: item.name });
@@ -1253,7 +1300,6 @@ export class UIManager {
   }
 
   async addYoutubeTrackToQueue(url, trackTitle, artist = 'YouTube', duration = 210, thumbnail = '') {
-    if (!this.app.socketClient.roomId) this.app.socketClient.createRoom(this.getDeviceName());
     const match = url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([a-zA-Z0-9_-]{11})/);
     const videoId = match?.[1];
     const thumbUrl = thumbnail && thumbnail !== 'NA' && thumbnail.startsWith('http')
@@ -1269,7 +1315,8 @@ export class UIManager {
       sourceId: videoId,
       sourceUrl: `https://www.youtube.com/watch?v=${videoId}`
     };
-    await this.app.socketClient.addToQueue(item);
+    if (this.app.socketClient.roomId) await this.app.socketClient.addToQueue(item);
+    else this.addToSoloQueue(item);
     return item;
   }
 
@@ -1292,6 +1339,7 @@ export class UIManager {
 
   renderQueue(queue = []) {
     this.cachedQueue = queue;
+    if (!this.app.socketClient?.roomId) this.soloQueue = queue;
     const container = this.elements.queueListContainer;
     if (!container) return;
 
@@ -1370,6 +1418,10 @@ export class UIManager {
       div.querySelector('.q-action-play')?.addEventListener('click', (e) => {
         e.stopPropagation();
         dropdown.classList.remove('active');
+        if (!this.app.socketClient.roomId) {
+          this.playLibraryTrack(item);
+          return;
+        }
         if (!this.app.socketClient.isHost) {
           this.app.socketClient.requestControl('play_queue_item', { queueId: item.id, name: item.name });
           return;
@@ -1385,6 +1437,16 @@ export class UIManager {
       div.querySelector('.q-action-playnext')?.addEventListener('click', (e) => {
         e.stopPropagation();
         dropdown.classList.remove('active');
+        if (!this.app.socketClient.roomId) {
+          this.addToSoloQueue(item);
+          const queue = this.soloQueue.filter(entry => entry.id !== item.id);
+          const currentIndex = queue.findIndex(entry => entry.id === this.currentTrack?.id);
+          queue.splice(currentIndex < 0 ? 0 : currentIndex + 1, 0, item);
+          this.soloQueue = queue;
+          this.renderQueue(queue);
+          try { localStorage.setItem('rync_solo_queue', JSON.stringify(queue)); } catch (error) {}
+          return;
+        }
         if (!this.app.socketClient.isHost) {
           this.app.socketClient.requestControl('play_next', { queueId: item.id, name: item.name });
           return;
@@ -1412,6 +1474,12 @@ export class UIManager {
       div.querySelector('.q-action-delete')?.addEventListener('click', (e) => {
         e.stopPropagation();
         dropdown.classList.remove('active');
+        if (!this.app.socketClient.roomId) {
+          this.soloQueue = this.soloQueue.filter(entry => entry.id !== item.id);
+          try { localStorage.setItem('rync_solo_queue', JSON.stringify(this.soloQueue)); } catch (error) {}
+          this.renderQueue(this.soloQueue);
+          return;
+        }
         if (!this.app.socketClient.isHost) {
           this.app.socketClient.requestControl('remove_queue', { queueId: item.id, name: item.name });
           return;
@@ -1422,6 +1490,10 @@ export class UIManager {
       // Click row to select/load track (with autoplay)
       div.addEventListener('click', (e) => {
         if (Date.now() < this.suppressQueueRowClickUntil || e.target.closest('.queue-item-actions') || e.target.closest('.drag-handle')) return;
+        if (!this.app.socketClient.roomId) {
+          this.playLibraryTrack(item);
+          return;
+        }
         if (!this.app.socketClient.isHost) {
           this.app.socketClient.requestControl('play_queue_item', { queueId: item.id, name: item.name });
           return;
@@ -1775,6 +1847,13 @@ export class UIManager {
     };
     this.currentTrack = currentTrack;
     this.updateMiniPlayer();
+    if (currentTrack.sourceType === 'youtube') {
+      this.app.audioEngine.currentTrackName = currentTrack.name;
+      this.app.audioEngine.currentTrackId = currentTrack.id;
+      this.app.audioEngine.currentTrackDuration = currentTrack.duration || 0;
+      this.app.audioEngine.pauseOffsetSec = this.app.youtubePlayer?.getCurrentTime?.() || 0;
+      this.app.audioEngine.stopLocalPlayback();
+    }
     if (duration > 0 && this.app?.audioEngine) {
       this.app.audioEngine.currentTrackDuration = duration;
     }
@@ -2016,6 +2095,23 @@ export class UIManager {
       play.textContent = `${track.name || 'Untitled'}${track.artist ? ` · ${track.artist}` : ''}`;
       play.addEventListener('click', () => this.playLibraryTrack(track));
       row.append(play);
+      const like = document.createElement('button');
+      like.type = 'button';
+      like.className = 'library-action';
+      like.textContent = '♡';
+      like.setAttribute('aria-label', `Simpan ${track.name || 'lagu'} ke favorit`);
+      like.setAttribute('aria-pressed', 'false');
+      this.localLibrary.isFavorite(track.id).then(liked => {
+        like.textContent = liked ? '♥' : '♡';
+        like.setAttribute('aria-label', liked ? `Hapus ${track.name || 'lagu'} dari favorit` : `Simpan ${track.name || 'lagu'} ke favorit`);
+        like.setAttribute('aria-pressed', String(liked));
+      }).catch(() => {});
+      like.addEventListener('click', async () => {
+        if (await this.localLibrary.isFavorite(track.id)) await this.localLibrary.removeFavorite(track.id);
+        else await this.localLibrary.addFavorite(track);
+        this.refreshLibrary();
+      });
+      row.append(like);
       if (playlistId) {
         const remove = document.createElement('button');
         remove.type = 'button';
@@ -2046,6 +2142,19 @@ export class UIManager {
     }
     try {
       await this.app.audioEngine.ensureContext();
+      if (track.sourceType === 'youtube' && track.sourceId && !this.app.socketClient.roomId) {
+        this.addToSoloQueue(track);
+        this.currentTrack = track;
+        this.updateTrackUI(track.name, track.duration || 0, track.thumbnail || '');
+        this.app.socketClient.cloudMesh.lastKnownTrack = track;
+        this.app.socketClient.cloudMesh.loadTrackBuffer(track);
+        this.app.youtubePlayer?.setVolume(this.app.audioEngine.volume);
+        this.app.youtubePlayer?.playAt(track.sourceId, Date.now() + 50, 0)
+          .catch(() => this.setYouTubePlayerStatus('Tekan Play di player YouTube untuk mulai.'));
+        this.setPlayState(true);
+        this.setView('home');
+        return;
+      }
       if (!this.app.socketClient.roomId) await this.app.socketClient.createRoom(this.getDeviceName());
       const item = { ...track, id: track.id, addedBy: this.getDeviceName() };
       await this.app.socketClient.addToQueue(item);
@@ -2056,7 +2165,88 @@ export class UIManager {
     }
   }
 
+  async goToPreviousTrack() {
+    if (!this.app.socketClient.roomId) {
+      const index = this.soloQueue.findIndex(track => track.id === this.currentTrack?.id);
+      if (this.currentTrack?.sourceType === 'youtube' && (index < 0 || this.app.youtubePlayer?.getCurrentTime?.() > 3)) {
+        this.app.audioEngine.pauseOffsetSec = 0;
+        return this.app.youtubePlayer?.seekTo(0);
+      }
+      const previous = this.soloQueue[index > 0 ? index - 1 : this.soloQueue.length - 1];
+      if (previous) return this.playLibraryTrack(previous);
+      if (this.currentTrack?.sourceType === 'youtube') {
+        this.app.youtubePlayer?.seekTo(0);
+        return;
+      }
+      return this.showUrlFeedback('Belum ada lagu sebelumnya di antrean.', 'info');
+    }
+    if (!this.app.socketClient.isHost) return this.app.socketClient.requestControl('previous');
+    if (this.cachedQueue.length > 1) return this.app.socketClient.prevTrack();
+    const offset = this.currentTrack?.sourceType === 'youtube' ? this.app.youtubePlayer?.getCurrentTime() || 0 : this.app.audioEngine.pauseOffsetSec || 0;
+    if (offset > 3) return this.app.socketClient.seekPlayback(0);
+    return this.app.socketClient.prevTrack();
+  }
+
+  async goToNextTrack() {
+    if (!this.app.socketClient.roomId) {
+      const index = this.soloQueue.findIndex(track => track.id === this.currentTrack?.id);
+      if (this.repeatMode === 'one' && this.currentTrack?.sourceType === 'youtube') {
+        this.app.audioEngine.pauseOffsetSec = 0;
+        return this.app.youtubePlayer?.playAt(this.currentTrack.sourceId, Date.now() + 50, 0);
+      }
+      let nextIndex = index + 1;
+      if (this.shuffle && this.soloQueue.length > 1) {
+        nextIndex = Math.floor(Math.random() * this.soloQueue.length);
+        if (nextIndex === index) nextIndex = (nextIndex + 1) % this.soloQueue.length;
+      } else if (nextIndex >= this.soloQueue.length && this.repeatMode === 'all') nextIndex = 0;
+      const next = this.soloQueue[nextIndex];
+      if (next) return this.playLibraryTrack(next);
+      return this.showUrlFeedback('Antrean kosong. Tambahkan lagu dari Search.', 'info');
+    }
+    if (!this.app.socketClient.isHost) return this.app.socketClient.requestControl('next');
+    return this.app.socketClient.nextTrack();
+  }
+
+  async syncLocalQueueToRoom() {
+    const room = this.app.socketClient;
+    const currentId = this.currentTrack?.id;
+    const items = this.soloQueue.filter(item => item?.id && item.id !== currentId);
+    for (const item of items) await room.addToQueue(item);
+  }
+
+  async seedCurrentTrackIntoRoom() {
+    const track = this.currentTrack || this.app.socketClient.cloudMesh?.lastKnownTrack;
+    if (!track) return;
+    if (track.sourceType === 'youtube' && !track.sourceId) {
+      const id = track.id?.startsWith('yt_') ? track.id.slice(3) : '';
+      if (/^[A-Za-z0-9_-]{11}$/.test(id)) track.sourceId = id;
+    }
+    const source = track.sourceType === 'youtube' && track.sourceId
+      ? { sourceType: 'youtube', sourceId: track.sourceId, sourceUrl: track.sourceUrl }
+      : { audioUrl: track.audioUrl };
+    const roomTrack = {
+      id: track.id || `q_${Math.random().toString(36).slice(2, 10)}`,
+      name: track.name || 'Untitled',
+      artist: track.artist || 'Rync',
+      duration: track.duration || 0,
+      thumbnail: track.thumbnail || '',
+      ...source
+    };
+    await this.app.socketClient.addToQueue(roomTrack);
+    this.app.socketClient.cloudMesh.lastKnownTrack = roomTrack;
+    this.app.socketClient.cloudMesh.lastKnownQueue = this.app.socketClient.cloudMesh.lastKnownQueue || [];
+    if (this.app.socketClient.isHost) {
+      const selected = this.currentTrack && this.isPlayingState
+        ? await this.app.socketClient.playQueueItem(roomTrack.id, false)
+        : true;
+      if (selected && this.isPlayingState && roomTrack.sourceType === 'youtube') {
+        this.app.socketClient.schedulePlay(800, this.app.youtubePlayer?.getCurrentTime?.() || 0);
+      }
+    }
+  }
+
   setRoomState(roomId, isHost) {
+    this.renderQueue(this.app.socketClient.cloudMesh?.lastKnownQueue || []);
     document.body?.classList.add('in-room');
     this.setView(this.currentView === 'room' ? 'home' : this.currentView);
     if (this.elements.roomCodeDisplay) this.elements.roomCodeDisplay.innerText = roomId;
@@ -2075,6 +2265,7 @@ export class UIManager {
   }
 
   setSoloState() {
+    this.renderQueue(this.soloQueue);
     document.body?.classList.remove('in-room');
     this.setYouTubePlayerVisible(false);
     if (this.elements.roomCodeDisplay) this.elements.roomCodeDisplay.innerText = '----';
@@ -2157,6 +2348,20 @@ export class UIManager {
 
   togglePlayback() {
     const { audioEngine, socketClient } = this.app;
+    if (!socketClient.roomId && this.currentTrack?.sourceType === 'youtube') {
+      if (this.isPlayingState) {
+        const position = this.app.youtubePlayer?.getCurrentTime() || 0;
+        audioEngine.pauseOffsetSec = position;
+        this.app.youtubePlayer?.pause();
+        this.setPlayState(false);
+      } else {
+        const position = audioEngine.pauseOffsetSec || 0;
+        this.app.youtubePlayer?.playAt(this.currentTrack.sourceId, Date.now() + 50, position)
+          .catch(() => this.setYouTubePlayerStatus('Tekan Play di player YouTube untuk mulai.'));
+        this.setPlayState(true);
+      }
+      return;
+    }
     if (!socketClient.isHost) {
       socketClient.requestControl(this.isPlayingState ? 'pause' : 'play');
       return;
@@ -2178,7 +2383,10 @@ export class UIManager {
       else this.showUrlFeedback('Pilih lagu dari Search untuk mulai memutar.', 'info');
       return;
     }
-    socketClient.schedulePlay(800, audioEngine.pauseOffsetSec || 0);
+    const offset = this.currentTrack?.sourceType === 'youtube'
+      ? this.app.youtubePlayer?.getCurrentTime() || audioEngine.pauseOffsetSec || 0
+      : audioEngine.pauseOffsetSec || 0;
+    socketClient.schedulePlay(800, offset);
   }
 
   renderPeerList(peers = []) {

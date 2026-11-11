@@ -86,18 +86,26 @@ class App {
         }
         if (this.uiManager.currentTrack) this.uiManager.currentTrack.duration = duration;
       }
+      if (this.uiManager.currentTrack?.sourceType === 'youtube') {
+        this.uiManager.currentTrack.duration = duration || this.uiManager.currentTrack.duration || 0;
+        this.audioEngine.currentTrackDuration = this.uiManager.currentTrack.duration;
+      }
       this.audioEngine.pauseOffsetSec = player?.getCurrentTime?.() || 0;
       this.uiManager.setYouTubePlayerStatus('');
       this.uiManager.setPlayState(true);
     } else if (state === YT?.PlayerState?.PAUSED || state === 2) {
       this.audioEngine.pauseOffsetSec = player?.getCurrentTime?.() || this.audioEngine.pauseOffsetSec;
-      this.uiManager.setPlayState(false);
+      if (this.uiManager.isPlayingState) this.uiManager.setPlayState(false);
     } else if (state === YT?.PlayerState?.BUFFERING || state === 3) {
-      this.uiManager.setPlayState(false);
       this.uiManager.setYouTubePlayerStatus('Memuat video YouTube…');
     } else if (state === YT?.PlayerState?.ENDED || state === 0) {
       this.uiManager.setPlayState(false);
-      if (this.socketClient?.isHost) this.socketClient.nextTrack(true);
+      if (this.socketClient?.roomId && this.socketClient.isHost) this.socketClient.nextTrack(true);
+      else if (!this.socketClient?.roomId && this.uiManager.repeatMode === 'one' && this.uiManager.currentTrack?.sourceId) {
+        this.audioEngine.pauseOffsetSec = 0;
+        this.youtubePlayer.playAt(this.uiManager.currentTrack.sourceId, Date.now() + 50, 0)
+          .catch(() => this.uiManager.setYouTubePlayerStatus('Tekan Play di player YouTube untuk mulai.'));
+      } else if (!this.socketClient?.roomId) this.uiManager.goToNextTrack();
     }
   }
 
@@ -277,6 +285,10 @@ class App {
 
       case 'TRACK_METADATA':
       case 'TRACK_LOADED':
+        if (payload?.sourceType === 'youtube' && !payload.sourceId) {
+          const embeddedId = payload.id?.startsWith('yt_') ? payload.id.slice(3) : '';
+          if (/^[A-Za-z0-9_-]{11}$/.test(embeddedId)) payload.sourceId = embeddedId;
+        }
         uiManager.setYouTubePlayerVisible(!!youtubeVideoId(payload));
         if (payload.isSynthetic) {
           audioEngine.generateSyntheticTrack();

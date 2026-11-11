@@ -901,6 +901,21 @@ canvas#visualizerCanvas {
   border-color: var(--spotify-green);
 }
 
+.yt-result-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.play-yt-result-btn,
+.add-yt-queue-btn {
+  min-height: 36px;
+  padding: 0 10px;
+  white-space: nowrap;
+  font-size: 0.75rem;
+}
+
 .yt-result-thumb {
   width: 54px;
   height: 40px;
@@ -914,6 +929,12 @@ canvas#visualizerCanvas {
   flex: 1;
   min-width: 0;
   overflow: hidden;
+}
+
+@media (max-width: 480px) {
+  .yt-result-item { gap: 8px; padding: 8px; }
+  .yt-result-actions { flex-direction: column; }
+  .play-yt-result-btn, .add-yt-queue-btn { min-height: 34px; padding-inline: 8px; }
 }
 
 .yt-result-title {
