@@ -1,4 +1,5 @@
 const IFRAME_API_URL = 'https://www.youtube.com/iframe_api';
+const PLAYER_READY_TIMEOUT_MS = 12_000;
 let apiPromise;
 
 function loadIframeApi() {
@@ -57,30 +58,46 @@ export class YouTubeEmbedPlayer {
     if (!this.readyPromise) {
       const initialVideoId = videoId;
       this.readyPromise = loadIframeApi().then(YT => new Promise((resolve, reject) => {
-        this.player = new YT.Player(this.elementId, {
-          width: '480',
-          height: '270',
-          videoId: initialVideoId || undefined,
-          playerVars: {
-            autoplay: 0,
-            controls: 1,
-            enablejsapi: 1,
-            playsinline: 1,
-            origin: globalThis.location?.origin || ''
-          },
-          events: {
-            onReady: event => {
-              this.videoId = initialVideoId || null;
-              resolve(event.target);
+        let settled = false;
+        const readinessTimeout = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          reject(new Error('YOUTUBE_PLAYER_READY_TIMEOUT'));
+        }, PLAYER_READY_TIMEOUT_MS);
+        try {
+          this.player = new YT.Player(this.elementId, {
+            width: '480',
+            height: '270',
+            videoId: initialVideoId || undefined,
+            playerVars: {
+              autoplay: 0,
+              controls: 1,
+              enablejsapi: 1,
+              playsinline: 1,
+              origin: globalThis.location?.origin || ''
             },
-            onStateChange: event => {
-              this.onStateChange(event.data, event.target);
+            events: {
+              onReady: event => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(readinessTimeout);
+                this.videoId = initialVideoId || null;
+                resolve(event.target);
+              },
+              onStateChange: event => {
+                this.onStateChange(event.data, event.target);
+              },
+              onError: event => this.onError(event.data),
+              onAutoplayBlocked: () => this.onAutoplayBlocked()
             },
-            onError: event => this.onError(event.data),
-            onAutoplayBlocked: () => this.onAutoplayBlocked()
-          }
-        });
+          });
+        } catch (error) {
+          settled = true;
+          clearTimeout(readinessTimeout);
+          reject(error);
+        }
       })).catch(error => {
+        try { this.player?.destroy?.(); } catch (destroyError) {}
         this.player = null;
         this.readyPromise = null;
         throw error;

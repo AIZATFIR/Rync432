@@ -78,6 +78,25 @@ describe('YouTube embedded player adapter', () => {
     expect(instances).toHaveLength(0);
   });
 
+  it('times out and resets when the iframe player never becomes ready', async () => {
+    vi.useFakeTimers();
+    const instances = [];
+    globalThis.YT = { Player: class {
+      constructor(elementId) { this.elementId = elementId; instances.push(this); }
+      destroy() { this.destroyed = true; }
+    } };
+    const player = new YouTubeEmbedPlayer('youtubePlayerContainer');
+
+    const readiness = player.ensurePlayer();
+    const rejected = expect(readiness).rejects.toThrow('YOUTUBE_PLAYER_READY_TIMEOUT');
+    await vi.advanceTimersByTimeAsync(12_000);
+    await rejected;
+
+    expect(instances[0].destroyed).toBe(true);
+    expect(player.player).toBeNull();
+    expect(player.readyPromise).toBeNull();
+  });
+
   it('aligns iframe volume with this device slider', async () => {
     const instances = installFakePlayer();
     const player = new YouTubeEmbedPlayer('youtubePlayerContainer');
