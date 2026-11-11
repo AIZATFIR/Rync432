@@ -749,7 +749,7 @@ export class UIManager {
               : err.code === 'PROVIDER_UNAVAILABLE'
                 ? 'YouTube sedang tidak tersedia. Coba lagi nanti.'
             : 'Pencarian gagal. Periksa koneksi lalu coba lagi.';
-        this.renderSearchMessage(message, 'error');
+        this.renderSearchError(message, queryOrUrl, err.retryable !== false);
       }
     };
 
@@ -1125,6 +1125,18 @@ export class UIManager {
     status.setAttribute('role', 'status');
     status.textContent = message;
     list.appendChild(status);
+  }
+
+  renderSearchError(message, query, retryable = true) {
+    this.renderSearchMessage(message, 'error');
+    if (!retryable) return;
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'yt-search-refresh';
+    retry.textContent = 'Coba lagi';
+    retry.setAttribute('aria-label', 'Coba pencarian YouTube lagi');
+    retry.addEventListener('click', () => this.activeYoutubeSearchHandler?.(query, true));
+    this.elements.ytSearchResults?.appendChild(retry);
   }
 
   renderSearchResults(results, { query = '', cached = false, stale = false } = {}) {

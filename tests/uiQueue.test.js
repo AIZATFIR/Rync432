@@ -970,6 +970,42 @@ describe('YouTube search queue UI', () => {
     expect(list.children[1].children[1].children[0]._html).toBeUndefined();
   });
 
+  it('renders an actionable retry that reuses the failed search query', () => {
+    const makeElement = () => ({
+      children: [], className: '', style: {}, textContent: '', disabled: false,
+      setAttribute: vi.fn(), addEventListener: vi.fn(function (name, handler) { this[`on${name}`] = handler; }),
+      appendChild(child) { this.children.push(child); }, replaceChildren() { this.children = []; }
+    });
+    vi.stubGlobal('document', { createElement: makeElement });
+    const ui = new UIManager({});
+    const results = makeElement();
+    const retry = vi.fn();
+    ui.elements = { ytSearchResults: results };
+    ui.activeYoutubeSearchHandler = retry;
+
+    ui.renderSearchError('YouTube sedang tidak tersedia.', 'ambient focus');
+
+    expect(results.children[0].textContent).toBe('YouTube sedang tidak tersedia.');
+    expect(results.children[1].textContent).toBe('Coba lagi');
+    results.children[1].onclick();
+    expect(retry).toHaveBeenCalledWith('ambient focus', true);
+  });
+
+  it('does not offer retry for a permanent YouTube search error', () => {
+    const makeElement = () => ({
+      children: [], className: '', style: {}, textContent: '',
+      setAttribute() {}, addEventListener() {}, appendChild(child) { this.children.push(child); },
+      replaceChildren() { this.children = []; }
+    });
+    vi.stubGlobal('document', { createElement: makeElement });
+    const ui = new UIManager({});
+    ui.elements = { ytSearchResults: makeElement() };
+
+    ui.renderSearchError('Pencarian YouTube belum diatur di server.', 'ambient focus', false);
+
+    expect(ui.elements.ytSearchResults.children).toHaveLength(1);
+  });
+
   it('routes between the player, local library and room setup views', () => {
     const node = () => ({
       hidden: false,
