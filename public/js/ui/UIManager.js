@@ -1244,7 +1244,6 @@ export class UIManager {
   }
 
   async streamAudioFromUrl(url, trackTitle, artist = 'YouTube', duration = 210, thumbnail = '') {
-    await this.app.audioEngine.ensureContext();
     const videoId = url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([A-Za-z0-9_-]{11})/)?.[1];
     if (!videoId) throw new Error('ID video YouTube tidak valid');
     const item = {
@@ -1268,13 +1267,21 @@ export class UIManager {
       this.updateTrackUI(item.name, item.duration, item.thumbnail);
       return item;
     }
-    await this.app.socketClient.addToQueue(item);
+    const queueSync = this.app.socketClient.addToQueue(item);
     if (this.app.socketClient.isHost) {
       this.app.socketClient.cloudMesh.lastKnownTrack = item;
       this.app.socketClient.playQueueItem(item.id, true);
     } else {
       this.app.socketClient.requestControl('play_queue_item', { queueId: item.id, name: item.name });
     }
+    this.app.youtubePlayer?.setVolume(this.app.audioEngine.volume);
+    this.app.youtubePlayer?.playAt(item.sourceId, Date.now() + 50, 0)
+      .catch(() => this.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Coba lagi.'));
+    this.setPlayState(true);
+    this.updateTrackUI(item.name, item.duration, item.thumbnail);
+    const synced = await queueSync;
+    if (synced === false) this.showUrlFeedback('Lagu diputar di perangkat ini, tetapi antrean room belum tersinkron.', 'error');
+    return item;
   }
 
   async addYoutubeTrackToQueue(url, trackTitle, artist = 'YouTube', duration = 210, thumbnail = '') {

@@ -49,6 +49,31 @@ describe('YouTube search queue UI', () => {
     expect(ui.renderQueue).toHaveBeenCalledWith(ui.soloQueue);
   });
 
+  it('starts YouTube room playback without waiting for queue acknowledgement or AudioContext', async () => {
+    let acknowledgeQueue;
+    const itemPromise = new Promise(resolve => { acknowledgeQueue = resolve; });
+    const player = { setVolume: vi.fn(), playAt: vi.fn().mockResolvedValue(undefined) };
+    const socketClient = {
+      roomId: 'ROOM', isHost: true,
+      cloudMesh: { lastKnownTrack: null, loadTrackBuffer: vi.fn() },
+      addToQueue: vi.fn(() => itemPromise),
+      playQueueItem: vi.fn()
+    };
+    const audioEngine = { ensureContext: vi.fn() };
+    const ui = new UIManager({ socketClient, audioEngine, youtubePlayer: player });
+    ui.updateTrackUI = vi.fn();
+    ui.setPlayState = vi.fn();
+
+    const play = ui.streamAudioFromUrl('https://youtu.be/dQw4w9WgXcQ', 'Song', 'Artist', 180);
+
+    expect(audioEngine.ensureContext).not.toHaveBeenCalled();
+    expect(socketClient.addToQueue).toHaveBeenCalledOnce();
+    expect(socketClient.playQueueItem).toHaveBeenCalledWith('yt_dQw4w9WgXcQ', true);
+    expect(player.playAt).toHaveBeenCalledWith('dQw4w9WgXcQ', expect.any(Number), 0);
+    acknowledgeQueue(true);
+    await play;
+  });
+
   it('starts a selected solo YouTube track in the official player', async () => {
     const mesh = { lastKnownTrack: null, loadTrackBuffer: vi.fn() };
     const player = { setVolume: vi.fn(), playAt: vi.fn().mockResolvedValue(undefined) };
