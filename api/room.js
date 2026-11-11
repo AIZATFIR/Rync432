@@ -1,7 +1,9 @@
 // Serverless In-Memory & Edge Room Mesh Relay for Rync432
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
+import net from 'node:net';
 import { createRoomPersistence, ROOM_TTL_MS } from './roomPersistence.js';
+import { isForbiddenIp } from '../server/streaming/urlSecurity.js';
 // Supports Multi-Device Sync, Binary Audio Relay, Democratic Queue, and WebRTC
 
 const MAX_ROOM_PEERS = 5;
@@ -11,6 +13,31 @@ const MAX_QUEUE_ITEMS = 500;
 const MAX_SIGNAL_BYTES = 64 * 1024;
 const MAX_PENDING_SIGNALS = 256;
 const SIGNAL_TTL_MS = 30 * 1000;
+const ROOM_SOURCE_TYPES = new Set(['youtube', 'local-file', 'direct-url', 'public-audio']);
+
+function isSafeSharedAudioUrl(value) {
+  if (typeof value !== 'string' || !value || value.length > 4096) return false;
+  if (value.startsWith('/') && !value.startsWith('//') && !value.includes('\\')) return true;
+
+  try {
+    const url = new URL(value);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return false;
+    const hostname = url.hostname.toLowerCase();
+    if (hostname === 'localhost' || hostname.endsWith('.localhost')
+      || hostname.endsWith('.local') || hostname.endsWith('.internal')) return false;
+    if (net.isIP(hostname) && isForbiddenIp(hostname)) return false;
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function isValidRoomQueueSource(item) {
+  if (item?.sourceType === undefined) return true;
+  if (!ROOM_SOURCE_TYPES.has(item.sourceType)) return false;
+  if (['direct-url', 'public-audio'].includes(item.sourceType)) return isSafeSharedAudioUrl(item.audioUrl);
+  return true;
+}
 
 const queueRevisionOf = room => Number.isSafeInteger(room?.queueRevision) ? room.queueRevision : 0;
 const updateQueueRevision = (room, previousQueue) => {
@@ -391,7 +418,8 @@ export default async function handler(req, res) {
       if (Array.isArray(body.queue) && body.queue.length > MAX_QUEUE_ITEMS) {
         return res.status(413).json({ exists: true, error: 'QUEUE_LIMIT_REACHED', maxItems: MAX_QUEUE_ITEMS });
       }
-      if (Array.isArray(body.queue) && body.queue.some(item => !item || typeof item.id !== 'string' || !item.id || item.id.length > 160)) {
+      if (Array.isArray(body.queue) && body.queue.some(item => !item || typeof item.id !== 'string'
+        || !item.id || item.id.length > 160 || !isValidRoomQueueSource(item))) {
         return res.status(400).json({ exists: true, error: 'INVALID_QUEUE_ITEMS' });
       }
       if (Array.isArray(body.deletedQueueIds) && body.deletedQueueIds.length > MAX_QUEUE_ITEMS) {
@@ -488,6 +516,10 @@ export default async function handler(req, res) {
     if (Array.isArray(body.queue) && body.queue.length > MAX_QUEUE_ITEMS) {
       return res.status(413).json({ success: false, error: 'QUEUE_LIMIT_REACHED', maxItems: MAX_QUEUE_ITEMS });
     }
+    if (Array.isArray(body.queue) && body.queue.some(item => !item || typeof item.id !== 'string'
+      || !item.id || item.id.length > 160 || !isValidRoomQueueSource(item))) {
+      return res.status(400).json({ success: false, error: 'INVALID_QUEUE_ITEMS' });
+    }
     if (Array.isArray(body.queue) && room && !checkQueueRevision(room, body, res)) return;
     if (!room) {
       room = {
@@ -578,7 +610,7 @@ export default async function handler(req, res) {
           || (item.name !== undefined && (typeof item.name !== 'string' || item.name.length > 512))
           || (item.artist !== undefined && (typeof item.artist !== 'string' || item.artist.length > 512))
           || (item.audioUrl !== undefined && (typeof item.audioUrl !== 'string' || item.audioUrl.length > 4096))
-          || (item.sourceType !== undefined && !['youtube', 'local-file'].includes(item.sourceType))
+          || !isValidRoomQueueSource(item)
           || (item.sourceId !== undefined && (typeof item.sourceId !== 'string' || !/^[A-Za-z0-9_-]{11}$/.test(item.sourceId)))
           || (item.sourceUrl !== undefined && (typeof item.sourceUrl !== 'string' || item.sourceUrl.length > 4096))
           || (item.duration !== undefined && (!Number.isFinite(item.duration) || item.duration < 0)))) {
@@ -604,7 +636,7 @@ export default async function handler(req, res) {
         || (body.name !== undefined && typeof body.name !== 'string')
         || (body.artist !== undefined && typeof body.artist !== 'string')
         || (body.audioUrl !== undefined && typeof body.audioUrl !== 'string')
-        || (body.sourceType !== undefined && !['youtube', 'local-file'].includes(body.sourceType))
+        || !isValidRoomQueueSource(body)
         || (body.sourceId !== undefined && (typeof body.sourceId !== 'string' || !/^[A-Za-z0-9_-]{11}$/.test(body.sourceId)))
         || (body.sourceUrl !== undefined && (typeof body.sourceUrl !== 'string' || body.sourceUrl.length > 4096))
         || (body.duration !== undefined && (!Number.isFinite(body.duration) || body.duration < 0))) {

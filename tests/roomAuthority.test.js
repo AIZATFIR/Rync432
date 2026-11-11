@@ -671,6 +671,76 @@ describe('room authority', () => {
     expect(invalid.statusCode).toBe(400);
   });
 
+  it('accepts supported direct and public audio sources in a room queue', async () => {
+    const roomId = `U${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+
+    const added = await callRoom('add_queue', {
+      roomId,
+      peerId: 'host-peer',
+      items: [
+        { id: 'direct-track', name: 'Direct Track', sourceType: 'direct-url', audioUrl: 'https://audio.example/song.mp3' },
+        { id: 'public-track', name: 'Public Track', sourceType: 'public-audio', audioUrl: '/sample.wav' }
+      ]
+    });
+
+    expect(added.statusCode).toBe(200);
+    expect(added.body.queue.map(item => item.sourceType)).toEqual(['direct-url', 'public-audio']);
+
+    const directItem = await callRoom('add_queue', {
+      roomId,
+      peerId: 'host-peer',
+      id: 'direct-single',
+      name: 'Single Direct Track',
+      sourceType: 'direct-url',
+      audioUrl: 'https://audio.example/single.mp3'
+    });
+    expect(directItem.statusCode).toBe(200);
+    expect(directItem.body.queue.at(-1)).toMatchObject({ id: 'direct-single', sourceType: 'direct-url' });
+
+    const played = await callRoom('play_queue_item', {
+      roomId,
+      peerId: 'host-peer',
+      hostToken: created.body.hostToken,
+      queueId: 'direct-single'
+    });
+    expect(played.statusCode).toBe(200);
+    expect(played.body.track).toMatchObject({ id: 'direct-single', sourceType: 'direct-url' });
+  });
+
+  it('rejects unsafe audio URLs for shared direct sources', async () => {
+    const roomId = `V${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+
+    for (const [id, audioUrl] of [
+      ['unsafe-scheme', 'javascript:alert(1)'],
+      ['local-ip', 'http://127.0.0.1/audio.mp3'],
+      ['credentials', 'https://user:pass@audio.example/song.mp3']
+    ]) {
+      const rejected = await callRoom('add_queue', {
+        roomId,
+        peerId: 'host-peer',
+        id,
+        name: 'Unsafe Track',
+        sourceType: 'direct-url',
+        audioUrl
+      });
+
+      expect(rejected.statusCode).toBe(400);
+      expect(rejected.body.error).toBe('INVALID_QUEUE_ITEM');
+    }
+
+    const rejectedSnapshot = await callRoom('poll', {
+      roomId,
+      peerId: 'host-peer',
+      hostToken: created.body.hostToken,
+      queueRevision: 0,
+      queue: [{ id: 'unsafe-snapshot', sourceType: 'direct-url', audioUrl: 'javascript:alert(1)' }]
+    });
+    expect(rejectedSnapshot.statusCode).toBe(400);
+    expect(rejectedSnapshot.body.error).toBe('INVALID_QUEUE_ITEMS');
+  });
+
   it('prevents a room member from changing another peer device state', async () => {
     const roomId = `M${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
     await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
