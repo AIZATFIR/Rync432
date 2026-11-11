@@ -342,6 +342,19 @@ describe('room authority', () => {
     }
   });
 
+  it('repeats a single item in shuffle mode when repeat-all is enabled', async () => {
+    const roomId = `U${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [{ id: 'only', name: 'Only' }] });
+    await callRoom('track', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, track: { id: 'only', name: 'Only' } });
+    await callRoom('playback_options', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, repeatMode: 'all', shuffle: true });
+
+    const result = await callRoom('next_track', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken });
+
+    expect(result.body.track.id).toBe('only');
+    expect(result.body.state).toBe('PLAYING');
+  });
+
   it('restricts shared playback options to the authenticated host', async () => {
     const roomId = `T${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
     await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
