@@ -49,9 +49,8 @@ describe('YouTube search queue UI', () => {
     expect(ui.renderQueue).toHaveBeenCalledWith(ui.soloQueue);
   });
 
-  it('starts YouTube room playback without waiting for queue acknowledgement or AudioContext', async () => {
-    let acknowledgeQueue;
-    const itemPromise = new Promise(resolve => { acknowledgeQueue = resolve; });
+  it('requests host playback without starting a second local player or waiting for room queue sync', async () => {
+    const itemPromise = new Promise(() => {});
     const player = { setVolume: vi.fn(), playAt: vi.fn().mockResolvedValue(undefined) };
     const socketClient = {
       roomId: 'ROOM', isHost: true,
@@ -64,14 +63,33 @@ describe('YouTube search queue UI', () => {
     ui.updateTrackUI = vi.fn();
     ui.setPlayState = vi.fn();
 
-    const play = ui.streamAudioFromUrl('https://youtu.be/dQw4w9WgXcQ', 'Song', 'Artist', 180);
+    const item = await ui.streamAudioFromUrl('https://youtu.be/dQw4w9WgXcQ', 'Song', 'Artist', 180);
 
     expect(audioEngine.ensureContext).not.toHaveBeenCalled();
     expect(socketClient.addToQueue).toHaveBeenCalledOnce();
     expect(socketClient.playQueueItem).toHaveBeenCalledWith('yt_dQw4w9WgXcQ', true);
-    expect(player.playAt).toHaveBeenCalledWith('dQw4w9WgXcQ', expect.any(Number), 0);
-    acknowledgeQueue(true);
-    await play;
+    expect(player.playAt).not.toHaveBeenCalled();
+    expect(item.id).toBe('yt_dQw4w9WgXcQ');
+  });
+
+  it('lets guests request YouTube room playback without starting the host-only player locally', async () => {
+    const player = { setVolume: vi.fn(), playAt: vi.fn() };
+    const socketClient = {
+      roomId: 'ROOM', isHost: false,
+      cloudMesh: { lastKnownTrack: null },
+      addToQueue: vi.fn().mockResolvedValue(true),
+      requestControl: vi.fn()
+    };
+    const ui = new UIManager({ socketClient, audioEngine: { volume: 0.5 }, youtubePlayer: player });
+    ui.updateTrackUI = vi.fn();
+    ui.setPlayState = vi.fn();
+
+    await ui.streamAudioFromUrl('https://youtu.be/dQw4w9WgXcQ', 'Song');
+
+    expect(socketClient.requestControl).toHaveBeenCalledWith('play_queue_item', {
+      queueId: 'yt_dQw4w9WgXcQ', name: 'Song'
+    });
+    expect(player.playAt).not.toHaveBeenCalled();
   });
 
   it('starts a selected solo YouTube track in the official player', async () => {

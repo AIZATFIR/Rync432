@@ -1274,13 +1274,13 @@ export class UIManager {
     } else {
       this.app.socketClient.requestControl('play_queue_item', { queueId: item.id, name: item.name });
     }
-    this.app.youtubePlayer?.setVolume(this.app.audioEngine.volume);
-    this.app.youtubePlayer?.playAt(item.sourceId, Date.now() + 50, 0)
-      .catch(() => this.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Coba lagi.'));
-    this.setPlayState(true);
     this.updateTrackUI(item.name, item.duration, item.thumbnail);
-    const synced = await queueSync;
-    if (synced === false) this.showUrlFeedback('Lagu diputar di perangkat ini, tetapi antrean room belum tersinkron.', 'error');
+    this.setYouTubePlayerVisible(true);
+    if (this.app.socketClient.isHost) this.setYouTubePlayerStatus('Menyiapkan pemutaran room…');
+    else this.setYouTubePlayerStatus('Meminta host memutar lagu…');
+    queueSync.then(synced => {
+      if (synced === false) this.showUrlFeedback('Lagu diputar di perangkat ini, tetapi antrean room belum tersinkron.', 'error');
+    }).catch(() => this.showUrlFeedback('Lagu diputar, tetapi antrean room belum tersinkron.', 'error'));
     return item;
   }
 
