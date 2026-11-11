@@ -33,11 +33,12 @@ function loadIframeApi() {
 }
 
 export class YouTubeEmbedPlayer {
-  constructor(elementId, { onStateChange = () => {}, onError = () => {}, onAutoplayBlocked = () => {} } = {}) {
+  constructor(elementId, { onStateChange = () => {}, onError = () => {}, onAutoplayBlocked = () => {}, clockSync = null } = {}) {
     this.elementId = elementId;
     this.onStateChange = onStateChange;
     this.onError = onError;
     this.onAutoplayBlocked = onAutoplayBlocked;
+    this.clockSync = clockSync;
     this.player = null;
     this.readyPromise = null;
     this.videoId = null;
@@ -115,13 +116,16 @@ export class YouTubeEmbedPlayer {
       player.cueVideoById({ videoId, startSeconds: Math.max(0, Number(startSeconds) || 0) });
       this.videoId = videoId;
     }
-    if (Number.isFinite(targetServerTime) && targetServerTime > Date.now()) {
+    const targetLocalTime = Number.isFinite(targetServerTime)
+      ? this.clockSync?.toClientLocalTime?.(targetServerTime) ?? targetServerTime
+      : targetServerTime;
+    if (Number.isFinite(targetLocalTime) && targetLocalTime > Date.now()) {
       this.scheduledPlay = setTimeout(() => {
         if (requestId !== this.playRequestId) return;
         this.scheduledPlay = null;
         player.seekTo(Math.max(0, Number(startSeconds) || 0), true);
         player.playVideo();
-      }, targetServerTime - Date.now());
+      }, targetLocalTime - Date.now());
     } else {
       player.seekTo(Math.max(0, Number(startSeconds) || 0), true);
       player.playVideo();

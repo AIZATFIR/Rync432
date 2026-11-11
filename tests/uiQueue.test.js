@@ -1063,6 +1063,12 @@ describe('YouTube search queue UI', () => {
     expect(retry.disabled).toBe(false);
   });
 
+  it('uses the synchronized server clock for local YouTube start requests', () => {
+    const ui = new UIManager({ socketClient: { clockSync: { getServerTime: () => 10_000 } } });
+
+    expect(ui.getYouTubeTargetServerTime()).toBe(10_050);
+  });
+
   it('restores a retry action if YouTube playback fails again', async () => {
     const youtubePlayer = { destroy: vi.fn(), playAt: vi.fn().mockRejectedValue(new Error('timeout')) };
     const retry = { hidden: false, disabled: false, textContent: 'Coba lagi' };

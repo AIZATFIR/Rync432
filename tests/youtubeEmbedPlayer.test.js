@@ -113,6 +113,23 @@ describe('YouTube embedded player adapter', () => {
     expect(instances[0].calls.filter(call => call[0] === 'playVideo')).toHaveLength(1);
   });
 
+  it('converts the shared server start time to this device clock before scheduling', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    const instances = installFakePlayer();
+    const clockSync = { toClientLocalTime: vi.fn(serverTime => serverTime - 1000) };
+    const player = new YouTubeEmbedPlayer('youtubePlayerContainer', { clockSync });
+
+    await player.playAt('dQw4w9WgXcQ', 11_500, 0);
+
+    expect(clockSync.toClientLocalTime).toHaveBeenCalledWith(11_500);
+    expect(instances[0].calls).not.toContainEqual(['playVideo']);
+    vi.advanceTimersByTime(499);
+    expect(instances[0].calls).not.toContainEqual(['playVideo']);
+    vi.advanceTimersByTime(1);
+    expect(instances[0].calls).toContainEqual(['playVideo']);
+  });
+
   it('cancels an old scheduled start when a new track must play immediately', async () => {
     vi.useFakeTimers();
     const instances = installFakePlayer();

@@ -34,6 +34,7 @@ class App {
     this.uiManager = new UIManager(this);
     this.uiManager.init();
     this.youtubePlayer = new YouTubeEmbedPlayer('youtubePlayerContainer', {
+      clockSync: this.socketClient.clockSync,
       onStateChange: (state, player) => this.handleYouTubePlayerState(state, player),
       onError: code => this.handleYouTubePlayerError(code),
       onAutoplayBlocked: () => {
@@ -119,7 +120,7 @@ class App {
       if (this.socketClient?.roomId && this.socketClient.isHost) this.uiManager.goToNextTrack({ automatic: true });
       else if (!this.socketClient?.roomId && this.uiManager.repeatMode === 'one' && this.uiManager.currentTrack?.sourceId) {
         this.audioEngine.pauseOffsetSec = 0;
-        this.youtubePlayer.playAt(this.uiManager.currentTrack.sourceId, Date.now() + 50, 0)
+        this.youtubePlayer.playAt(this.uiManager.currentTrack.sourceId, this.socketClient.clockSync.getServerTime() + 50, 0)
           .catch(() => this.uiManager.setYouTubePlayerStatus('Tekan Play di player YouTube untuk mulai.'));
       } else if (!this.socketClient?.roomId) this.uiManager.goToNextTrack();
     }
