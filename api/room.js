@@ -5,6 +5,7 @@ import { createRoomPersistence, ROOM_TTL_MS } from './roomPersistence.js';
 // Supports Multi-Device Sync, Binary Audio Relay, Democratic Queue, and WebRTC
 
 const MAX_ROOM_PEERS = 5;
+const AUDIO_ROUTES = new Set(['unknown', 'p2p', 'relay', 'direct', 'youtube', 'local', 'cache']);
 const HOST_STALE_MS = 10_000;
 const MAX_QUEUE_ITEMS = 500;
 const MAX_SIGNAL_BYTES = 64 * 1024;
@@ -296,6 +297,7 @@ export default async function handler(req, res) {
           id: peerId,
           deviceName,
           readiness: 'READY',
+          audioRoute: 'unknown',
           isAudioLoading: false,
           isHost: true,
           role: 'stereo',
@@ -337,6 +339,7 @@ export default async function handler(req, res) {
       deviceName,
       isHost: isReturningHost,
       readiness: 'PREPARING',
+      audioRoute: 'unknown',
       isAudioLoading: true,
       role: 'stereo',
       volume: 1.0,
@@ -914,6 +917,9 @@ export default async function handler(req, res) {
       return res.status(403).json({ success: false, error: 'ROOM_MEMBER_REQUIRED' });
     }
     if (targetPeerId !== peerId && !requireHost(room, body.hostToken)) return;
+    if (body.audioRoute !== undefined && !AUDIO_ROUTES.has(body.audioRoute)) {
+      return res.status(400).json({ success: false, error: 'INVALID_AUDIO_ROUTE' });
+    }
     if (room && room.peers[targetPeerId]) {
       if (body.readiness !== undefined && !['PREPARING', 'READY', 'FAILED', 'AUTOPLAY_BLOCKED'].includes(body.readiness)) {
         return res.status(400).json({ success: false, error: 'INVALID_PEER_READINESS' });
@@ -930,6 +936,7 @@ export default async function handler(req, res) {
           : body.isAudioLoading;
       }
       if (body.loadingStatus !== undefined) room.peers[targetPeerId].loadingStatus = body.loadingStatus;
+      if (body.audioRoute !== undefined) room.peers[targetPeerId].audioRoute = body.audioRoute;
       if (body.readiness !== undefined) {
         room.peers[targetPeerId].readiness = body.readiness;
         room.peers[targetPeerId].isAudioLoading = body.readiness === 'PREPARING';

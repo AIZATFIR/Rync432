@@ -94,8 +94,19 @@ describe('CloudMesh audio transfer', () => {
 
     mesh.loadTrackBuffer({ id: 'demo-synth', name: 'Neon Groove Synthwave', isSynthetic: true });
 
-    expect(mesh.broadcastReadiness).toHaveBeenLastCalledWith('READY', 'demo-synth');
+    expect(mesh.broadcastReadiness).toHaveBeenLastCalledWith('READY', 'demo-synth', 'local');
     expect(events).toContainEqual(expect.objectContaining({ type: 'SYNTHETIC_TRACK_REQUESTED' }));
+  });
+
+  it('reports local cache instead of the old network route when a track is reused', async () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.broadcastReadiness = vi.fn();
+    mesh.localAudioBufferCache.set('track-1', new ArrayBuffer(4));
+    mesh.audioRouteByTrack.set('track-1', 'relay');
+
+    await mesh.loadTrackBuffer({ id: 'track-1', name: 'Track' });
+
+    expect(mesh.broadcastReadiness).toHaveBeenLastCalledWith('READY', 'track-1', 'cache');
   });
 
   it('creates a fresh room with an empty authoritative queue', async () => {
@@ -122,12 +133,13 @@ describe('CloudMesh audio transfer', () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
     vi.stubGlobal('fetch', fetchMock);
 
-    mesh.broadcastReadiness('PREPARING', 'track');
-    mesh.broadcastReadiness('READY', 'track');
+    mesh.broadcastReadiness('PREPARING', 'track', 'relay');
+    mesh.broadcastReadiness('READY', 'track', 'p2p');
     await mesh.readinessSync;
 
     expect(fetchMock.mock.calls.map(([, options]) => JSON.parse(options.body).readiness)).toEqual(['PREPARING', 'READY']);
-    expect(mesh.localPeersMap.get('peer')).toMatchObject({ readiness: 'READY', isAudioLoading: false });
+    expect(fetchMock.mock.calls.map(([, options]) => JSON.parse(options.body).audioRoute)).toEqual(['relay', 'p2p']);
+    expect(mesh.localPeersMap.get('peer')).toMatchObject({ readiness: 'READY', isAudioLoading: false, audioRoute: 'p2p' });
   });
 
   it('keeps YouTube source metadata in the optimistic and server queue mutation', async () => {
@@ -210,6 +222,18 @@ describe('CloudMesh audio transfer', () => {
       type: 'AUDIO_TRANSFER_PROGRESS',
       payload: expect.objectContaining({ status: 'Menunggu audio...' })
     }));
+  });
+
+  it('reports the server relay as the route after a room audio download completes', async () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.broadcastReadiness = vi.fn();
+    mesh.updateLoadingState = vi.fn();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(new Uint8Array([1, 2, 3]))));
+
+    await mesh.fetchRemoteAudioUrl('/api/room?action=get_audio&audioId=audio-1', 'Track', 'track-1');
+
+    expect(mesh.broadcastReadiness).toHaveBeenLastCalledWith('READY', 'track-1', 'relay');
+    expect(mesh.audioRouteByTrack.get('track-1')).toBe('relay');
   });
 
   it('authenticates host updates to a remote speaker', async () => {
@@ -724,6 +748,7 @@ describe('CloudMesh audio transfer', () => {
     await expect(sender.streamAudioToPeer(senderChannel, new Uint8Array([7, 8, 9]).buffer, 'Track', 'track-1')).resolves.toBe(true);
 
     expect(new Uint8Array(received.find(event => event.type === 'BINARY_AUDIO_RECEIVED').payload.arrayBuffer)).toEqual(new Uint8Array([7, 8, 9]));
+    expect(receiver.audioRouteByTrack.get('track-1')).toBe('p2p');
   });
 
   it('falls back when the P2P receiver does not acknowledge a completed send', async () => {

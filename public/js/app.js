@@ -30,7 +30,7 @@ class App {
       onError: code => this.handleYouTubePlayerError(code),
       onAutoplayBlocked: () => {
         this.uiManager.setYouTubePlayerStatus('Tekan Play di player YouTube untuk mengizinkan audio di perangkat ini.');
-        this.socketClient.cloudMesh.broadcastReadiness('AUTOPLAY_BLOCKED', this.uiManager.currentTrack?.id || '');
+        this.socketClient.cloudMesh.broadcastReadiness('AUTOPLAY_BLOCKED', this.uiManager.currentTrack?.id || '', 'youtube');
       }
     });
 
@@ -95,10 +95,10 @@ class App {
       }
       this.audioEngine.pauseOffsetSec = player?.getCurrentTime?.() || 0;
       this.uiManager.setYouTubePlayerStatus('');
-      this.socketClient.cloudMesh.broadcastReadiness('READY', this.uiManager.currentTrack?.id || '');
+      this.socketClient.cloudMesh.broadcastReadiness('READY', this.uiManager.currentTrack?.id || '', 'youtube');
       this.uiManager.setPlayState(true);
     } else if (state === YT?.PlayerState?.CUED || state === 5) {
-      this.socketClient.cloudMesh.broadcastReadiness('READY', this.uiManager.currentTrack?.id || '');
+      this.socketClient.cloudMesh.broadcastReadiness('READY', this.uiManager.currentTrack?.id || '', 'youtube');
     } else if (state === YT?.PlayerState?.PAUSED || state === 2) {
       this.audioEngine.pauseOffsetSec = player?.getCurrentTime?.() || this.audioEngine.pauseOffsetSec;
       if (this.uiManager.isPlayingState) this.uiManager.setPlayState(false);
@@ -123,7 +123,7 @@ class App {
       153: 'Player YouTube tidak menerima identitas situs. Muat ulang halaman.'
     };
     this.uiManager.setPlayState(false);
-    this.socketClient?.cloudMesh?.broadcastReadiness('FAILED', this.uiManager.currentTrack?.id || '');
+    this.socketClient?.cloudMesh?.broadcastReadiness('FAILED', this.uiManager.currentTrack?.id || '', 'youtube');
     this.uiManager.setYouTubePlayerStatus(messages[code] || 'Video YouTube gagal diputar. Coba video lain.');
   }
 
@@ -180,7 +180,7 @@ class App {
               payload.playbackState.startOffsetSec || 0
             ).catch(() => {
               uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.');
-              socketClient.cloudMesh.broadcastReadiness('FAILED', payload.currentTrack?.id || '');
+              socketClient.cloudMesh.broadcastReadiness('FAILED', payload.currentTrack?.id || '', 'youtube');
             });
           } else {
             audioEngine.schedulePlayAtServerTime(
@@ -215,7 +215,7 @@ class App {
             .then(() => uiManager.setYouTubePlayerStatus(''))
             .catch(() => {
               uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.');
-              socketClient.cloudMesh.broadcastReadiness('FAILED', payload.id || '');
+              socketClient.cloudMesh.broadcastReadiness('FAILED', payload.id || '', 'youtube');
             });
           break;
         }
@@ -223,7 +223,7 @@ class App {
           .then(() => uiManager.setYouTubePlayerStatus(''))
           .catch(() => {
             uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.');
-            socketClient.cloudMesh.broadcastReadiness('FAILED', payload.id || '');
+            socketClient.cloudMesh.broadcastReadiness('FAILED', payload.id || '', 'youtube');
           });
         break;
       }

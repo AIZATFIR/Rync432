@@ -9,6 +9,7 @@ const P2P_AUDIO_ACK_TIMEOUT_MS = 10_000;
 const P2P_AUDIO_BACKPRESSURE_TIMEOUT_MS = 15_000;
 const QUEUE_MUTATION_TIMEOUT_MS = 8_000;
 const ROOM_JOIN_TIMEOUT_MS = 8_000;
+const AUDIO_ROUTES = new Set(['unknown', 'p2p', 'relay', 'direct', 'youtube', 'local', 'cache']);
 
 async function fetchRoomJoin(url, options) {
   const controller = new AbortController();
@@ -105,6 +106,7 @@ export class CloudMesh {
     this.incomingAudioChunks = new Map();
     this.currentAudioArrayBuffer = null;
     this.localAudioBufferCache = new Map();
+    this.audioRouteByTrack = new Map();
     this.queueAdditionAcknowledgements = new Map();
     this.activeBufferTransfers = new WeakSet();
     this.pendingAudioTransferAcks = new Map();
@@ -374,6 +376,7 @@ export class CloudMesh {
                 latencyOffset: 0,
                 isAudioLoading: true,
                 readiness: 'PREPARING',
+                audioRoute: 'unknown',
                 lastSeen: Date.now()
               }
             });
@@ -486,6 +489,7 @@ export class CloudMesh {
                 const p = this.localPeersMap.get(msg.peerId);
                 p.readiness = msg.readiness || 'READY';
                 p.isAudioLoading = (msg.readiness === 'PREPARING');
+                if (AUDIO_ROUTES.has(msg.audioRoute)) p.audioRoute = msg.audioRoute;
                 this.dispatchLocalPeers();
               }
               break;
@@ -540,6 +544,7 @@ export class CloudMesh {
       latencyOffset: 0,
       isAudioLoading: true,
       readiness: 'PREPARING',
+      audioRoute: 'unknown',
       lastSeen: Date.now()
     });
 
@@ -585,6 +590,7 @@ export class CloudMesh {
             const p = this.localPeersMap.get(msg.peerId);
             p.readiness = msg.readiness || 'READY';
             p.isAudioLoading = (msg.readiness === 'PREPARING');
+            if (AUDIO_ROUTES.has(msg.audioRoute)) p.audioRoute = msg.audioRoute;
             this.dispatchLocalPeers();
           }
           break;
@@ -753,9 +759,10 @@ export class CloudMesh {
               p.isAudioLoading = existing.isAudioLoading;
               p.readiness = existing.readiness;
               p.loadingStatus = existing.loadingStatus;
+              p.audioRoute = existing.audioRoute || p.audioRoute || 'unknown';
             }
           }
-          if (!existing || existing.role !== p.role || existing.isAudioLoading !== p.isAudioLoading || existing.readiness !== p.readiness || existing.volume !== p.volume || existing.isHost !== p.isHost || existing.deviceName !== p.deviceName) {
+          if (!existing || existing.role !== p.role || existing.isAudioLoading !== p.isAudioLoading || existing.readiness !== p.readiness || existing.audioRoute !== p.audioRoute || existing.volume !== p.volume || existing.isHost !== p.isHost || existing.deviceName !== p.deviceName) {
             peersChanged = true;
           }
           this.localPeersMap.set(p.id, p);
@@ -876,11 +883,14 @@ export class CloudMesh {
 
   async loadTrackBuffer(track) {
     if (!track) return;
-    this.broadcastReadiness('PREPARING', track.id || youtubeVideoId(track) || '');
+    const trackId = track.id || youtubeVideoId(track) || '';
+    const trackKey = trackId || track.audioId || track.name;
+    this.broadcastReadiness('PREPARING', trackId, 'unknown');
     if (track.isSynthetic || track.name === 'Neon Groove Synthwave' || (track.name && track.name.toLowerCase().includes('synth'))) {
       this.currentFetchingTrackKey = null;
       this.updateLoadingState(false, 'Siap');
-      this.broadcastReadiness('READY', track.id || '');
+      this.audioRouteByTrack.set(trackKey, 'local');
+      this.broadcastReadiness('READY', trackId, 'local');
       this.onEvent('SYNTHETIC_TRACK_REQUESTED', track);
       return;
     }
@@ -892,11 +902,11 @@ export class CloudMesh {
       this.currentFetchingTrackKey = null;
       this.pendingTrackBufferRequest = null;
       this.updateLoadingState(false, 'Siap');
+      this.audioRouteByTrack.set(trackKey, 'youtube');
       this.onEvent('YOUTUBE_TRACK_REQUESTED', track);
       return;
     }
 
-    const trackKey = track.id || track.audioId || track.name;
     const cached = this.localAudioBufferCache.get(track.id)
       || (track.audioId && this.localAudioBufferCache.get(track.audioId))
       || (track.audioUrl && this.localAudioBufferCache.get(track.audioUrl))
@@ -909,7 +919,8 @@ export class CloudMesh {
       if (track.id) this.localAudioBufferCache.set(track.id, cached);
       if (track.name) this.localAudioBufferCache.set(track.name, cached);
       this.updateLoadingState(false, 'Siap');
-      this.broadcastReadiness('READY', track.id || '');
+      this.audioRouteByTrack.set(trackKey, 'cache');
+      this.broadcastReadiness('READY', trackId, 'cache');
       this.onEvent('BINARY_AUDIO_RECEIVED', { arrayBuffer: cached, trackName: track.name, trackId: track.id });
       return;
     }
@@ -1610,6 +1621,8 @@ export class CloudMesh {
     }
     this.activeAudioAbortController = new AbortController();
     const signal = this.activeAudioAbortController.signal;
+    const audioRoute = url.startsWith('/api/') ? 'relay' : 'direct';
+    this.broadcastReadiness('PREPARING', trackId, audioRoute);
     let timedOut = false;
     const timeout = setTimeout(() => {
       timedOut = true;
@@ -1687,16 +1700,18 @@ export class CloudMesh {
       if (trackId) this.localAudioBufferCache.set(trackId, arrayBuffer);
       this.localAudioBufferCache.set(url, arrayBuffer);
       this.currentAudioArrayBuffer = arrayBuffer;
+      this.audioRouteByTrack.set(trackId || trackName, audioRoute);
 
       this.currentFetchingTrackKey = null;
       this.pendingTrackBufferRequest = null;
       this.updateLoadingState(false, 'Siap');
-      this.broadcastReadiness('READY', trackId);
+      this.broadcastReadiness('READY', trackId, audioRoute);
       this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 100, status: 'Audio siap!' });
       this.onEvent('BINARY_AUDIO_RECEIVED', { arrayBuffer, trackName, trackId });
     } catch (err) {
       if (signal.aborted && !timedOut) return;
       this.currentFetchingTrackKey = null;
+      this.broadcastReadiness('PREPARING', trackId, 'unknown');
       console.warn('Remote fetch notice, awaiting WebRTC stream:', err.message);
       if (!this.incomingAudioChunks.size) {
         this.updateLoadingState(true, 'Menunggu audio...');
@@ -1710,12 +1725,13 @@ export class CloudMesh {
     }
   }
 
-  broadcastReadiness(readiness = 'READY', trackId = '') {
+  broadcastReadiness(readiness = 'READY', trackId = '', audioRoute) {
     const me = this.localPeersMap.get(this.peerId);
     if (me) {
       me.readiness = readiness;
       me.isAudioLoading = readiness === 'PREPARING';
       me.loadingStatus = readiness === 'PREPARING' ? 'Menyiapkan audio…' : readiness.toLowerCase();
+      if (AUDIO_ROUTES.has(audioRoute)) me.audioRoute = audioRoute;
       this.dispatchLocalPeers();
     }
 
@@ -1723,7 +1739,8 @@ export class CloudMesh {
       type: 'PEER_READINESS',
       peerId: this.peerId,
       readiness,
-      trackId
+      trackId,
+      ...(AUDIO_ROUTES.has(audioRoute) ? { audioRoute } : {})
     };
 
     this.publishMqtt(this.roomTopic, payload);
@@ -1739,7 +1756,7 @@ export class CloudMesh {
         return fetch('/api/room?action=update_peer', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ roomId, peerId, readiness, trackId })
+          body: JSON.stringify({ roomId, peerId, readiness, trackId, ...(AUDIO_ROUTES.has(audioRoute) ? { audioRoute } : {}) })
         });
       }).catch(() => {});
     }
@@ -1995,6 +2012,7 @@ export class CloudMesh {
             };
             transfer.resetTimeout();
             this.incomingAudioChunks.set(targetPeerId, transfer);
+            this.broadcastReadiness('PREPARING', msg.id || '', 'p2p');
             this.updateLoadingState(true, `Menerima ${msg.name}...`);
             this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status: `Menerima ${msg.name} P2P...` });
           } else if (msg.type === 'AUDIO_TRANSFER_ACK') {
@@ -2034,6 +2052,7 @@ export class CloudMesh {
               const p = this.localPeersMap.get(msg.peerId);
               p.readiness = msg.readiness || 'READY';
               p.isAudioLoading = (msg.readiness === 'PREPARING');
+              if (AUDIO_ROUTES.has(msg.audioRoute)) p.audioRoute = msg.audioRoute;
               this.dispatchLocalPeers();
             }
           } else if (msg.type === 'REQUEST_AUDIO_BUFFER') {
@@ -2109,9 +2128,10 @@ export class CloudMesh {
             this.localAudioBufferCache.set(trackName, completeBuffer.buffer);
             if (trackId) this.localAudioBufferCache.set(trackId, completeBuffer.buffer);
             this.currentAudioArrayBuffer = completeBuffer.buffer;
+            this.audioRouteByTrack.set(trackId || trackName, 'p2p');
 
             this.updateLoadingState(false, 'Siap');
-            this.broadcastReadiness('READY', trackId);
+            this.broadcastReadiness('READY', trackId, 'p2p');
             this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 100, status: 'Audio P2P Siap!' });
             this.onEvent('BINARY_AUDIO_RECEIVED', {
               arrayBuffer: completeBuffer.buffer,

@@ -16,6 +16,20 @@ async function callRoom(action, body) {
 }
 
 describe('room authority', () => {
+  it('stores only validated audio routes for room peers', async () => {
+    const roomId = `A${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
+
+    const updated = await callRoom('update_peer', { roomId, peerId: 'guest-peer', audioRoute: 'p2p' });
+    const invalid = await callRoom('update_peer', { roomId, peerId: 'guest-peer', audioRoute: '<img onerror=1>' });
+    const polled = await callRoom('poll', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken });
+
+    expect(updated.statusCode).toBe(200);
+    expect(invalid.statusCode).toBe(400);
+    expect(polled.body.peers.find(peer => peer.id === 'guest-peer').audioRoute).toBe('p2p');
+  });
+
   it('ignores participant poll data as authoritative room state', async () => {
     const roomId = `A${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
     await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
