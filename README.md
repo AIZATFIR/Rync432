@@ -45,6 +45,8 @@ npm start
 
 - Buka `http://localhost:3000` di laptop/PC Host (Master).
 - Buka `http://<IP-Lokal-WiFi>:3000` dari smartphone lain di jaringan Wi-Fi yang sama untuk langsung sinkron!
+- Server Node menyimpan room dan queue di `data/rooms.json` (TTL 3 jam). Simpan folder `data/` pada disk persisten homeserver dan sertakan di backup; room ini tidak dipersist di deployment Vercel/serverless.
+- Lokasi store dapat diganti dengan `RYNC_ROOM_STORE_PATH=/path/yang/persisten/rooms.json`. File dibuat dengan permission `0600`; peer aktif dan sinyal WebRTC harus tersambung ulang setelah restart.
 
 ---
 

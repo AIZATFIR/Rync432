@@ -1,0 +1,84 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import os from 'node:os';
+import path from 'node:path';
+import { pathToFileURL, fileURLToPath } from 'node:url';
+import { createRoomPersistence } from '../api/roomPersistence.js';
+
+describe('room persistence', () => {
+  let directory;
+
+  afterEach(async () => {
+    if (directory) await rm(directory, { recursive: true, force: true });
+    directory = null;
+  });
+
+  it('restores authoritative room state after restart without restoring stale peers or signals', async () => {
+    directory = await mkdtemp(path.join(os.tmpdir(), 'rync-room-store-'));
+    const filePath = path.join(directory, 'rooms.json');
+    const persistence = createRoomPersistence(filePath);
+    const room = {
+      roomId: 'ABCD', hostId: 'host-peer', hostTokenHash: 'secret-hash',
+      state: 'PLAYING', track: { id: 'track-a' }, queue: [{ id: 'track-a' }],
+      targetServerTime: 123, startOffsetSec: 5, updatedAt: Date.now(),
+      peers: { 'host-peer': { id: 'host-peer', isHost: true } },
+      signals: [{ to: 'host-peer', data: { type: 'offer' } }]
+    };
+
+    persistence.save(new Map([['ABCD', room]]));
+    const restored = createRoomPersistence(filePath).load().get('ABCD');
+    const fileStats = await stat(filePath);
+
+    expect(restored).toMatchObject({
+      roomId: 'ABCD', hostTokenHash: 'secret-hash', state: 'PLAYING',
+      track: { id: 'track-a' }, queue: [{ id: 'track-a' }], targetServerTime: 123
+    });
+    expect(restored.peers).toEqual({});
+    expect(restored.signals).toEqual([]);
+    expect(fileStats.mode & 0o777).toBe(0o600);
+  });
+
+  it('drops rooms older than the room TTL when loading persisted state', async () => {
+    directory = await mkdtemp(path.join(os.tmpdir(), 'rync-room-store-'));
+    const filePath = path.join(directory, 'rooms.json');
+    const now = Date.now();
+    const persistence = createRoomPersistence(filePath, { now: () => now });
+    persistence.save(new Map([['OLD1', { roomId: 'OLD1', updatedAt: now - 3 * 60 * 60 * 1000 - 1 }]]));
+
+    expect(createRoomPersistence(filePath, { now: () => now }).load().has('OLD1')).toBe(false);
+  });
+
+  it('restores a room and queue through the API in a fresh server process', async () => {
+    directory = await mkdtemp(path.join(os.tmpdir(), 'rync-room-restart-'));
+    const filePath = path.join(directory, 'rooms.json');
+    const moduleUrl = pathToFileURL(fileURLToPath(new URL('../api/room.js', import.meta.url))).href;
+    const environment = { ...process.env, NODE_ENV: 'development', RYNC_ROOM_STORE_PATH: filePath };
+    const setupScript = `
+      import handler from ${JSON.stringify(moduleUrl)};
+      async function call(action, body) {
+        let statusCode = 0; let payload;
+        const res = { setHeader() {}, status(code) { statusCode = code; return this; }, json(value) { payload = value; return this; } };
+        await handler({ method: 'POST', query: { action }, body }, res);
+        if (statusCode >= 400) throw new Error(payload?.error || String(statusCode));
+        return payload;
+      }
+      const created = await call('create', { roomId: 'AB12', peerId: 'host', deviceName: 'Host' });
+      await call('add_queue', { roomId: 'AB12', peerId: 'host', id: 'song-1', name: 'Song One' });
+      await call('track', { roomId: 'AB12', peerId: 'host', hostToken: created.hostToken, track: { id: 'song-1', name: 'Song One' } });
+      console.log('saved');
+    `;
+    const readScript = `
+      import handler from ${JSON.stringify(moduleUrl)};
+      let payload;
+      const res = { setHeader() {}, status() { return this; }, json(value) { payload = value; return this; } };
+      await handler({ method: 'POST', query: { action: 'join' }, body: { roomId: 'AB12', peerId: 'guest', deviceName: 'Guest' } }, res);
+      console.log(JSON.stringify({ queue: payload.room.queue, track: payload.room.track }));
+    `;
+
+    expect(execFileSync(process.execPath, ['--input-type=module', '-e', setupScript], { env: environment, encoding: 'utf8' }).trim()).toBe('saved');
+    const restored = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', readScript], { env: environment, encoding: 'utf8' }));
+    expect(restored.queue).toEqual([expect.objectContaining({ id: 'song-1', name: 'Song One' })]);
+    expect(restored.track).toEqual({ id: 'song-1', name: 'Song One' });
+  });
+});

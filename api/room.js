@@ -1,8 +1,14 @@
 // Serverless In-Memory & Edge Room Mesh Relay for Rync432
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import path from 'node:path';
+import { createRoomPersistence, ROOM_TTL_MS } from './roomPersistence.js';
 // Supports Multi-Device Sync, Binary Audio Relay, Democratic Queue, and WebRTC
 
-const rooms = globalThis.__rync_rooms || new Map();
+const roomStorePath = !process.env.VERCEL && process.env.NODE_ENV !== 'test'
+  ? (process.env.RYNC_ROOM_STORE_PATH || path.join(process.cwd(), 'data', 'rooms.json'))
+  : null;
+const roomPersistence = roomStorePath ? createRoomPersistence(roomStorePath) : null;
+const rooms = globalThis.__rync_rooms || roomPersistence?.load() || new Map();
 const audioStore = globalThis.__rync_audio_store || new Map();
 globalThis.__rync_rooms = rooms;
 globalThis.__rync_audio_store = audioStore;
@@ -16,6 +22,20 @@ export const config = {
 };
 
 export default async function handler(req, res) {
+  const sendJson = typeof res.json === 'function' ? res.json.bind(res) : null;
+  if (roomPersistence && sendJson) {
+    res.json = payload => {
+      try {
+        roomPersistence.save(rooms);
+      } catch (error) {
+        console.error('Room state could not be saved to disk');
+        res.status(507);
+        return sendJson({ success: false, error: 'ROOM_STORAGE_UNAVAILABLE' });
+      }
+      return sendJson(payload);
+    };
+  }
+
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -56,9 +76,9 @@ export default async function handler(req, res) {
     return false;
   };
 
-  // Cleanup old inactive rooms & audio (> 3 hours)
+  // Cleanup old inactive rooms & audio after the documented room TTL.
   for (const [id, room] of rooms.entries()) {
-    if (now - (room.updatedAt || 0) > 3 * 3600 * 1000) {
+    if (now - (room.updatedAt || 0) > ROOM_TTL_MS) {
       rooms.delete(id);
       audioStore.delete(id);
     }
@@ -211,6 +231,7 @@ export default async function handler(req, res) {
   if (action === 'poll') {
     const room = rooms.get(roomId);
     if (!room) return res.status(404).json({ exists: false, error: 'ROOM_NOT_FOUND' });
+    if (now - (room.updatedAt || 0) > 5 * 60 * 1000) room.updatedAt = now;
     const claimsHost = hostTokenMatches(room, body.hostToken);
     const isThisHost = !!peerId && claimsHost;
     if (!isThisHost && room.peers?.[peerId]?.isHost) {
