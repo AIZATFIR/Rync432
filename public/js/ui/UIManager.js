@@ -88,6 +88,7 @@ export class UIManager {
   init() {
     this.elements = {
       connectionStatus: document.getElementById('connectionStatus'),
+      connectionStatusPill: document.getElementById('connectionStatusPill'),
       roomFeedback: document.getElementById('roomFeedback'),
       connectionDot: document.getElementById('connectionDot'),
       roomHeroSection: document.getElementById('roomHeroSection'),
@@ -2277,7 +2278,9 @@ export class UIManager {
 
   setConnectionState(state) {
     const labels = { CONNECTED: 'Online', RECONNECTING: 'Menyambungkan…', DISCONNECTED: 'Offline' };
-    if (this.elements.connectionStatus) this.elements.connectionStatus.innerText = labels[state] || labels.DISCONNECTED;
+    const label = labels[state] || labels.DISCONNECTED;
+    if (this.elements.connectionStatus) this.elements.connectionStatus.innerText = label;
+    this.elements.connectionStatusPill?.setAttribute('aria-label', `Status: ${label}`);
     this.elements.connectionDot?.classList.toggle('connected', state === 'CONNECTED');
     this.elements.connectionDot?.classList.toggle('reconnecting', state === 'RECONNECTING');
   }

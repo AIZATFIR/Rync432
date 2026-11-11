@@ -25,6 +25,24 @@ describe('Rync page structure', () => {
     expect(activeRoom).not.toContain('audioTuningSection');
     expect(settingsModal).toContain('audioTuningSection');
   });
+
+  it('keeps header labels compact at the narrowest supported viewport', () => {
+    const cssPath = fileURLToPath(new URL('../public/css/style.css', import.meta.url));
+    const css = readFileSync(cssPath, 'utf8');
+    const compactHeader = css.match(/@media \(max-width: 360px\) \{([\s\S]*?)\n\}/)?.[1] || '';
+
+    expect(compactHeader).toContain('#connectionStatus { display: none; }');
+    expect(compactHeader).toContain('.listen-together-button { width: 44px;');
+    expect(compactHeader).toContain('.status-pill { width: 32px;');
+  });
+
+  it('constrains the room code form to its action tile', () => {
+    const cssPath = fileURLToPath(new URL('../public/css/style.css', import.meta.url));
+    const css = readFileSync(cssPath, 'utf8');
+
+    expect(css).toContain('.action-tile > .spotify-input-wrap { width: 100%; min-width: 0; }');
+    expect(css).toContain('.room-code-input { min-width: 0; }');
+  });
 });
 
 describe('YouTube search queue UI', () => {
@@ -1470,11 +1488,13 @@ describe('YouTube search queue UI', () => {
   it('shows readable reconnecting, online, and offline connection states', () => {
     const dot = { classList: { toggle: vi.fn() } };
     const status = { innerText: '' };
+    const pill = { setAttribute: vi.fn() };
     const ui = new UIManager({});
-    ui.elements = { connectionStatus: status, connectionDot: dot };
+    ui.elements = { connectionStatus: status, connectionStatusPill: pill, connectionDot: dot };
 
     ui.setConnectionState('RECONNECTING');
     expect(status.innerText).toBe('Menyambungkan…');
+    expect(pill.setAttribute).toHaveBeenCalledWith('aria-label', 'Status: Menyambungkan…');
     expect(dot.classList.toggle).toHaveBeenCalledWith('reconnecting', true);
 
     ui.setConnectionState('CONNECTED');

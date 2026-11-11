@@ -271,6 +271,7 @@ body {
 }
 
 .spotify-input.room-code-input {
+  min-width: 0;
   text-transform: uppercase;
   font-weight: 700;
   letter-spacing: 2px;
@@ -2094,8 +2095,18 @@ body:not(.is-playing) .visualizer-container { display: none; }
 .listen-together-button:hover { border-color: var(--border-light); }
 .listen-together-button:active { transform: scale(0.97); }
 .listen-together-button:focus-visible { outline: 2px solid var(--spotify-green); outline-offset: 2px; }
+.action-tile > .spotify-input-wrap { width: 100%; min-width: 0; }
+.room-code-input { min-width: 0; }
 
 @media (max-width: 760px) {
   .listen-together-button { width: 44px; padding: 0; }
   .listen-together-button span { display: none; }
+}
+
+@media (max-width: 360px) {
+  .header-right { gap: 4px; }
+  .listen-together-button { width: 44px; }
+  .status-pill { width: 32px; min-height: 32px; justify-content: center; padding: 0; }
+  #connectionStatus { display: none; }
+  .user-profile-btn { min-width: 44px; min-height: 44px; justify-content: center; padding: 0; }
 }
