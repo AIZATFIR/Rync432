@@ -2498,6 +2498,14 @@ export class CloudMesh {
               try {
                 channel.send(JSON.stringify({ type: 'AUDIO_TRANSFER_ACK', id: trackId || '', success: true }));
               } catch (error) { }
+              if (this.isCurrentAudioTrack(trackId, trackName)) {
+                this.currentAudioArrayBuffer = completeBuffer.buffer;
+                this.currentFetchingTrackKey = null;
+                this.pendingTrackBufferRequest = null;
+                this.updateLoadingState(false, 'Siap');
+                this.broadcastReadiness('READY', trackId, this.audioRouteByTrack.get(trackKey) || 'cache');
+                this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 100, status: 'Audio siap!' });
+              }
               return;
             }
             this.audioRouteByTrack.set(trackKey, 'p2p');

@@ -1366,6 +1366,38 @@ describe('CloudMesh audio transfer', () => {
     expect(channel.sent.map(message => JSON.parse(message))).toContainEqual({ type: 'AUDIO_TRANSFER_ACK', id: 'track-1', success: true });
   });
 
+  it('finishes current-track readiness when a parallel fetch cached audio before P2P completes', () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    const track = { id: 'track-1', name: 'Track' };
+    const existingBuffer = new Uint8Array([4, 5, 6]).buffer;
+    mesh.lastKnownTrack = track;
+    mesh.pendingTrackBufferRequest = track;
+    mesh.currentFetchingTrackKey = track.id;
+    mesh.localAudioBufferCache.set(track.id, existingBuffer);
+    mesh.updateLoadingState = vi.fn();
+    mesh.broadcastReadiness = vi.fn();
+    const channel = makeChannel();
+    mesh.setupDataChannel('peer-2', channel);
+    channel.onopen();
+    channel.onmessage({ data: JSON.stringify({
+      type: 'AUDIO_HEADER', chunkProtocol: 1, name: track.name, id: track.id, totalBytes: 3, totalChunks: 1
+    }) });
+    channel.onmessage({ data: makeAudioChunkFrame(0, 1, [4, 5, 6]) });
+
+    expect(mesh.incomingAudioChunks.has('peer-2')).toBe(false);
+    expect(mesh.currentFetchingTrackKey).toBeNull();
+    expect(mesh.pendingTrackBufferRequest).toBeNull();
+    expect(mesh.updateLoadingState).toHaveBeenCalledWith(false, 'Siap');
+    expect(mesh.broadcastReadiness).toHaveBeenCalledWith('READY', track.id, 'cache');
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'AUDIO_TRANSFER_PROGRESS', payload: { pct: 100, status: 'Audio siap!' }
+    }));
+    expect(channel.sent.map(message => JSON.parse(message))).toContainEqual({
+      type: 'AUDIO_TRANSFER_ACK', id: track.id, success: true
+    });
+  });
+
   it('writes incoming framed chunks into one pre-sized buffer without retaining chunk arrays', () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
