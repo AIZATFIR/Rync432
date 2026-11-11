@@ -45,26 +45,42 @@ export class YouTubeSource {
     };
   }
 
-  async search(query) {
-    const trimmed = query.trim();
+  async search(query, { signal } = {}) {
+    const trimmed = typeof query === 'string' ? query.trim() : '';
     if (!trimmed) return [];
 
-    const resp = await fetch(`/api/yt-search?q=${encodeURIComponent(trimmed)}`);
-    if (!resp.ok) {
-      throw new Error(`SEARCH_FAILED: Gagal mencari lagu (${resp.status})`);
+    let resp;
+    let data;
+    try {
+      resp = await fetch(`/api/yt-search?q=${encodeURIComponent(trimmed)}`, { signal });
+      data = (await resp.json().catch(() => ({}))) || {};
+    } catch (error) {
+      if (error.name === 'AbortError') throw error;
+      const providerError = new Error('YouTube search is unavailable.');
+      providerError.code = 'PROVIDER_UNAVAILABLE';
+      providerError.retryable = true;
+      throw providerError;
     }
-    const data = await resp.json();
-    return (data.results || []).map(item => ({
-      id: `yt_${item.id}`,
-      title: item.title,
-      artist: item.channel,
-      duration: item.duration,
-      thumbnailUrl: item.thumbnail,
-      thumbnail: item.thumbnail,
-      sourceType: this.type,
-      sourceUrl: item.url,
-      sourceId: item.id,
-      sourceUrl: item.url
-    }));
+
+    if (!resp.ok) {
+      const error = new Error(data.error || `SEARCH_FAILED: Gagal mencari lagu (${resp.status})`);
+      error.code = data.error || 'PROVIDER_UNAVAILABLE';
+      error.retryable = data.retryable ?? (resp.status === 429 || resp.status >= 500);
+      throw error;
+    }
+
+    return (Array.isArray(data.results) ? data.results : [])
+      .filter(item => /^[A-Za-z0-9_-]{11}$/.test(item?.id || ''))
+      .map(item => ({
+        id: `yt_${item.id}`,
+        name: item.title || 'YouTube video',
+        artist: item.channel || 'YouTube channel',
+        duration: item.duration,
+        thumbnail: item.thumbnail,
+        durationText: item.durationText,
+        sourceType: this.type,
+        sourceId: item.id,
+        sourceUrl: item.url || `https://www.youtube.com/watch?v=${item.id}`
+      }));
   }
 }

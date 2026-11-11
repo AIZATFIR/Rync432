@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { MusicSourceManager } from '../public/js/music/MusicSourceManager.js';
 import { DirectUrlSource } from '../public/js/music/sources/DirectUrlSource.js';
 import { YouTubeSource } from '../public/js/music/sources/YouTubeSource.js';
@@ -7,6 +7,8 @@ import { LocalSource } from '../public/js/music/sources/LocalSource.js';
 import { SpotifySource } from '../public/js/music/sources/SpotifySource.js';
 import { AudioResolver } from '../public/js/music/AudioResolver.js';
 import { MusicSourceType } from '../public/js/music/types.js';
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe('Music Sources & Resolver Layer', () => {
   const manager = new MusicSourceManager();
@@ -48,6 +50,37 @@ describe('Music Sources & Resolver Layer', () => {
       expect(resolved.sourceType).toBe(MusicSourceType.YOUTUBE);
       expect(resolved.sourceId).toBe('dQw4w9WgXcQ');
       expect(resolved.sourceUrl).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    });
+
+    it('searches through the adapter with cancellation and normalized UI fields', async () => {
+      const signal = new AbortController().signal;
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ results: [{
+          id: 'dQw4w9WgXcQ', title: 'Song', channel: 'Artist', duration: 215,
+          durationText: '3:35', thumbnail: 'https://img.youtube.com/thumb.jpg',
+          url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+        }] })
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const results = await ytSource.search('ambient', { signal });
+
+      expect(fetchMock).toHaveBeenCalledWith('/api/yt-search?q=ambient', { signal });
+      expect(results).toEqual([expect.objectContaining({
+        id: 'yt_dQw4w9WgXcQ', name: 'Song', artist: 'Artist', duration: 215,
+        sourceType: MusicSourceType.YOUTUBE, sourceId: 'dQw4w9WgXcQ',
+        thumbnail: 'https://img.youtube.com/thumb.jpg',
+        sourceUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+      })]);
+    });
+
+    it('preserves structured provider errors and retryability', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: false, status: 429, json: async () => ({ error: 'RATE_LIMITED', retryable: true })
+      }));
+
+      await expect(ytSource.search('ambient')).rejects.toMatchObject({ code: 'RATE_LIMITED', retryable: true });
     });
   });
 

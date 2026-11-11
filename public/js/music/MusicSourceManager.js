@@ -73,10 +73,10 @@ export class MusicSourceManager {
    * @param {string} [sourceType=MusicSourceType.YOUTUBE]
    * @returns {Promise<Array<import('./types.js').MusicTrack>>}
    */
-  async search(query, sourceType = MusicSourceType.YOUTUBE) {
+  async search(query, sourceType = MusicSourceType.YOUTUBE, options = {}) {
     const source = this.getSource(sourceType);
     if (source && typeof source.search === 'function') {
-      return source.search(query);
+      return source.search(query, options);
     }
     return [];
   }

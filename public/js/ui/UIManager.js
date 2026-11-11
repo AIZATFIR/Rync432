@@ -2,6 +2,7 @@ import { firebaseAuth } from '../auth/FirebaseAuth.js';
 import { QRCodeGenerator } from './QRCodeGenerator.js';
 import { QRScanner } from './QRScanner.js';
 import { MusicSourceManager } from '../music/MusicSourceManager.js';
+import { MusicSourceType } from '../music/types.js';
 import { LocalLibrary } from '../library/LocalLibrary.js';
 
 const YOUTUBE_SEARCH_DEBOUNCE_MS = 250;
@@ -730,6 +731,10 @@ export class UIManager {
           ? 'Pencarian YouTube belum diatur di server.'
           : err.code === 'RATE_LIMITED'
             ? 'Kuota pencarian YouTube habis sementara. Coba lagi nanti.'
+            : err.code === 'PROVIDER_TIMEOUT'
+              ? 'Pencarian YouTube terlalu lama. Coba lagi.'
+              : err.code === 'PROVIDER_UNAVAILABLE'
+                ? 'YouTube sedang tidak tersedia. Coba lagi nanti.'
             : 'Pencarian gagal. Periksa koneksi lalu coba lagi.';
         this.renderSearchMessage(message, 'error');
       }
@@ -1064,14 +1069,7 @@ export class UIManager {
     }, 8000);
 
     try {
-      const response = await fetch(`/api/yt-search?q=${encodeURIComponent(query)}`, { signal: controller.signal });
-      const data = await response.json();
-      if (!response.ok) {
-        const error = new Error(`Search failed (${response.status})`);
-        error.code = data.error;
-        throw error;
-      }
-      const results = Array.isArray(data.results) ? data.results : [];
+      const results = await this.musicSourceManager.search(query, MusicSourceType.YOUTUBE, { signal: controller.signal });
       this.youtubeSearchCache.delete(cacheKey);
       this.youtubeSearchCache.set(cacheKey, { results, storedAt: Date.now() });
       while (this.youtubeSearchCache.size > 20) {
@@ -1081,7 +1079,11 @@ export class UIManager {
       return results;
     } catch (error) {
       if (signal?.aborted || (error.name === 'AbortError' && !timedOut)) throw error;
-      if (timedOut) error = new Error('Search timeout');
+      if (timedOut) {
+        error = new Error('Search timeout');
+        error.code = 'PROVIDER_TIMEOUT';
+        error.retryable = true;
+      }
       if (cached?.results?.length) {
         error.staleResults = [...cached.results];
         this.lastYoutubeSearchCacheState = 'stale';
@@ -1133,7 +1135,14 @@ export class UIManager {
 
     results.forEach((item) => {
       const rawThumb = item.thumbnail;
-      const videoId = /^[\w-]{11}$/.test(item.id || '') ? item.id : '';
+      const videoId = /^[\w-]{11}$/.test(item.sourceId || '')
+        ? item.sourceId
+        : item.id?.startsWith('yt_')
+          ? item.id.slice(3)
+          : /^[\w-]{11}$/.test(item.id || '') ? item.id : '';
+      const itemTitle = item.name || item.title || 'Untitled';
+      const itemArtist = item.artist || item.channel || 'YouTube';
+      const itemUrl = item.sourceUrl || item.url || `https://www.youtube.com/watch?v=${videoId}`;
       const thumbSrc = (rawThumb && rawThumb !== 'NA' && /^https:\/\//i.test(rawThumb))
         ? rawThumb
         : `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
@@ -1145,10 +1154,10 @@ export class UIManager {
       thumbnail.alt = 'Thumbnail';
       const title = document.createElement('div');
       title.className = 'yt-result-title';
-      title.textContent = item.title || 'Untitled';
+      title.textContent = itemTitle;
       const meta = document.createElement('div');
       meta.className = 'yt-result-meta';
-      meta.textContent = `${item.channel || 'YouTube'} • ${item.durationText || this.formatTime(item.duration)}`;
+      meta.textContent = `${itemArtist} • ${item.durationText || this.formatTime(item.duration)}`;
       const info = document.createElement('div');
       info.className = 'yt-result-info';
       info.appendChild(title);
@@ -1165,7 +1174,7 @@ export class UIManager {
       playButton.type = 'button';
       playButton.className = 'btn-spotify btn-spotify-dark play-yt-result-btn';
       playButton.textContent = 'Putar';
-      playButton.setAttribute('aria-label', `Putar ${item.title || 'video YouTube'}`);
+      playButton.setAttribute('aria-label', `Putar ${itemTitle}`);
       const actions = document.createElement('div');
       actions.className = 'yt-result-actions';
       actions.appendChild(playButton);
@@ -1184,7 +1193,7 @@ export class UIManager {
           queueBtn.style.backgroundColor = 'var(--spotify-green)';
           queueBtn.style.color = '#000';
           try {
-            await this.addYoutubeTrackToQueue(item.url, item.title, item.channel, item.duration, thumbSrc);
+            await this.addYoutubeTrackToQueue(itemUrl, itemTitle, itemArtist, item.duration, thumbSrc);
           } catch (error) {
             this.showUrlFeedback('Lagu gagal ditambahkan ke antrean. Coba lagi.', 'error');
           }
@@ -1204,7 +1213,7 @@ export class UIManager {
         playButton.disabled = true;
         playButton.textContent = 'Memuat…';
         try {
-          await this.streamAudioFromUrl(item.url, item.title, item.channel, item.duration, thumbSrc);
+          await this.streamAudioFromUrl(itemUrl, itemTitle, itemArtist, item.duration, thumbSrc);
         } catch (error) {
           this.showUrlFeedback('Video gagal dimuat. Coba lagi atau buka sumber YouTube.', 'error');
         } finally {

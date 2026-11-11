@@ -801,15 +801,15 @@ describe('YouTube search queue UI', () => {
   it('serves repeated search results from the short local cache and can force refresh', async () => {
     const ui = new UIManager({ socketClient: { createRoom: vi.fn(), joinRoom: vi.fn() } });
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [{ id: 'first' }] }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [{ id: 'fresh' }] }) });
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [{ id: 'dQw4w9WgXcQ' }] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [{ id: 'M7lc1UVf-VE' }] }) });
     vi.stubGlobal('fetch', fetchMock);
 
-    expect((await ui.fetchYoutubeSearch('Ambient')).map(item => item.id)).toEqual(['first']);
-    expect((await ui.fetchYoutubeSearch(' ambient ')).map(item => item.id)).toEqual(['first']);
+    expect((await ui.fetchYoutubeSearch('Ambient')).map(item => item.id)).toEqual(['yt_dQw4w9WgXcQ']);
+    expect((await ui.fetchYoutubeSearch(' ambient ')).map(item => item.id)).toEqual(['yt_dQw4w9WgXcQ']);
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(ui.lastYoutubeSearchCacheState).toBe('fresh');
-    expect((await ui.fetchYoutubeSearch('Ambient', undefined, { refresh: true })).map(item => item.id)).toEqual(['fresh']);
+    expect((await ui.fetchYoutubeSearch('Ambient', undefined, { refresh: true })).map(item => item.id)).toEqual(['yt_M7lc1UVf-VE']);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
@@ -817,13 +817,13 @@ describe('YouTube search queue UI', () => {
     vi.useFakeTimers();
     const ui = new UIManager({});
     vi.stubGlobal('fetch', vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [{ id: 'cached' }] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [{ id: 'dQw4w9WgXcQ' }] }) })
       .mockRejectedValueOnce(new TypeError('offline')));
     await ui.fetchYoutubeSearch('Ambient');
     vi.advanceTimersByTime(60_001);
 
     await expect(ui.fetchYoutubeSearch('Ambient', undefined, { refresh: true }))
-      .rejects.toMatchObject({ staleResults: [{ id: 'cached' }] });
+      .rejects.toMatchObject({ staleResults: [{ id: 'yt_dQw4w9WgXcQ' }] });
     expect(ui.lastYoutubeSearchCacheState).toBe('stale');
   });
 
@@ -831,7 +831,7 @@ describe('YouTube search queue UI', () => {
     vi.useFakeTimers();
     const ui = new UIManager({});
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [{ id: 'cached' }] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [{ id: 'dQw4w9WgXcQ' }] }) })
       .mockImplementationOnce((_url, { signal }) => new Promise((resolve, reject) => {
         signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
       }));
@@ -840,7 +840,7 @@ describe('YouTube search queue UI', () => {
     await vi.advanceTimersByTimeAsync(ui.youtubeSearchCacheTtlMs + 1);
 
     const refresh = ui.fetchYoutubeSearch('Ambient', undefined, { refresh: true });
-    const rejectedRefresh = expect(refresh).rejects.toMatchObject({ staleResults: [{ id: 'cached' }] });
+    const rejectedRefresh = expect(refresh).rejects.toMatchObject({ staleResults: [{ id: 'yt_dQw4w9WgXcQ' }] });
     await vi.advanceTimersByTimeAsync(8_000);
 
     await rejectedRefresh;
@@ -850,13 +850,15 @@ describe('YouTube search queue UI', () => {
 
   it('fetches search results without creating or joining an audio room', async () => {
     const ui = new UIManager({ socketClient: { createRoom: vi.fn(), joinRoom: vi.fn() } });
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ results: [{ id: 'video-1' }] }) });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ results: [{ id: 'dQw4w9WgXcQ' }] }) });
     vi.stubGlobal('fetch', fetchMock);
     const controller = new AbortController();
 
     const results = await ui.fetchYoutubeSearch('ambient music', controller.signal);
 
-    expect(results).toEqual([{ id: 'video-1' }]);
+    expect(results).toEqual([expect.objectContaining({
+      id: 'yt_dQw4w9WgXcQ', sourceId: 'dQw4w9WgXcQ', sourceType: 'youtube'
+    })]);
     expect(fetchMock).toHaveBeenCalledWith('/api/yt-search?q=ambient%20music', { signal: expect.any(AbortSignal) });
     expect(ui.app.socketClient.createRoom).not.toHaveBeenCalled();
   });
@@ -896,8 +898,9 @@ describe('YouTube search queue UI', () => {
     ui.elements = { ytSearchResults: list };
 
     ui.renderSearchResults([{
-      id: 'abcdefghijk', url: 'https://youtu.be/abcdefghijk',
-      title: '<img src=x onerror=alert(1)>', channel: '<svg onload=alert(1)>', duration: 60
+      id: 'yt_abcdefghijk', sourceId: 'abcdefghijk', sourceType: 'youtube',
+      sourceUrl: 'https://youtu.be/abcdefghijk',
+      name: '<img src=x onerror=alert(1)>', artist: '<svg onload=alert(1)>', duration: 60
     }]);
 
     expect(list.children[1].children).toHaveLength(3);
