@@ -2,6 +2,7 @@ import { firebaseAuth } from '../auth/FirebaseAuth.js';
 import { QRCodeGenerator } from './QRCodeGenerator.js';
 import { QRScanner } from './QRScanner.js';
 import { MusicSourceManager } from '../music/MusicSourceManager.js';
+import { extractYouTubeVideoId, isYouTubeUrl } from '../music/sources/YouTubeSource.js';
 import { MusicSourceType } from '../music/types.js';
 import { LocalLibrary } from '../library/LocalLibrary.js';
 import { recordLocalMetric } from '../metrics/localMetrics.js';
@@ -685,7 +686,7 @@ export class UIManager {
         this.showUrlFeedback('Masukkan link audio yang valid (MP3 / WAV / OGG / FLAC / stream)', 'error');
         return;
       }
-      if (/^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be|music\.youtube\.com)/i.test(url.trim())) {
+      if (isYouTubeUrl(url.trim())) {
         await this.streamAudioFromUrl(url.trim(), 'YouTube video').catch(() => {
           this.showUrlFeedback('Link YouTube tidak valid atau player gagal dimuat.', 'error');
         });
@@ -777,7 +778,7 @@ export class UIManager {
         return;
       }
 
-      if (/^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be|music\.youtube\.com)/i.test(queryOrUrl)) {
+      if (isYouTubeUrl(queryOrUrl)) {
         await this.streamAudioFromUrl(queryOrUrl, 'YouTube video').catch(() => this.showUrlFeedback('Link YouTube tidak valid atau player gagal dimuat.', 'error'));
         return;
       }
@@ -840,7 +841,7 @@ export class UIManager {
           return;
         }
         if (elements.ytSearchRecents) elements.ytSearchRecents.style.display = 'none';
-        if (/^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be|music\.youtube\.com)/i.test(query)) {
+        if (isYouTubeUrl(query)) {
           if (elements.ytSearchResults) elements.ytSearchResults.style.display = 'none';
           return;
         }
@@ -1443,14 +1444,11 @@ export class UIManager {
   async addYoutubeTrackToQueueOnly(url, trackTitle, artist = 'YouTube', duration = 210, thumbnail = '') {
     let thumbUrl = thumbnail;
     if (!thumbUrl || thumbUrl === 'NA' || !thumbUrl.startsWith('http')) {
-      const match = url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([a-zA-Z0-9_-]{11})/);
-      if (match) {
-        thumbUrl = `https://i.ytimg.com/vi/${match[1]}/hqdefault.jpg`;
-      }
+      const videoId = extractYouTubeVideoId(url);
+      if (videoId) thumbUrl = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
     }
 
-    const match = url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([a-zA-Z0-9_-]{11})/);
-    const videoId = match?.[1];
+    const videoId = extractYouTubeVideoId(url);
     if (!videoId) throw new Error('ID video YouTube tidak valid');
     const item = {
       id: 'q_' + Math.random().toString(36).substring(2, 9),
@@ -1468,7 +1466,7 @@ export class UIManager {
 
   async streamAudioFromUrl(url, trackTitle, artist = 'YouTube', duration = 210, thumbnail = '') {
     const playRequestId = ++this.youtubePlaybackRequestSequence;
-    const videoId = url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([A-Za-z0-9_-]{11})/)?.[1];
+    const videoId = extractYouTubeVideoId(url);
     if (!videoId) throw new Error('ID video YouTube tidak valid');
     const item = {
       id: `yt_${videoId}`,
@@ -1589,8 +1587,7 @@ export class UIManager {
   }
 
   async addYoutubeTrackToQueue(url, trackTitle, artist = 'YouTube', duration = 210, thumbnail = '', queueItemId = createQueueItemId()) {
-    const match = url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([a-zA-Z0-9_-]{11})/);
-    const videoId = match?.[1];
+    const videoId = extractYouTubeVideoId(url);
     const thumbUrl = thumbnail && thumbnail !== 'NA' && thumbnail.startsWith('http')
       ? thumbnail
       : (videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : '');
@@ -2286,11 +2283,10 @@ export class UIManager {
       thumbUrl = currentTrack?.thumbnail;
     }
     if (!thumbUrl || thumbUrl === 'NA' || !thumbUrl.startsWith('http')) {
-      const match = (currentTrack?.audioUrl || currentTrack?.url || currentTrack?.id || '')
-        .match(/(?:v=|youtu\.be\/|shorts\/|embed\/|\/vi\/|aud_yt_|yt_)([a-zA-Z0-9_-]{11})/);
-      if (match) {
-        thumbUrl = `https://i.ytimg.com/vi/${match[1]}/hqdefault.jpg`;
-      }
+      const source = currentTrack?.audioUrl || currentTrack?.url || currentTrack?.sourceUrl || '';
+      const videoId = extractYouTubeVideoId(source)
+        || (currentTrack?.id?.startsWith('yt_') ? currentTrack.id.slice(3) : '');
+      if (/^[A-Za-z0-9_-]{11}$/.test(videoId)) thumbUrl = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
     }
 
     if (this.elements.albumArtBox) {

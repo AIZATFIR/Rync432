@@ -1,4 +1,34 @@
-import { MusicSourceType, hashString } from '../types.js';
+import { MusicSourceType } from '../types.js';
+
+const YOUTUBE_HOSTS = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be', 'www.youtu.be']);
+const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
+
+function parseYouTubeUrl(input) {
+  if (typeof input !== 'string') return null;
+  let url;
+  try {
+    url = new URL(/^https?:\/\//i.test(input.trim()) ? input.trim() : `https://${input.trim()}`);
+  } catch (error) {
+    return null;
+  }
+  const hostname = url.hostname.toLowerCase();
+  if (!YOUTUBE_HOSTS.has(hostname)) return null;
+
+  const segments = url.pathname.split('/').filter(Boolean);
+  const pathVideoId = hostname.endsWith('youtu.be')
+    ? segments[0]
+    : ['shorts', 'embed', 'live'].includes(segments[0]) ? segments[1] : '';
+  const videoId = url.searchParams.get('v') || pathVideoId;
+  return { videoId: VIDEO_ID_PATTERN.test(videoId || '') ? videoId : null };
+}
+
+export function isYouTubeUrl(input) {
+  return parseYouTubeUrl(input) !== null;
+}
+
+export function extractYouTubeVideoId(input) {
+  return parseYouTubeUrl(input)?.videoId || null;
+}
 
 export class YouTubeSource {
   constructor() {
@@ -6,14 +36,11 @@ export class YouTubeSource {
   }
 
   canHandle(input) {
-    if (typeof input !== 'string') return false;
-    const trimmed = input.trim();
-    return trimmed.includes('youtube.com') || trimmed.includes('youtu.be');
+    return isYouTubeUrl(input);
   }
 
   extractVideoId(url) {
-    const match = url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([a-zA-Z0-9_-]{11})/);
-    return match ? match[1] : null;
+    return extractYouTubeVideoId(url);
   }
 
   async resolve(input, customMetadata = {}) {

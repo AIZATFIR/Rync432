@@ -53,6 +53,19 @@ describe('Music Sources & Resolver Layer', () => {
       expect(resolved.sourceUrl).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
     });
 
+    it('recognizes YouTube Music and live URLs without accepting lookalike domains', async () => {
+      const musicLink = 'https://music.youtube.com/watch?v=dQw4w9WgXcQ';
+      const liveLink = 'https://www.youtube.com/live/dQw4w9WgXcQ';
+
+      expect(ytSource.canHandle(musicLink)).toBe(true);
+      expect(ytSource.extractVideoId(liveLink)).toBe('dQw4w9WgXcQ');
+      expect(ytSource.canHandle('https://youtube.com.attacker.example/watch?v=dQw4w9WgXcQ')).toBe(false);
+      await expect(manager.resolve(musicLink)).resolves.toMatchObject({
+        trackId: 'yt_dQw4w9WgXcQ',
+        sourceType: MusicSourceType.YOUTUBE
+      });
+    });
+
     it('searches through the adapter with cancellation and normalized UI fields', async () => {
       const signal = new AbortController().signal;
       const fetchMock = vi.fn().mockResolvedValue({
