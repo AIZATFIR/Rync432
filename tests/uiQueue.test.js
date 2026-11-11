@@ -962,6 +962,28 @@ describe('YouTube search queue UI', () => {
     expect(ui.elements.librarySection.hidden).toBe(true);
   });
 
+  it('shows the player on Home and reserves Search for source discovery', () => {
+    const node = () => ({ hidden: false, style: {}, attributes: {}, classList: { toggle() {} }, setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name) { delete this.attributes[name]; } });
+    const ui = new UIManager({ audioEngine: {}, socketClient: {} });
+    ui.elements = {
+      activeRoomSection: node(), roomHeroSection: node(), librarySection: node(),
+      sourceHubSection: node(), sourceSearchSection: node(), queueCardSection: node(), audioTuningSection: node(),
+      navHomeBtn: node(), navSearchBtn: node(), navLibraryBtn: node(), navRoomBtn: node()
+    };
+
+    ui.setView('home');
+    expect(ui.elements.sourceHubSection.style.display).toBe('');
+    expect(ui.elements.sourceSearchSection.style.display).toBe('none');
+    expect(ui.elements.queueCardSection.style.display).toBe('');
+    expect(ui.elements.audioTuningSection.style.display).toBe('');
+
+    ui.setView('search');
+    expect(ui.elements.sourceHubSection.style.display).toBe('none');
+    expect(ui.elements.sourceSearchSection.style.display).toBe('');
+    expect(ui.elements.queueCardSection.style.display).toBe('none');
+    expect(ui.elements.audioTuningSection.style.display).toBe('none');
+  });
+
   it('shows and clears the host-disconnected room notice', () => {
     const notice = { hidden: true };
     const ui = new UIManager({});

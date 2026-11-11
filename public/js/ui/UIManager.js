@@ -74,6 +74,8 @@ export class UIManager {
       activeRoomSection: document.getElementById('activeRoomSection'),
       librarySection: document.getElementById('librarySection'),
       sourceHubSection: document.getElementById('sourceHubSection'),
+      sourceSearchSection: document.getElementById('sourceSearchSection'),
+      audioTuningSection: document.getElementById('audioTuningSection'),
       navHomeBtn: document.getElementById('navHomeBtn'),
       navSearchBtn: document.getElementById('navSearchBtn'),
       navLibraryBtn: document.getElementById('navLibraryBtn'),
@@ -2092,9 +2094,11 @@ export class UIManager {
     const hasRoom = !!this.app.socketClient?.roomId;
     const showRoomSetup = view === 'room' && !hasRoom;
     const showLibrary = view === 'library';
+    const showSearch = view === 'search';
 
     if (this.elements.activeRoomSection) {
       this.elements.activeRoomSection.style.display = showLibrary || showRoomSetup ? 'none' : 'flex';
+      this.elements.activeRoomSection.classList.toggle('search-mode', showSearch);
     }
     if (this.elements.miniPlayerBar) {
       const hasTrack = !!this.currentTrack && this.currentTrack.name !== 'Pilih trek lagu';
@@ -2106,8 +2110,11 @@ export class UIManager {
     }
     if (this.elements.librarySection) this.elements.librarySection.hidden = !showLibrary;
     if (this.elements.sourceHubSection) {
-      this.elements.sourceHubSection.style.display = view === 'search' ? '' : 'none';
+      this.elements.sourceHubSection.style.display = showSearch ? 'none' : '';
     }
+    if (this.elements.sourceSearchSection) this.elements.sourceSearchSection.style.display = showSearch ? '' : 'none';
+    if (this.elements.queueCardSection) this.elements.queueCardSection.style.display = showSearch ? 'none' : '';
+    if (this.elements.audioTuningSection) this.elements.audioTuningSection.style.display = showSearch ? 'none' : '';
 
     const navButtons = [
       [this.elements.navHomeBtn, 'home'],

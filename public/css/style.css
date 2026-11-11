@@ -1831,6 +1831,9 @@ body:not(.in-room) #activeRoomSection .btn-sync-mini { display: none !important;
 .library-action:disabled { opacity: 0.45; cursor: not-allowed; }
 .library-action.danger { color: #f09585; }
 
+#activeRoomSection.search-mode .main-grid { grid-template-columns: minmax(0, 1fr); }
+#activeRoomSection.search-mode .devices-stage { display: none; }
+
 button:focus-visible,input:focus-visible { outline: 2px solid var(--spotify-green); outline-offset: 3px; }
 
 .room-host-notice {
