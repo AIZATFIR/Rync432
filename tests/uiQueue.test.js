@@ -191,6 +191,29 @@ describe('YouTube search queue UI', () => {
     expect(ui.setPlayState).toHaveBeenCalledWith(true);
   });
 
+  it('loads a newly selected direct URL in solo mode even when another buffer is already loaded', async () => {
+    const track = { id: 'direct-2', name: 'Second URL', sourceType: 'direct-url', audioUrl: '/audio/second.mp3' };
+    const socketClient = { roomId: null, cloudMesh: { lastKnownTrack: null }, clockSync: { getServerTime: () => 2000 } };
+    const audioEngine = {
+      audioBuffer: { duration: 30 },
+      loadAudioFromUrl: vi.fn().mockResolvedValue({ duration: 12 }),
+      schedulePlayAtServerTime: vi.fn()
+    };
+    const ui = new UIManager({ socketClient, audioEngine });
+    ui.updateTrackUI = vi.fn();
+    ui.setTrackLoading = vi.fn();
+    ui.clearTrackLoading = vi.fn();
+    ui.setPlayState = vi.fn();
+    ui.setView = vi.fn();
+
+    await ui.playResolvedAudio(track);
+
+    expect(socketClient.roomId).toBeNull();
+    expect(audioEngine.loadAudioFromUrl).toHaveBeenCalledWith(track.audioUrl, track.name);
+    expect(audioEngine.schedulePlayAtServerTime).toHaveBeenCalledWith(2050, 0);
+    expect(ui.currentTrack).toBe(track);
+  });
+
   it('accepts local-file queue entries without a remote URL for solo playback', async () => {
     const track = { id: 'local-queue-track', name: 'Local queue track', sourceType: 'local-file' };
     const socketClient = { roomId: null, cloudMesh: {}, clockSync: { getServerTime: () => 1000 } };

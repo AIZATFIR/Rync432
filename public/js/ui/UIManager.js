@@ -580,13 +580,14 @@ export class UIManager {
         this.showUrlFeedback('Masukkan link audio yang valid (MP3 / WAV / OGG / FLAC / stream)', 'error');
         return;
       }
+      if (/^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be|music\.youtube\.com)/i.test(url.trim())) {
+        await this.streamAudioFromUrl(url.trim(), 'YouTube video').catch(() => {
+          this.showUrlFeedback('Link YouTube tidak valid atau player gagal dimuat.', 'error');
+        });
+        return;
+      }
       this.showUrlFeedback('Mengecek dan menyiapkan audio stream...', 'loading');
       try {
-        await app.audioEngine.ensureContext();
-        if (!app.socketClient.roomId) {
-          app.socketClient.createRoom(this.getDeviceName());
-        }
-
         const resolved = await this.musicSourceManager.resolve(url.trim());
         const endpoint = await this.musicSourceManager.audioResolver.resolvePlayableEndpoint(resolved);
 
@@ -603,32 +604,17 @@ export class UIManager {
           isSynthetic: !!resolved.isSynthetic
         };
 
-        this.showUrlFeedback(`Berhasil: ${resolved.title} (${endpoint.usedProxy ? 'via Proxy' : 'Direct CDN'})`, 'success');
-        setTimeout(() => {
-          if (elements.directUrlFeedback) elements.directUrlFeedback.style.display = 'none';
-        }, 4000);
-
-        // 1. Add to queue immediately (optimistic UI update)
-        await app.socketClient.addToQueue(item);
         if (elements.directUrlInput) elements.directUrlInput.value = '';
-
-        // 2. Load audio in background if no buffer currently loaded
         if (resolved.sourceType === 'youtube') {
-          this.updateTrackUI(resolved.title, resolved.duration || 0, resolved.thumbnailUrl);
-          if (app.socketClient.isHost) app.socketClient.playQueueItem(item.id, true);
-          else app.socketClient.requestControl('play_queue_item', { queueId: item.id, name: item.name });
-        } else if (!app.audioEngine.audioBuffer && !resolved.isSynthetic) {
-          this.setTrackLoading(`Memuat ${resolved.title}...`);
-          this.updateTrackUI(resolved.title, resolved.duration || 0, resolved.thumbnailUrl);
-          app.audioEngine.loadAudioFromUrl(endpoint.playableUrl, resolved.title)
-            .then(buffer => {
-              this.updateTrackUI(resolved.title, buffer.duration, resolved.thumbnailUrl);
-              this.clearTrackLoading();
-            })
-            .catch(e => console.warn('Direct URL load notice:', e));
-        } else if (resolved.isSynthetic) {
-          app.audioEngine.generateSyntheticTrack();
-          this.updateTrackUI(resolved.title, resolved.duration || 20);
+          await this.streamAudioFromUrl(item.sourceUrl || url.trim(), item.name, item.artist, item.duration, item.thumbnail);
+        } else {
+          await this.playResolvedAudio(item);
+        }
+        if (!app.socketClient.roomId) {
+          this.showUrlFeedback(`Berhasil: ${resolved.title} (${endpoint.usedProxy ? 'via Proxy' : 'Direct CDN'})`, 'success');
+          setTimeout(() => {
+            if (elements.directUrlFeedback) elements.directUrlFeedback.style.display = 'none';
+          }, 4000);
         }
       } catch (err) {
         console.error('Direct URL ingest error:', err);
@@ -1290,6 +1276,51 @@ export class UIManager {
         socketClient.requestControl('play_queue_item', { queueId: item.id, name: item.name });
       }
     }).catch(() => this.showUrlFeedback('Antrean room gagal disinkronkan. Coba tambahkan lagu lagi.', 'error'));
+    return item;
+  }
+
+  async playResolvedAudio(item) {
+    const socketClient = this.app.socketClient;
+    if (!item?.audioUrl) throw new Error('URL audio tidak tersedia');
+    if (socketClient.roomId) {
+      const alreadyQueued = (socketClient.cloudMesh?.lastKnownQueue || []).some(queued => queued.id === item.id);
+      const queueSync = alreadyQueued ? Promise.resolve(true) : Promise.resolve(socketClient.addToQueue(item)).then(added => {
+        if (added === false) return false;
+        const waitForAck = socketClient.cloudMesh?.waitForQueueItemAcknowledgement;
+        return waitForAck ? waitForAck.call(socketClient.cloudMesh, item.id) : added;
+      });
+      this.updateTrackUI(item.name, item.duration || 0, item.thumbnail || '');
+      this.setTrackLoading(`Menyiapkan ${item.name}…`);
+      queueSync.then(synced => {
+        if (synced === false) {
+          this.showUrlFeedback('Antrean room gagal disinkronkan. Coba lagi.', 'error');
+          return;
+        }
+        this.showUrlFeedback('Lagu siap di antrean room.', 'success');
+        if (socketClient.isHost) {
+          socketClient.cloudMesh.lastKnownTrack = item;
+          socketClient.playQueueItem(item.id, true);
+        } else {
+          socketClient.requestControl('play_queue_item', { queueId: item.id, name: item.name });
+        }
+      }).catch(() => this.showUrlFeedback('Antrean room gagal disinkronkan. Coba lagi.', 'error'));
+      return item;
+    }
+
+    this.addToSoloQueue(item);
+    socketClient.cloudMesh.lastKnownTrack = item;
+    this.currentTrack = item;
+    this.updateTrackUI(item.name, item.duration || 0, item.thumbnail || '');
+    this.setTrackLoading(`Memuat ${item.name}…`);
+    const buffer = await this.app.audioEngine.loadAudioFromUrl(item.audioUrl, item.name);
+    this.updateTrackUI(item.name, buffer.duration || item.duration || 0, item.thumbnail || '');
+    this.clearTrackLoading();
+    this.app.audioEngine.schedulePlayAtServerTime(
+      socketClient.clockSync?.getServerTime?.() + 50 || Date.now() + 50,
+      0
+    );
+    this.setPlayState(true);
+    this.setView('home');
     return item;
   }
 
