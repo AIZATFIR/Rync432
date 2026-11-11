@@ -2014,7 +2014,7 @@ export class CloudMesh {
               lastChunkTimestamp: -Infinity,
               receivedBytes: 0,
               nextChunkIndex: 0,
-              buffer: new Uint8Array(msg.totalBytes)
+              buffer: null
             };
             transfer.resetTimeout = () => {
               clearTimeout(transfer.timeout);
@@ -2123,6 +2123,7 @@ export class CloudMesh {
             this.failIncomingAudioTransfer(targetPeerId, stream.id, 'Paket audio P2P tidak valid.', stream.name);
             return;
           }
+          if (!stream.buffer) stream.buffer = new Uint8Array(stream.totalBytes);
           stream.buffer.set(new Uint8Array(event.data, chunkOffset, chunkLength), stream.receivedBytes);
           stream.receivedBytes += chunkLength;
           stream.nextChunkIndex += 1;

@@ -682,12 +682,13 @@ describe('CloudMesh audio transfer', () => {
     }) });
 
     const transfer = mesh.incomingAudioChunks.get('peer-2');
+    expect(transfer.buffer).toBeNull();
+    const firstChunk = new Uint8Array(32 * 1024).fill(4);
+    channel.onmessage({ data: makeAudioChunkFrame(0, 1, firstChunk) });
     expect(transfer.buffer).toBeInstanceOf(Uint8Array);
     expect(transfer.buffer.byteLength).toBe(32 * 1024 + 2);
     expect(transfer.chunks).toBeUndefined();
 
-    const firstChunk = new Uint8Array(32 * 1024).fill(4);
-    channel.onmessage({ data: makeAudioChunkFrame(0, 1, firstChunk) });
     channel.onmessage({ data: makeAudioChunkFrame(1, 2, [6, 7]) });
 
     const received = new Uint8Array(events.find(event => event.type === 'BINARY_AUDIO_RECEIVED').payload.arrayBuffer);
