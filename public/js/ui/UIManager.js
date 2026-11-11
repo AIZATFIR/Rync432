@@ -1541,7 +1541,9 @@ export class UIManager {
       const existingQueueItem = (socketClient.cloudMesh?.lastKnownQueue || []).find(queued => queued.id === item.id);
       const alreadyQueued = !!existingQueueItem;
       if (existingQueueItem) item.queueItemId = queueItemKey(existingQueueItem);
-      const queueSync = alreadyQueued ? Promise.resolve(true) : Promise.resolve(socketClient.addToQueue(item)).then(added => {
+      const alreadyConfirmed = alreadyQueued && (!socketClient.cloudMesh?.isQueueItemConfirmed
+        || socketClient.cloudMesh.isQueueItemConfirmed(queueItemKey(item)));
+      const queueSync = alreadyConfirmed ? Promise.resolve(true) : Promise.resolve(socketClient.addToQueue(item)).then(added => {
         if (added === false) return false;
         const waitForAck = socketClient.cloudMesh?.waitForQueueItemAcknowledgement;
         return waitForAck ? waitForAck.call(socketClient.cloudMesh, queueItemKey(item)) : added;

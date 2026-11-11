@@ -1610,6 +1610,26 @@ describe('CloudMesh audio transfer', () => {
     finishTransfers[1](true);
   });
 
+  it('stops sending superseded P2P chunks while waiting on channel backpressure', async () => {
+    vi.useFakeTimers();
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    const channel = makeChannel();
+    channel.bufferedAmount = 1024 * 1024;
+    mesh.setupDataChannel('peer-2', channel);
+    const transfer = mesh.sendAudioTransferToPeer(channel, new ArrayBuffer(32 * 1024 + 1), 'Old track', 'old-track');
+    const control = mesh.activeBufferTransfers.get(channel);
+    channel.bufferedAmount = 1024 * 1024;
+    control.cancelled = true;
+
+    await vi.advanceTimersByTimeAsync(150);
+
+    await expect(transfer).resolves.toBe(false);
+    expect(channel.sent.filter(message => message instanceof ArrayBuffer)).toHaveLength(0);
+    expect(mesh.pendingAudioTransferAcks.has(channel)).toBe(false);
+    expect(events.some(event => event.type === 'AUDIO_TRANSFER_PROGRESS' && event.payload.status === 'FAILED')).toBe(false);
+  });
+
   it('releases an incomplete receiver buffer when the sender supersedes that track', () => {
     const mesh = new CloudMesh(() => {});
     const channel = makeChannel();

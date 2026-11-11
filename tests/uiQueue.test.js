@@ -858,6 +858,30 @@ describe('YouTube search queue UI', () => {
     expect(socketClient.playQueueItem).toHaveBeenCalledWith(track.id, true);
   });
 
+  it('retries an unconfirmed resolved audio queue item before room playback', async () => {
+    const track = { id: 'resolved-room-1', queueItemId: 'qi-pending-resolved', name: 'Room song', sourceType: 'direct-url', audioUrl: '/audio/room.mp3' };
+    const socketClient = {
+      roomId: 'ROOM', isHost: true,
+      cloudMesh: {
+        lastKnownQueue: [track], lastKnownTrack: null,
+        isQueueItemConfirmed: vi.fn(() => false),
+        waitForQueueItemAcknowledgement: vi.fn().mockResolvedValue(true)
+      },
+      addToQueue: vi.fn().mockResolvedValue(true), playQueueItem: vi.fn().mockResolvedValue(track)
+    };
+    const ui = new UIManager({ socketClient, audioEngine: {} });
+    ui.updateTrackUI = vi.fn();
+    ui.setTrackLoading = vi.fn();
+    ui.showUrlFeedback = vi.fn();
+
+    await ui.playResolvedAudio(track);
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(socketClient.addToQueue).toHaveBeenCalledWith(expect.objectContaining({ queueItemId: 'qi-pending-resolved' }));
+    expect(socketClient.cloudMesh.waitForQueueItemAcknowledgement).toHaveBeenCalledWith('qi-pending-resolved');
+    expect(socketClient.playQueueItem).toHaveBeenCalledWith('qi-pending-resolved', true);
+  });
+
   it('loads a newly selected direct URL in solo mode even when another buffer is already loaded', async () => {
     const track = { id: 'direct-2', name: 'Second URL', sourceType: 'direct-url', audioUrl: '/audio/second.mp3' };
     const socketClient = { roomId: null, cloudMesh: { lastKnownTrack: null }, clockSync: { getServerTime: () => 2000 } };
