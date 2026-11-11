@@ -118,6 +118,30 @@ describe('CloudMesh audio transfer', () => {
     expect(mesh.handleIncomingSignal).toHaveBeenCalledWith('guest', { type: 'answer' });
   });
 
+  it('returns from a stalled room poll so the poll scheduler can recover', async () => {
+    vi.useFakeTimers();
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'guest';
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+
+    const poll = mesh.pollLoop();
+    await vi.advanceTimersByTimeAsync(8_000);
+    await expect(poll).resolves.toBeUndefined();
+  });
+
+  it('bounds a room poll whose response body stalls after headers', async () => {
+    vi.useFakeTimers();
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'guest';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => new Promise(() => {}) }));
+
+    const poll = mesh.pollLoop();
+    await vi.advanceTimersByTimeAsync(8_000);
+    await expect(poll).resolves.toBeUndefined();
+  });
+
   it('does not start WebRTC offers when the browser has no WebRTC support', async () => {
     vi.stubGlobal('RTCPeerConnection', undefined);
     const mesh = new CloudMesh(() => {});
@@ -1084,6 +1108,23 @@ describe('CloudMesh audio transfer', () => {
     expect(events.filter(event => event.type === 'QUEUE_UPDATED')).toHaveLength(1);
     expect(events.filter(event => event.type === 'SCHEDULED_PLAY')).toHaveLength(1);
     expect(events.find(event => event.type === 'SCHEDULED_PLAY').payload.startOffsetSec).toBe(12);
+  });
+
+  it('does not schedule autoplay for an empty next-track response', async () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.isHost = true;
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'host-peer';
+    mesh.hostToken = 'token';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, state: 'PLAYING', targetServerTime: Date.now() + 500, track: null, queue: [] })
+    }));
+
+    await mesh.nextTrack(true);
+
+    expect(events.some(event => event.type === 'SCHEDULED_PLAY')).toBe(false);
   });
 
   it('does not wait for server acknowledgement after optimistic queue addition', async () => {

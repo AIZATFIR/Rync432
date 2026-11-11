@@ -8,6 +8,7 @@ const P2P_AUDIO_TRANSFER_TIMEOUT_MS = 30_000;
 const P2P_AUDIO_ACK_TIMEOUT_MS = 10_000;
 const P2P_AUDIO_BACKPRESSURE_TIMEOUT_MS = 15_000;
 const QUEUE_MUTATION_TIMEOUT_MS = 8_000;
+const ROOM_POLL_TIMEOUT_MS = 8_000;
 const ROOM_JOIN_TIMEOUT_MS = 8_000;
 const AUDIO_ROUTES = new Set(['unknown', 'p2p', 'relay', 'direct', 'youtube', 'local', 'cache']);
 
@@ -714,8 +715,11 @@ export class CloudMesh {
     const supportsWebRTC = typeof RTCPeerConnection === 'function';
 
     try {
-      const res = await fetch('/api/room?action=poll', {
+      const controller = new AbortController();
+      let pollTimeout;
+      const pollRequest = fetch('/api/room?action=poll', {
         method: 'POST',
+        signal: controller.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           roomId: this.roomId,
@@ -732,10 +736,19 @@ export class CloudMesh {
           repeatMode: this.isHost ? this.repeatMode : undefined,
           shuffle: this.isHost ? this.shuffle : undefined
         })
-      });
+      }).then(async res => ({ res, data: res.ok ? await res.json() : null }));
+      const { res, data } = await Promise.race([
+        pollRequest,
+        new Promise((_, reject) => {
+          pollTimeout = setTimeout(() => {
+            controller.abort();
+            const error = new Error('ROOM_POLL_TIMEOUT');
+            error.name = 'TimeoutError';
+            reject(error);
+          }, ROOM_POLL_TIMEOUT_MS);
+        })
+      ]).finally(() => clearTimeout(pollTimeout));
       if (!res.ok) return;
-
-      const data = await res.json();
       this.rememberQueueRevision(data);
       this.setHostDisconnected(data.hostDisconnected === true);
       this.applyPlaybackOptions(data);
