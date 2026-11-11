@@ -47,7 +47,7 @@ Setelah verifikasi hijau, restart service memakai service manager yang sudah dik
    curl --fail --silent --show-error https://rync.zafir.my/api/health
    ```
 
-   Respons sukses memiliki `"status":"ok"`. Pastikan juga halaman utama terbuka lewat domain publik.
+   Respons sukses memiliki `"status":"ok"`. Periksa `providers.youtubeSearch`: `true` berarti key tersedia pada proses server, `false` berarti pencarian YouTube belum dikonfigurasi. Endpoint ini tidak menampilkan nilai key dan tidak memakai kuota pencarian. Pastikan juga halaman utama terbuka lewat domain publik.
 
 2. Dari dua perangkat/browser terpisah:
 
