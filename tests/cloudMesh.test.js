@@ -1584,12 +1584,12 @@ describe('CloudMesh audio transfer', () => {
     expect(mesh.pendingAudioTransferAcks.has(channel)).toBe(false);
   });
 
-  it('does not start overlapping P2P sends while a track transfer is in flight', async () => {
+  it('replaces an in-flight P2P transfer with the newest requested track', async () => {
     vi.useFakeTimers();
     const mesh = new CloudMesh(() => {});
     const channel = makeChannel();
-    let finishTransfer;
-    const transfer = vi.fn(() => new Promise(resolve => { finishTransfer = resolve; }));
+    const finishTransfers = [];
+    const transfer = vi.fn(() => new Promise(resolve => { finishTransfers.push(resolve); }));
     mesh.streamAudioToPeer = transfer;
     mesh.localAudioBufferCache.set('track-1', new ArrayBuffer(16));
     mesh.localAudioBufferCache.set('track-2', new ArrayBuffer(16));
@@ -1600,9 +1600,29 @@ describe('CloudMesh audio transfer', () => {
     channel.onmessage({ data: JSON.stringify({ type: 'REQUEST_AUDIO_BUFFER', trackId: 'track-2', trackName: 'Track 2' }) });
 
     expect(transfer).toHaveBeenCalledOnce();
-    expect(transfer).toHaveBeenCalledWith(channel, expect.any(ArrayBuffer), 'Track 1', 'track-1');
-    finishTransfer();
+    expect(transfer).toHaveBeenNthCalledWith(1, channel, expect.any(ArrayBuffer), 'Track 1', 'track-1', expect.objectContaining({ trackId: 'track-1' }));
+    expect(channel.sent.map(message => JSON.parse(message))).toContainEqual({ type: 'AUDIO_TRANSFER_CANCEL', id: 'track-1' });
+    finishTransfers[0](false);
     await Promise.resolve();
+    await Promise.resolve();
+    expect(transfer).toHaveBeenCalledTimes(2);
+    expect(transfer).toHaveBeenNthCalledWith(2, channel, expect.any(ArrayBuffer), 'Track 2', 'track-2', expect.objectContaining({ trackId: 'track-2' }));
+    finishTransfers[1](true);
+  });
+
+  it('releases an incomplete receiver buffer when the sender supersedes that track', () => {
+    const mesh = new CloudMesh(() => {});
+    const channel = makeChannel();
+    mesh.dataChannels.set('peer-1', channel);
+    mesh.setupDataChannel('peer-1', channel);
+    channel.onmessage({ data: JSON.stringify({ type: 'AUDIO_HEADER', id: 'old-track', name: 'Old', totalBytes: 8, totalChunks: 1 }) });
+
+    channel.onmessage({ data: JSON.stringify({ type: 'AUDIO_TRANSFER_CANCEL', id: 'old-track' }) });
+
+    expect(mesh.incomingAudioChunks.has('peer-1')).toBe(false);
+    expect(channel.sent.map(message => JSON.parse(message))).toContainEqual({
+      type: 'AUDIO_TRANSFER_ACK', id: 'old-track', success: false
+    });
   });
 
   it('does not serve a same-title buffer for a different requested track id', () => {
