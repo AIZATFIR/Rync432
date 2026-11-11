@@ -107,6 +107,7 @@ export class CloudMesh {
     this.lastKnownTrack = null;
     this.lastKnownQueue = null;
     this.readinessSync = Promise.resolve();
+    this.trackPreparationStartedAt = new Map();
     this.queueRevision = 0;
     this.isPaused = true;
     this.hostDisconnected = false;
@@ -931,6 +932,10 @@ export class CloudMesh {
     if (!track) return;
     const trackId = track.id || youtubeVideoId(track) || '';
     const trackKey = trackId || track.audioId || track.name;
+    if (trackId && !this.trackPreparationStartedAt.has(trackId)) {
+      if (this.trackPreparationStartedAt.size >= 50) this.trackPreparationStartedAt.delete(this.trackPreparationStartedAt.keys().next().value);
+      this.trackPreparationStartedAt.set(trackId, globalThis.performance?.now?.() ?? Date.now());
+    }
     this.broadcastReadiness('PREPARING', trackId, 'unknown');
     if (track.isSynthetic || track.name === 'Neon Groove Synthwave' || (track.name && track.name.toLowerCase().includes('synth'))) {
       this.currentFetchingTrackKey = null;
@@ -1901,6 +1906,13 @@ export class CloudMesh {
   }
 
   broadcastReadiness(readiness = 'READY', trackId = '', audioRoute) {
+    const preparationStartedAt = trackId && this.trackPreparationStartedAt.get(trackId);
+    if (preparationStartedAt !== undefined && (readiness === 'READY' || readiness === 'FAILED')) {
+      recordLocalMetric('audio_ready_ms', (globalThis.performance?.now?.() ?? Date.now()) - preparationStartedAt, {
+        outcome: readiness === 'READY' ? 'success' : 'failure'
+      });
+      this.trackPreparationStartedAt.delete(trackId);
+    }
     const me = this.localPeersMap.get(this.peerId);
     if (me) {
       me.readiness = readiness;

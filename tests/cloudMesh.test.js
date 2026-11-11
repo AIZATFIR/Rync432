@@ -1005,6 +1005,28 @@ describe('CloudMesh audio transfer', () => {
     expect(JSON.stringify(metrics)).not.toContain('Private title');
   });
 
+  it('measures source preparation until a room peer reports audio ready', async () => {
+    vi.useFakeTimers();
+    const store = new Map();
+    vi.stubGlobal('localStorage', { getItem: key => store.get(key) || null, setItem: (key, value) => store.set(key, value) });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'peer';
+    mesh.requestTrackBufferFromPeers = vi.fn();
+    mesh.updateLoadingState = vi.fn();
+    mesh.publishMqtt = vi.fn();
+    mesh.broadcastDataChannelMessage = vi.fn();
+
+    await mesh.loadTrackBuffer({ id: 'private-track', name: 'Private title', sourceType: 'local-file' });
+    await vi.advanceTimersByTimeAsync(125);
+    mesh.broadcastReadiness('READY', 'private-track', 'p2p');
+
+    const metrics = JSON.parse(store.get('rync_metrics_v1'));
+    expect(metrics.audio_ready_ms).toEqual([{ durationMs: 125, outcome: 'success' }]);
+    expect(JSON.stringify(metrics)).not.toContain('Private title');
+  });
+
   it('does not send a stale buffer when a peer requests a track that is not cached', () => {
     const mesh = new CloudMesh(() => {});
     mesh.currentAudioArrayBuffer = new ArrayBuffer(16);
