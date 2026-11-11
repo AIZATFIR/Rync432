@@ -51,6 +51,57 @@ describe('LocalLibrary Local Storage Fallback', () => {
     expect(history[0].name).toBe('Song 2');
   });
 
+  it('keeps only the latest entry for a track in fallback history', async () => {
+    await lib.addHistory({ id: 'track-1', name: 'Old title' });
+    await lib.addHistory({ id: 'track-2', name: 'Other song' });
+    await lib.addHistory({ id: 'track-1', name: 'Updated title' });
+
+    expect(await lib.getRecentHistory(10)).toEqual([
+      expect.objectContaining({ id: 'track-1', name: 'Updated title' }),
+      expect.objectContaining({ id: 'track-2', name: 'Other song' })
+    ]);
+  });
+
+  it('caps IndexedDB history at the 100 most recent unique tracks', async () => {
+    const records = Array.from({ length: 100 }, (_, index) => ({
+      id: index + 1, trackId: `track-${index}`, name: `Track ${index}`, timestamp: index + 1
+    }));
+    lib.open = async () => ({
+      transaction: () => {
+        const tx = {
+          objectStore: () => ({
+            getAll: () => {
+              const request = {};
+              queueMicrotask(() => {
+                request.result = [...records];
+                request.onsuccess();
+                tx.oncomplete?.();
+              });
+              return request;
+            },
+            delete: id => { const index = records.findIndex(item => item.id === id); if (index >= 0) records.splice(index, 1); },
+            add: item => records.push({ ...item, id: Math.max(0, ...records.map(record => record.id)) + 1 })
+          }),
+          oncomplete: null,
+          set onerror(_) {}
+        };
+        return tx;
+      }
+    });
+
+    await lib.addHistory({ id: 'track-new', name: 'Newest track' });
+    await lib.addHistory({ id: 'track-new', name: 'Newest track updated' });
+
+    expect(records).toHaveLength(100);
+    expect(records.some(item => item.trackId === 'track-0')).toBe(false);
+    expect(records.filter(item => item.trackId === 'track-new')).toEqual([
+      expect.objectContaining({ name: 'Newest track updated' })
+    ]);
+    await expect(lib.getRecentHistory(1)).resolves.toEqual([
+      expect.objectContaining({ id: 'track-new', name: 'Newest track updated' })
+    ]);
+  });
+
   it('clears recent history from the device fallback store', async () => {
     await lib.addHistory({ id: 'track-1', name: 'Old track' });
 

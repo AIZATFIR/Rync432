@@ -2,6 +2,8 @@
  * Rync LocalLibrary - IndexedDB storage for Favorites, Playlists, and Recent Tracks.
  * Ensures solo listening and personal collections persist across sessions on this device.
  */
+const HISTORY_LIMIT = 100;
+
 export class LocalLibrary {
   constructor(dbName = 'rync_library_db', version = 2) {
     this.dbName = dbName;
@@ -128,15 +130,26 @@ export class LocalLibrary {
       return new Promise((resolve) => {
         const tx = db.transaction('history', 'readwrite');
         const store = tx.objectStore('history');
-        store.add({ ...track, timestamp: Date.now() });
+        const request = store.getAll();
+        request.onsuccess = () => {
+          const history = (request.result || []).sort((a, b) => b.timestamp - a.timestamp);
+          const retained = history.filter(item => (item.trackId || item.id) !== track.id).slice(0, HISTORY_LIMIT - 1);
+          const keepIds = new Set(retained.map(item => item.id));
+          history.forEach(item => {
+            if ((item.trackId || item.id) === track.id || !keepIds.has(item.id)) store.delete(item.id);
+          });
+          const { id: trackId, ...trackData } = track;
+          store.add({ ...trackData, trackId, timestamp: Date.now() });
+        };
         tx.oncomplete = () => resolve(true);
         tx.onerror = () => resolve(false);
       });
     }
     try {
       const hist = JSON.parse(localStorage.getItem('rync_history') || '[]');
-      hist.unshift({ ...track, timestamp: Date.now() });
-      localStorage.setItem('rync_history', JSON.stringify(hist.slice(0, 100)));
+      const recent = hist.filter(item => item.id !== track.id);
+      recent.unshift({ ...track, timestamp: Date.now() });
+      localStorage.setItem('rync_history', JSON.stringify(recent.slice(0, HISTORY_LIMIT)));
     } catch (e) {}
   }
 
@@ -198,7 +211,7 @@ export class LocalLibrary {
         req.onsuccess = () => {
           const list = req.result || [];
           list.sort((a, b) => b.timestamp - a.timestamp);
-          resolve(list.slice(0, limit));
+          resolve(list.slice(0, limit).map(item => ({ ...item, id: item.trackId || item.id })));
         };
         req.onerror = () => resolve([]);
       });
