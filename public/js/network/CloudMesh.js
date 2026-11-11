@@ -24,6 +24,7 @@ export class CloudMesh {
     this.lastKnownQueue = null;
     this.queueRevision = 0;
     this.isPaused = true;
+    this.hostDisconnected = false;
     this.lastPauseTime = 0;
     this.repeatMode = 'off';
     this.shuffle = false;
@@ -173,6 +174,7 @@ export class CloudMesh {
     if (!snapshot) return;
     this.rememberQueueRevision(snapshot);
     this.applyPlaybackOptions(snapshot);
+    this.setHostDisconnected(snapshot.hostDisconnected === true);
     if (this.isHost) return;
     if (Array.isArray(snapshot.queue)) {
       const queueStr = JSON.stringify(snapshot.queue);
@@ -220,6 +222,12 @@ export class CloudMesh {
     if (Number.isSafeInteger(snapshot.queueRevision) && snapshot.queueRevision >= 0) {
       this.queueRevision = snapshot.queueRevision;
     }
+  }
+
+  setHostDisconnected(disconnected) {
+    if (this.hostDisconnected === disconnected) return;
+    this.hostDisconnected = disconnected;
+    this.onEvent(disconnected ? 'HOST_DISCONNECTED' : 'HOST_RECONNECTED', { roomId: this.roomId });
   }
 
   applyCanonicalQueue(queue) {
@@ -641,6 +649,7 @@ export class CloudMesh {
 
       const data = await res.json();
       this.rememberQueueRevision(data);
+      this.setHostDisconnected(data.hostDisconnected === true);
       this.applyPlaybackOptions(data);
 
       if (data.kicked && !this.isHost) {
@@ -2104,6 +2113,7 @@ export class CloudMesh {
       if (transfer.timeout) clearTimeout(transfer.timeout);
     });
     this.incomingAudioChunks.clear();
+    this.setHostDisconnected(false);
     this.localPeersMap.clear();
     this.roomId = null;
     this.peerId = null;

@@ -74,6 +74,14 @@ class App {
         uiManager.setConnected(false);
         break;
 
+      case 'HOST_DISCONNECTED':
+        uiManager.setHostDisconnected(true);
+        break;
+
+      case 'HOST_RECONNECTED':
+        uiManager.setHostDisconnected(false);
+        break;
+
       case 'ROOM_CREATED':
         uiManager.setRoomState(payload.roomId, true);
         uiManager.renderPeerList(payload.peers || [{ id: payload.peerId, isHost: true, deviceName: 'Master Speaker' }]);

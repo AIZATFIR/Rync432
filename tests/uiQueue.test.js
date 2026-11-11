@@ -156,6 +156,17 @@ describe('YouTube search queue UI', () => {
     expect(ui.elements.librarySection.hidden).toBe(true);
   });
 
+  it('shows and clears the host-disconnected room notice', () => {
+    const notice = { hidden: true };
+    const ui = new UIManager({});
+    ui.elements = { hostDisconnectedNotice: notice };
+
+    ui.setHostDisconnected(true);
+    expect(notice.hidden).toBe(false);
+    ui.setHostDisconnected(false);
+    expect(notice.hidden).toBe(true);
+  });
+
   it('keeps a compact player available on Library and room setup views', () => {
     const node = () => ({ hidden: false, style: {}, attributes: {}, classList: { toggle() {} }, setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name) { delete this.attributes[name]; } });
     const ui = new UIManager({ socketClient: { roomId: null } });

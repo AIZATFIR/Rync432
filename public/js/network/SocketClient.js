@@ -221,6 +221,8 @@ export class SocketClient {
       this.onEvent('QUEUE_UPDATED', payload);
     } else if (event === 'PLAYBACK_OPTIONS_UPDATED') {
       this.onEvent('PLAYBACK_OPTIONS_UPDATED', payload);
+    } else if (event === 'HOST_DISCONNECTED' || event === 'HOST_RECONNECTED') {
+      this.onEvent(event, payload);
     } else if (event === 'SCHEDULED_PLAY') {
       this.onEvent('SCHEDULED_PLAY', payload);
     } else if (event === 'PAUSED') {

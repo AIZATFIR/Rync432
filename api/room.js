@@ -5,6 +5,7 @@ import { createRoomPersistence, ROOM_TTL_MS } from './roomPersistence.js';
 // Supports Multi-Device Sync, Binary Audio Relay, Democratic Queue, and WebRTC
 
 const MAX_ROOM_PEERS = 5;
+const HOST_STALE_MS = 10_000;
 const MAX_QUEUE_ITEMS = 500;
 const MAX_SIGNAL_BYTES = 64 * 1024;
 const MAX_PENDING_SIGNALS = 256;
@@ -28,6 +29,19 @@ const checkQueueRevision = (room, body, res) => {
     });
     return false;
   }
+  return true;
+};
+const freezeForStaleHost = (room, now) => {
+  const hostPeer = room?.peers?.[room.hostId];
+  if (!hostPeer || now - (hostPeer.lastSeen || 0) < HOST_STALE_MS || room.hostDisconnectedAt) return false;
+  if (room.state === 'PLAYING') {
+    const targetTime = Number(room.targetServerTime);
+    const elapsed = Number.isFinite(targetTime) && targetTime > 0 ? Math.max(0, (now - targetTime) / 1000) : 0;
+    room.startOffsetSec = Math.max(0, Number(room.startOffsetSec) || 0) + elapsed;
+  }
+  room.state = 'PAUSED';
+  room.targetServerTime = null;
+  room.hostDisconnectedAt = now;
   return true;
 };
 
@@ -206,6 +220,7 @@ export default async function handler(req, res) {
       shuffle: false,
       shufflePlayedIds: [],
       queueRevision: 0,
+      hostDisconnectedAt: null,
       updatedAt: now,
       queue: [],
       peers: {
@@ -222,7 +237,8 @@ export default async function handler(req, res) {
       signals: []
     };
     rooms.set(roomId, newRoom);
-    const { hostTokenHash, ...publicRoom } = newRoom;
+    const { hostTokenHash, hostDisconnectedAt, ...publicRoom } = newRoom;
+    publicRoom.hostDisconnected = !!hostDisconnectedAt;
     return res.status(200).json({ success: true, room: publicRoom, hostToken });
   }
 
@@ -232,12 +248,14 @@ export default async function handler(req, res) {
 
     const isReturningHost = hostTokenMatches(room, body.hostToken);
     if (isReturningHost) {
+      room.hostDisconnectedAt = null;
       if (room.hostId && room.hostId !== peerId) delete room.peers[room.hostId];
       room.hostId = peerId;
       Object.values(room.peers).forEach(peer => { peer.isHost = false; });
     } else if (room.peers[peerId]) {
       return res.status(409).json({ success: false, error: 'PEER_ID_IN_USE' });
     }
+    if (!isReturningHost) freezeForStaleHost(room, now);
     for (const [id, peer] of Object.entries(room.peers || {})) {
       if (id !== room.hostId && now - (peer.lastSeen || 0) > 10000) delete room.peers[id];
     }
@@ -268,6 +286,7 @@ export default async function handler(req, res) {
         startOffsetSec: room.startOffsetSec,
         repeatMode: room.repeatMode || 'off',
         shuffle: room.shuffle === true,
+        hostDisconnected: !!room.hostDisconnectedAt,
         peers: Object.values(room.peers),
         serverTime: now
       }
@@ -288,9 +307,10 @@ export default async function handler(req, res) {
     }
     const previousQueueSnapshot = JSON.stringify(room.queue || []);
     if (isThisHost) {
+      room.hostDisconnectedAt = null;
       room.hostId = peerId;
       Object.entries(room.peers || {}).forEach(([id, peer]) => { peer.isHost = id === peerId; });
-    }
+    } else freezeForStaleHost(room, now);
 
     if (isThisHost) {
       if (Array.isArray(body.queue) && body.queue.length > MAX_QUEUE_ITEMS) {
@@ -376,6 +396,7 @@ export default async function handler(req, res) {
       queue: room.queue || [],
       queueRevision: queueRevisionOf(room),
       queueConflict: isThisHost && Array.isArray(body.queue) && !hostQueueRevisionMatches,
+      hostDisconnected: !!room.hostDisconnectedAt,
       targetServerTime: room.targetServerTime,
       startOffsetSec: room.startOffsetSec,
       repeatMode: room.repeatMode || 'off',

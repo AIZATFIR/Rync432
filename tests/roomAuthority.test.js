@@ -158,6 +158,60 @@ describe('room authority', () => {
     expect(result.body.queue.map(item => item.id)).toEqual(['guest-track']);
   });
 
+  it('freezes playback at the current offset and marks the room when its host goes stale', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    try {
+      const roomId = `H${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+      const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+      await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
+      await callRoom('play', {
+        roomId,
+        peerId: 'host-peer',
+        hostToken: created.body.hostToken,
+        targetServerTime: Date.now() - 1000,
+        startOffsetSec: 4
+      });
+      vi.setSystemTime(Date.now() + 12_000);
+
+      const disconnected = await callRoom('poll', { roomId, peerId: 'guest-peer' });
+
+      expect(disconnected.body.hostDisconnected).toBe(true);
+      expect(disconnected.body.state).toBe('PAUSED');
+      expect(disconnected.body.targetServerTime).toBeNull();
+      expect(disconnected.body.startOffsetSec).toBe(17);
+
+      const rejoined = await callRoom('join', {
+        roomId,
+        peerId: 'host-peer',
+        deviceName: 'Host',
+        hostToken: created.body.hostToken
+      });
+      expect(rejoined.body.room.hostDisconnected).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('marks a stale host before a newly invited guest receives the room snapshot', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    try {
+      const roomId = `I${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+      const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+      vi.setSystemTime(Date.now() + 11_000);
+
+      const joined = await callRoom('join', { roomId, peerId: 'new-guest', deviceName: 'Guest' });
+
+      expect(joined.body.room.hostDisconnected).toBe(true);
+      expect(joined.body.room.state).toBe('PAUSED');
+      expect(joined.body.room.targetServerTime).toBeNull();
+      expect(created.body.room.hostDisconnected).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('preserves a member addition that races with a host reorder', async () => {
     const roomId = `N${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });

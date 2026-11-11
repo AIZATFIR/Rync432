@@ -1809,6 +1809,17 @@ body:not(.in-room) #activeRoomSection .btn-sync-mini { display: none !important;
 
 button:focus-visible,input:focus-visible { outline: 2px solid var(--spotify-green); outline-offset: 3px; }
 
+.room-host-notice {
+  padding: 12px 14px;
+  border: 1px solid rgba(243, 114, 127, 0.42);
+  border-inline-start: 3px solid var(--text-negative);
+  border-radius: var(--radius-sm);
+  background: rgba(243, 114, 127, 0.08);
+  color: var(--text-base);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
 @media (max-width: 760px) {
   .app-container { padding: 10px 14px calc(96px + env(safe-area-inset-bottom)); }
   .primary-nav { position: sticky; top: 0; z-index: 10; width: 100%; justify-content: space-between; backdrop-filter: blur(18px); background: rgba(16, 19, 14, 0.88); }

@@ -174,6 +174,7 @@ export class UIManager {
       // Multi-Device Readiness Barrier
       roomReadinessIndicator: document.getElementById('roomReadinessIndicator'),
       roomReadinessText: document.getElementById('roomReadinessText'),
+      hostDisconnectedNotice: document.getElementById('hostDisconnectedNotice'),
 
       // Upload & Demo Elements
       dropzone: document.getElementById('audioDropzone'),
@@ -1838,6 +1839,12 @@ export class UIManager {
     } else {
       if (this.elements.connectionStatus) this.elements.connectionStatus.innerText = 'Offline';
       if (this.elements.connectionDot) this.elements.connectionDot.classList.remove('connected');
+    }
+  }
+
+  setHostDisconnected(disconnected) {
+    if (this.elements.hostDisconnectedNotice) {
+      this.elements.hostDisconnectedNotice.hidden = !disconnected;
     }
   }
 

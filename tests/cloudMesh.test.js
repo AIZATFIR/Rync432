@@ -642,6 +642,16 @@ describe('CloudMesh audio transfer', () => {
 });
 
 describe('SocketClient room readiness', () => {
+  it('forwards host disconnect state to the app', () => {
+    const events = [];
+    const client = new SocketClient((type, payload) => events.push({ type, payload }));
+
+    client.handleCloudMeshEvent('HOST_DISCONNECTED', { roomId: 'ROOM' });
+    client.handleCloudMeshEvent('HOST_RECONNECTED', { roomId: 'ROOM' });
+
+    expect(events.map(event => event.type)).toEqual(['HOST_DISCONNECTED', 'HOST_RECONNECTED']);
+  });
+
   it('forwards automatic track advance to the room service', () => {
     const client = new SocketClient(() => {});
     client.cloudMesh.nextTrack = vi.fn();
