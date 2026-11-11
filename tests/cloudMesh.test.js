@@ -581,6 +581,36 @@ describe('CloudMesh audio transfer', () => {
     }));
   });
 
+  it('keeps a room audio relay alive while bytes continue arriving beyond five seconds', async () => {
+    vi.useFakeTimers();
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.roomId = 'ROOM';
+    mesh.broadcastReadiness = vi.fn();
+    mesh.updateLoadingState = vi.fn();
+    const chunk = new Uint8Array([1, 2, 3]);
+    let readCount = 0;
+    const read = vi.fn(async () => {
+      if (readCount++ >= 2) return { done: true };
+      await new Promise(resolve => setTimeout(resolve, 4_000));
+      return { done: false, value: chunk };
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => '6' },
+      body: { getReader: () => ({ read }) }
+    }));
+
+    const loading = mesh.fetchRemoteAudioUrl('/api/room?action=get_audio&audioId=audio-1', 'Track', 'track-1');
+    await vi.advanceTimersByTimeAsync(4_000);
+    await vi.advanceTimersByTimeAsync(4_000);
+    await loading;
+
+    expect(mesh.broadcastReadiness).toHaveBeenLastCalledWith('READY', 'track-1', 'relay');
+    expect(events).toContainEqual(expect.objectContaining({ type: 'BINARY_AUDIO_RECEIVED' }));
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'AUDIO_TRANSFER_PROGRESS', payload: expect.objectContaining({ status: 'Menunggu audio...' }) }));
+  });
+
   it('does not let an expired old fetch abort the newly selected track', async () => {
     vi.useFakeTimers();
     const mesh = new CloudMesh(() => {});

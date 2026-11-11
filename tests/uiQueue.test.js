@@ -86,6 +86,33 @@ describe('YouTube search queue UI', () => {
     finishSync();
   });
 
+  it('creates a room without waiting for the audio context to resume', async () => {
+    let finishAudioContext;
+    const socketClient = { roomId: null, createRoom: vi.fn(async () => { socketClient.roomId = 'AB12'; }) };
+    const ui = new UIManager({
+      socketClient,
+      audioEngine: { ensureContext: vi.fn(() => new Promise(resolve => { finishAudioContext = resolve; })) }
+    });
+    ui.syncLocalQueueToRoom = vi.fn().mockResolvedValue(undefined);
+    ui.seedCurrentTrackIntoRoom = vi.fn().mockResolvedValue(undefined);
+    ui.showUrlFeedback = vi.fn();
+    ui.getDeviceName = () => 'Host';
+    ui.startPlaybackTicker = vi.fn();
+    ui.elements = {
+      createRoomBtn: { addEventListener: (_event, handler) => { ui.createHandler = handler; } },
+      roomCodeDisplay: null, userRoleBadge: null, queueListContainer: null, activeRoomSection: null,
+      navRoomBtn: null, navHomeBtn: null, navSearchBtn: null, navLibraryBtn: null, miniPlayerBar: null,
+      roomHeroSection: null, sourceHubSection: null, sourceSearchSection: null, librarySection: null, audioTuningSection: null
+    };
+    vi.stubGlobal('window', { addEventListener: vi.fn(), location: { origin: 'https://rync.example' } });
+    ui.bindEvents();
+    await ui.createHandler();
+
+    expect(socketClient.createRoom).toHaveBeenCalledWith('Host');
+    expect(ui.app.audioEngine.ensureContext).toHaveBeenCalledOnce();
+    finishAudioContext();
+  });
+
   it('reports queue seeding failures after the room link is already available', async () => {
     const socketClient = { roomId: null, createRoom: vi.fn(async () => { socketClient.roomId = 'AB12'; }), isHost: true };
     const ui = new UIManager({ socketClient, audioEngine: { ensureContext: vi.fn().mockResolvedValue(undefined) } });

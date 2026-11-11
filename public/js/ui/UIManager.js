@@ -416,7 +416,7 @@ export class UIManager {
     if (elements.createRoomBtn) {
       elements.createRoomBtn.addEventListener('click', async () => {
         try {
-          await app.audioEngine.ensureContext();
+          app.audioEngine.ensureContext().catch(() => {});
           await app.socketClient.createRoom(this.getDeviceName());
           this.syncLocalQueueToRoom()
             .then(() => this.seedCurrentTrackIntoRoom())

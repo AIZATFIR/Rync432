@@ -1805,10 +1805,15 @@ export class CloudMesh {
     const audioRoute = url.startsWith('/api/') ? 'relay' : 'direct';
     this.broadcastReadiness('PREPARING', trackId, audioRoute);
     let timedOut = false;
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, REMOTE_AUDIO_FETCH_TIMEOUT_MS);
+    let timeout;
+    const resetTimeout = () => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, REMOTE_AUDIO_FETCH_TIMEOUT_MS);
+    };
+    resetTimeout();
 
     if (!this.incomingAudioChunks.size) {
       this.updateLoadingState(true, `Mengunduh ${trackName} (0%)...`);
@@ -1818,6 +1823,7 @@ export class CloudMesh {
       let response;
       try {
         response = await fetch(url, { signal });
+        resetTimeout();
         if (!response.ok && url.startsWith('http') && !url.includes('/api/stream') && !url.includes('/api/room')) {
           throw new Error('DIRECT_FETCH_FAILED');
         }
@@ -1827,6 +1833,7 @@ export class CloudMesh {
         if (url.startsWith('http') && !url.includes('/api/stream') && !url.includes('/api/room')) {
           const proxyUrl = `/api/stream?url=${encodeURIComponent(url)}`;
           response = await fetch(proxyUrl, { signal });
+          resetTimeout();
         } else {
           throw fetchErr;
         }
@@ -1850,6 +1857,7 @@ export class CloudMesh {
           if (timedOut) throw new Error('AUDIO_FETCH_TIMEOUT');
           const { done, value } = await reader.read();
           if (done) break;
+          resetTimeout();
           chunks.push(value);
           receivedBytes += value.length;
           if (totalBytes > 0) {
