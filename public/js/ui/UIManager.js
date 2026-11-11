@@ -267,13 +267,13 @@ export class UIManager {
       this.setPlayState(false);
       this.showUrlFeedback('Audio menunggu izin browser. Tekan Play untuk melanjutkan.', 'info');
     };
-    // Auto next track when current finishes (Only host advances to prevent race condition)
-    this.app.audioEngine.onPlaybackEnded = () => {
-      this.setPlayState(false);
-      if (this.app.socketClient?.isHost) {
-        this.goToNextTrack({ automatic: true });
-      }
-    };
+    this.app.audioEngine.onPlaybackEnded = () => this.handleAudioPlaybackEnded();
+  }
+
+  handleAudioPlaybackEnded() {
+    this.setPlayState(false);
+    const room = this.app.socketClient;
+    if (!room?.roomId || room.isHost) this.goToNextTrack({ automatic: true });
   }
 
   initFirebaseAuthListener() {

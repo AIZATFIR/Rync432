@@ -12,6 +12,31 @@ afterEach(() => {
 });
 
 describe('YouTube search queue UI', () => {
+  it('auto-advances a solo queue when audio playback ends', () => {
+    const ui = new UIManager({ socketClient: { roomId: null, isHost: false } });
+    ui.setPlayState = vi.fn();
+    ui.goToNextTrack = vi.fn();
+
+    ui.handleAudioPlaybackEnded();
+
+    expect(ui.setPlayState).toHaveBeenCalledWith(false);
+    expect(ui.goToNextTrack).toHaveBeenCalledWith({ automatic: true });
+  });
+
+  it('lets only the room host advance after audio playback ends', () => {
+    const guest = new UIManager({ socketClient: { roomId: 'ROOM', isHost: false } });
+    guest.setPlayState = vi.fn();
+    guest.goToNextTrack = vi.fn();
+    guest.handleAudioPlaybackEnded();
+    expect(guest.goToNextTrack).not.toHaveBeenCalled();
+
+    const host = new UIManager({ socketClient: { roomId: 'ROOM', isHost: true } });
+    host.setPlayState = vi.fn();
+    host.goToNextTrack = vi.fn();
+    host.handleAudioPlaybackEnded();
+    expect(host.goToNextTrack).toHaveBeenCalledWith({ automatic: true });
+  });
+
   it('keeps audio UI paused until AudioEngine confirms the scheduled start', () => {
     const audioEngine = { isPlaying: true, isPlaybackActive: false };
     const ui = new UIManager({ audioEngine });
