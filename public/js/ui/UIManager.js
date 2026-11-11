@@ -4,6 +4,8 @@ import { QRScanner } from './QRScanner.js';
 import { MusicSourceManager } from '../music/MusicSourceManager.js';
 import { LocalLibrary } from '../library/LocalLibrary.js';
 
+const YOUTUBE_SEARCH_DEBOUNCE_MS = 250;
+
 export function upcomingQueueItems(queue, currentTrackId, currentTrackName) {
   if (!Array.isArray(queue)) return [];
   return queue.filter(item => currentTrackId ? item.id !== currentTrackId : !currentTrackName || item.name !== currentTrackName);
@@ -737,7 +739,7 @@ export class UIManager {
           return;
         }
         this.renderSearchMessage('Menyiapkan pencarian…', 'loading');
-        this.youtubeSearchDebounce = setTimeout(() => handleYtSearchOrStream(query), 350);
+        this.scheduleYoutubeSearch(query);
       });
       elements.ytUrlInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
@@ -1065,6 +1067,13 @@ export class UIManager {
       clearTimeout(timeout);
       signal?.removeEventListener('abort', abortFromCaller);
     }
+  }
+
+  scheduleYoutubeSearch(query) {
+    clearTimeout(this.youtubeSearchDebounce);
+    this.youtubeSearchDebounce = setTimeout(() => {
+      this.activeYoutubeSearchHandler?.(query);
+    }, YOUTUBE_SEARCH_DEBOUNCE_MS);
   }
 
   renderSearchMessage(message, state = 'info') {

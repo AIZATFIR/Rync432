@@ -708,6 +708,22 @@ describe('YouTube search queue UI', () => {
     expect(ui.app.socketClient.createRoom).not.toHaveBeenCalled();
   });
 
+  it('debounces YouTube input for 250ms and runs only the latest query', async () => {
+    vi.useFakeTimers();
+    const ui = new UIManager({});
+    ui.activeYoutubeSearchHandler = vi.fn();
+
+    ui.scheduleYoutubeSearch('ambient');
+    await vi.advanceTimersByTimeAsync(200);
+    ui.scheduleYoutubeSearch('ambient live');
+    await vi.advanceTimersByTimeAsync(249);
+    expect(ui.activeYoutubeSearchHandler).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(ui.activeYoutubeSearchHandler).toHaveBeenCalledOnce();
+    expect(ui.activeYoutubeSearchHandler).toHaveBeenCalledWith('ambient live');
+  });
+
   it('renders untrusted search metadata as text, not markup', () => {
     const makeElement = () => ({
       children: [], className: '', style: {}, dataset: {}, textContent: '',
