@@ -1217,6 +1217,64 @@ describe('CloudMesh audio transfer', () => {
     expect(receiver.audioRouteByTrack.get('track-1')).toBe('p2p');
   });
 
+  it('caches a queued P2P track without changing readiness for the currently playing track', () => {
+    vi.useFakeTimers();
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.lastKnownTrack = { id: 'playing-track', name: 'Playing track' };
+    mesh.pendingTrackBufferRequest = mesh.lastKnownTrack;
+    mesh.updateLoadingState = vi.fn();
+    mesh.broadcastReadiness = vi.fn();
+    mesh.peerBufferRequestTrackKey = 'playing-track';
+    mesh.peerBufferRequestInterval = setInterval(() => {}, 1000);
+    const channel = makeChannel();
+    mesh.setupDataChannel('peer-2', channel);
+    channel.onmessage({ data: JSON.stringify({
+      type: 'AUDIO_HEADER', chunkProtocol: 1, name: 'Queued track', id: 'queued-track', totalBytes: 3, totalChunks: 1
+    }) });
+    channel.onmessage({ data: makeAudioChunkFrame(0, 1, [4, 5, 6]) });
+
+    expect(new Uint8Array(mesh.localAudioBufferCache.get('queued-track'))).toEqual(new Uint8Array([4, 5, 6]));
+    expect(events.some(event => event.type === 'BINARY_AUDIO_RECEIVED')).toBe(false);
+    expect(events.some(event => event.type === 'AUDIO_TRANSFER_PROGRESS' && event.payload.status === 'Audio P2P Siap!')).toBe(false);
+    expect(mesh.broadcastReadiness).not.toHaveBeenCalledWith('READY', 'queued-track', 'p2p');
+    expect(mesh.peerBufferRequestInterval).not.toBeNull();
+    expect(channel.sent.map(message => JSON.parse(message))).toContainEqual({ type: 'AUDIO_TRANSFER_ACK', id: 'queued-track', success: true });
+    clearInterval(mesh.peerBufferRequestInterval);
+  });
+
+  it('does not let a stale partial P2P transfer failure replace the new track status', async () => {
+    vi.useFakeTimers();
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.lastKnownTrack = { id: 'old-track', name: 'Old track' };
+    mesh.pendingTrackBufferRequest = mesh.lastKnownTrack;
+    mesh.currentFetchingTrackKey = 'old-track';
+    mesh.updateLoadingState = vi.fn();
+    mesh.broadcastReadiness = vi.fn();
+    const channel = makeChannel();
+    mesh.setupDataChannel('peer-2', channel);
+    channel.onmessage({ data: JSON.stringify({
+      type: 'AUDIO_HEADER', chunkProtocol: 1, name: 'Old track', id: 'old-track', totalBytes: 32 * 1024 + 1, totalChunks: 2
+    }) });
+    channel.onmessage({ data: makeAudioChunkFrame(0, 1, new Uint8Array(32 * 1024).fill(4)) });
+    expect(mesh.incomingAudioChunks.get('peer-2')?.receivedBytes).toBe(32 * 1024);
+
+    mesh.lastKnownTrack = { id: 'new-track', name: 'New track' };
+    mesh.pendingTrackBufferRequest = mesh.lastKnownTrack;
+    mesh.currentFetchingTrackKey = 'new-track';
+    events.length = 0;
+    mesh.updateLoadingState.mockClear();
+    mesh.broadcastReadiness.mockClear();
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(mesh.incomingAudioChunks.has('peer-2')).toBe(false);
+    expect(mesh.currentFetchingTrackKey).toBe('new-track');
+    expect(mesh.updateLoadingState).not.toHaveBeenCalled();
+    expect(mesh.broadcastReadiness).not.toHaveBeenCalledWith('FAILED', 'old-track');
+    expect(events.some(event => event.type === 'AUDIO_TRANSFER_PROGRESS' && event.payload.status.includes('timeout'))).toBe(false);
+  });
+
   it('reports a missing P2P acknowledgement after a bounded wait', async () => {
     vi.useFakeTimers();
     const events = [];

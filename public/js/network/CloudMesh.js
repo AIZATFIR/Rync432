@@ -2197,9 +2197,11 @@ export class CloudMesh {
               this.peerBufferRequestInterval = null;
               this.peerBufferRequestTrackKey = null;
             }
-            this.broadcastReadiness('PREPARING', msg.id || '', 'p2p');
-            this.updateLoadingState(true, `Menerima ${msg.name}...`);
-            this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status: `Menerima ${msg.name} P2P...` });
+            if (this.isCurrentAudioTrack(msg.id, msg.name)) {
+              this.broadcastReadiness('PREPARING', msg.id || '', 'p2p');
+              this.updateLoadingState(true, `Menerima ${msg.name}...`);
+              this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status: `Menerima ${msg.name} P2P...` });
+            }
           } else if (msg.type === 'AUDIO_TRANSFER_ACK') {
             const pending = this.pendingAudioTransferAcks.get(channel);
             if (pending && pending.trackId === (msg.id || '')) {
@@ -2294,7 +2296,7 @@ export class CloudMesh {
           stream.nextChunkIndex += 1;
           stream.resetTimeout?.();
           const pct = Math.min(99, Math.round((stream.receivedBytes / stream.totalBytes) * 100));
-          if (pct > stream.lastProgressPct) {
+          if (this.isCurrentAudioTrack(stream.id, stream.name) && pct > stream.lastProgressPct) {
             stream.lastProgressPct = pct;
             this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct, status: `Menerima P2P (${pct}%)...` });
           }
@@ -2309,24 +2311,28 @@ export class CloudMesh {
             const trackId = stream.id;
             this.incomingAudioChunks.delete(targetPeerId);
             if (stream.timeout) clearTimeout(stream.timeout);
-            if (this.peerBufferRequestInterval) clearInterval(this.peerBufferRequestInterval);
-            this.peerBufferRequestInterval = null;
-            this.peerBufferRequestTrackKey = null;
+            const transferKey = trackId || trackName;
+            if (this.peerBufferRequestInterval && this.peerBufferRequestTrackKey === transferKey) {
+              clearInterval(this.peerBufferRequestInterval);
+              this.peerBufferRequestInterval = null;
+              this.peerBufferRequestTrackKey = null;
+            }
             this.localAudioBufferCache.set(trackName, completeBuffer.buffer);
             if (trackId) this.localAudioBufferCache.set(trackId, completeBuffer.buffer);
-            this.currentAudioArrayBuffer = completeBuffer.buffer;
             this.audioRouteByTrack.set(trackId || trackName, 'p2p');
-            this.currentFetchingTrackKey = null;
-            this.pendingTrackBufferRequest = null;
-
-            this.updateLoadingState(false, 'Siap');
-            this.broadcastReadiness('READY', trackId, 'p2p');
-            this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 100, status: 'Audio P2P Siap!' });
-            this.onEvent('BINARY_AUDIO_RECEIVED', {
-              arrayBuffer: completeBuffer.buffer,
-              trackName,
-              trackId
-            });
+            if (this.isCurrentAudioTrack(trackId, trackName)) {
+              this.currentAudioArrayBuffer = completeBuffer.buffer;
+              this.currentFetchingTrackKey = null;
+              this.pendingTrackBufferRequest = null;
+              this.updateLoadingState(false, 'Siap');
+              this.broadcastReadiness('READY', trackId, 'p2p');
+              this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 100, status: 'Audio P2P Siap!' });
+              this.onEvent('BINARY_AUDIO_RECEIVED', {
+                arrayBuffer: completeBuffer.buffer,
+                trackName,
+                trackId
+              });
+            }
             try {
               channel.send(JSON.stringify({ type: 'AUDIO_TRANSFER_ACK', id: trackId || '', success: true }));
             } catch (error) { }
@@ -2553,9 +2559,17 @@ export class CloudMesh {
       this.currentFetchingTrackKey = null;
       this.pendingTrackBufferRequest = null;
     }
-    this.updateLoadingState(false, status);
-    this.broadcastReadiness('FAILED', trackId);
-    this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status });
+    if (this.isCurrentAudioTrack(trackId, trackName)) {
+      this.updateLoadingState(false, status);
+      this.broadcastReadiness('FAILED', trackId);
+      this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status });
+    }
+  }
+
+  isCurrentAudioTrack(trackId, trackName = '') {
+    const track = this.pendingTrackBufferRequest || this.lastKnownTrack;
+    if (!track) return true;
+    return trackId ? track.id === trackId : track.name === trackName;
   }
 
   async removeRemotePeer(targetPeerId) {
