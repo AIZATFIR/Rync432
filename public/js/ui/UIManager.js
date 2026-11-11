@@ -199,6 +199,7 @@ export class UIManager {
       hostDisconnectedNotice: document.getElementById('hostDisconnectedNotice'),
       youtubePlayerShell: document.getElementById('youtubePlayerShell'),
       youtubePlayerStatus: document.getElementById('youtubePlayerStatus'),
+      youtubeEnableAudioBtn: document.getElementById('youtubeEnableAudioBtn'),
       sharePlayerRoomBtn: document.getElementById('sharePlayerRoomBtn'),
 
       // Upload & Demo Elements
@@ -297,6 +298,7 @@ export class UIManager {
     elements.clearUpcomingBtn?.addEventListener('click', () => this.clearUpcomingQueue());
     elements.queueUndoBtn?.addEventListener('click', () => this.restoreQueueUndo());
     elements.miniPlayerPlayBtn?.addEventListener('click', () => this.togglePlayback());
+    elements.youtubeEnableAudioBtn?.addEventListener('click', () => this.enableYouTubeAudioFromGesture());
     elements.miniPlayerSeek?.addEventListener('input', () => { this.isMiniSeeking = true; });
     elements.miniPlayerSeek?.addEventListener('change', event => {
       this.isMiniSeeking = false;
@@ -2081,11 +2083,25 @@ export class UIManager {
 
   setYouTubePlayerVisible(visible) {
     if (this.elements.youtubePlayerShell) this.elements.youtubePlayerShell.hidden = !visible;
+    if (!visible) this.setYouTubeAutoplayBlocked(false);
     if (typeof document !== 'undefined') document.body?.classList.toggle('is-youtube-track', visible);
   }
 
   setYouTubePlayerStatus(message = '') {
     if (this.elements.youtubePlayerStatus) this.elements.youtubePlayerStatus.textContent = message;
+  }
+
+  setYouTubeAutoplayBlocked(blocked) {
+    if (this.elements.youtubeEnableAudioBtn) this.elements.youtubeEnableAudioBtn.hidden = !blocked;
+  }
+
+  enableYouTubeAudioFromGesture() {
+    const started = this.app.youtubePlayer?.playFromUserGesture() === true;
+    if (started) {
+      this.setYouTubeAutoplayBlocked(false);
+      this.setYouTubePlayerStatus('Mengaktifkan audio…');
+    }
+    return started;
   }
 
   setView(view) {

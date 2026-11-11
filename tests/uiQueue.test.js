@@ -37,6 +37,20 @@ describe('YouTube search queue UI', () => {
     expect(host.goToNextTrack).toHaveBeenCalledWith({ automatic: true });
   });
 
+  it('shows a YouTube audio unlock action and starts audio from its tap', () => {
+    const button = { hidden: true };
+    const status = { textContent: '' };
+    const youtubePlayer = { playFromUserGesture: vi.fn().mockReturnValue(true) };
+    const ui = new UIManager({ youtubePlayer });
+    ui.elements = { youtubeEnableAudioBtn: button, youtubePlayerStatus: status };
+
+    ui.setYouTubeAutoplayBlocked(true);
+    expect(button.hidden).toBe(false);
+    expect(ui.enableYouTubeAudioFromGesture()).toBe(true);
+    expect(youtubePlayer.playFromUserGesture).toHaveBeenCalledOnce();
+    expect(button.hidden).toBe(true);
+  });
+
   it('keeps audio UI paused until AudioEngine confirms the scheduled start', () => {
     const audioEngine = { isPlaying: true, isPlaybackActive: false };
     const ui = new UIManager({ audioEngine });

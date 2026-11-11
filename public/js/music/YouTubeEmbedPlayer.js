@@ -136,6 +136,13 @@ export class YouTubeEmbedPlayer {
     }
   }
 
+  playFromUserGesture() {
+    if (!this.player || !this.readyPromise) return false;
+    this.cancelScheduledPlay();
+    this.player.playVideo();
+    return true;
+  }
+
   async seekTo(seconds) {
     if (this.player && this.readyPromise) (await this.readyPromise).seekTo(Math.max(0, Number(seconds) || 0), true);
   }

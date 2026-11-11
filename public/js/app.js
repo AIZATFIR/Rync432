@@ -37,7 +37,8 @@ class App {
       onStateChange: (state, player) => this.handleYouTubePlayerState(state, player),
       onError: code => this.handleYouTubePlayerError(code),
       onAutoplayBlocked: () => {
-        this.uiManager.setYouTubePlayerStatus('Tekan Play di player YouTube untuk mengizinkan audio di perangkat ini.');
+        this.uiManager.setYouTubePlayerStatus('Autoplay diblokir browser. Ketuk Aktifkan audio untuk melanjutkan.');
+        this.uiManager.setYouTubeAutoplayBlocked(true);
         this.socketClient.cloudMesh.broadcastReadiness('AUTOPLAY_BLOCKED', this.uiManager.currentTrack?.id || '', 'youtube');
       }
     });
@@ -103,6 +104,7 @@ class App {
       }
       this.audioEngine.pauseOffsetSec = player?.getCurrentTime?.() || 0;
       this.uiManager.setYouTubePlayerStatus('');
+      this.uiManager.setYouTubeAutoplayBlocked(false);
       this.socketClient.cloudMesh.broadcastReadiness('READY', this.uiManager.currentTrack?.id || '', 'youtube');
       this.uiManager.setPlayState(true);
     } else if (state === YT?.PlayerState?.CUED || state === 5) {
@@ -131,6 +133,7 @@ class App {
       153: 'Player YouTube tidak menerima identitas situs. Muat ulang halaman.'
     };
     this.uiManager.setPlayState(false);
+    this.uiManager.setYouTubeAutoplayBlocked(false);
     this.socketClient?.cloudMesh?.broadcastReadiness('FAILED', this.uiManager.currentTrack?.id || '', 'youtube');
     this.uiManager.setYouTubePlayerStatus(messages[code] || 'Video YouTube gagal diputar. Coba video lain.');
   }
@@ -216,6 +219,7 @@ class App {
           break;
         }
         uiManager.setYouTubePlayerVisible(true);
+        uiManager.setYouTubeAutoplayBlocked(false);
         uiManager.setYouTubePlayerStatus('Memuat player YouTube…');
         const schedule = socketClient.cloudMesh?.lastKnownState;
         if (typeof schedule === 'number' && schedule > Date.now()) {

@@ -87,6 +87,15 @@ describe('YouTube embedded player adapter', () => {
     expect(instances[0].calls).toContainEqual(['setVolume', 35]);
   });
 
+  it('starts the loaded YouTube player synchronously from a user gesture', async () => {
+    const instances = installFakePlayer();
+    const player = new YouTubeEmbedPlayer('youtubePlayerContainer');
+    await player.cueVideo('dQw4w9WgXcQ');
+
+    expect(player.playFromUserGesture()).toBe(true);
+    expect(instances[0].calls.filter(call => call[0] === 'playVideo')).toHaveLength(1);
+  });
+
   it('seeks after waiting for scheduled start time and cancels pending start on pause', async () => {
     vi.useFakeTimers();
     const instances = installFakePlayer();

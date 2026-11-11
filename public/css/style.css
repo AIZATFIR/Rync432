@@ -1860,6 +1860,8 @@ button:focus-visible,input:focus-visible { outline: 2px solid var(--spotify-gree
 #youtubePlayerContainer { width: 100%; min-height: 200px; aspect-ratio: 16 / 9; }
 #youtubePlayerContainer iframe { display: block; width: 100% !important; height: 100% !important; min-height: 200px; }
 .youtube-player-status { min-height: 1.3em; padding: 4px 10px; color: var(--text-silver); font-size: 0.78rem; line-height: 1.4; }
+.youtube-enable-audio { justify-self: center; min-height: 44px; margin: 0 10px 10px; }
+.youtube-enable-audio[hidden] { display: none; }
 body.is-youtube-track .visualizer-container { display: none; }
 
 @media (max-width: 760px) {
