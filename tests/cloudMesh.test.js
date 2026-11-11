@@ -660,6 +660,7 @@ describe('CloudMesh audio transfer', () => {
     mesh.updateLoadingState = vi.fn();
     const channel = makeChannel();
     mesh.setupDataChannel('peer-2', channel);
+    channel.onopen();
     channel.onmessage({ data: JSON.stringify({
       type: 'AUDIO_HEADER', chunkProtocol: 1, name: 'Track', id: 'track-1', totalBytes: 3, totalChunks: 1
     }) });
@@ -667,6 +668,32 @@ describe('CloudMesh audio transfer', () => {
 
     expect(new Uint8Array(events.find(event => event.type === 'BINARY_AUDIO_RECEIVED').payload.arrayBuffer)).toEqual(new Uint8Array([4, 5, 6]));
     expect(channel.sent.map(message => JSON.parse(message))).toContainEqual({ type: 'AUDIO_TRANSFER_ACK', id: 'track-1', success: true });
+  });
+
+  it('writes incoming framed chunks into one pre-sized buffer without retaining chunk arrays', () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.updateLoadingState = vi.fn();
+    const channel = makeChannel();
+    mesh.setupDataChannel('peer-2', channel);
+    channel.onopen();
+    channel.onmessage({ data: JSON.stringify({
+      type: 'AUDIO_HEADER', chunkProtocol: 1, name: 'Track', id: 'track-1', totalBytes: 32 * 1024 + 2, totalChunks: 2
+    }) });
+
+    const transfer = mesh.incomingAudioChunks.get('peer-2');
+    expect(transfer.buffer).toBeInstanceOf(Uint8Array);
+    expect(transfer.buffer.byteLength).toBe(32 * 1024 + 2);
+    expect(transfer.chunks).toBeUndefined();
+
+    const firstChunk = new Uint8Array(32 * 1024).fill(4);
+    channel.onmessage({ data: makeAudioChunkFrame(0, 1, firstChunk) });
+    channel.onmessage({ data: makeAudioChunkFrame(1, 2, [6, 7]) });
+
+    const received = new Uint8Array(events.find(event => event.type === 'BINARY_AUDIO_RECEIVED').payload.arrayBuffer);
+    expect(received.byteLength).toBe(32 * 1024 + 2);
+    expect(received.slice(0, 2)).toEqual(new Uint8Array([4, 4]));
+    expect(received.slice(-2)).toEqual(new Uint8Array([6, 7]));
   });
 
   it('rejects an out-of-order framed P2P audio chunk', () => {
