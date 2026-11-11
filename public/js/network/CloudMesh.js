@@ -11,6 +11,7 @@ const P2P_BACKPRESSURE_POLL_INTERVAL_MS = 100;
 const P2P_BUFFER_REQUEST_MAX_ATTEMPTS = 10;
 const REMOTE_AUDIO_FETCH_TIMEOUT_MS = 5_000;
 const QUEUE_MUTATION_TIMEOUT_MS = 8_000;
+const QUEUE_ACK_RESULT_CACHE_MAX_ITEMS = 500;
 const QUEUE_CONFLICT_RETRY_LIMIT = 5;
 const ROOM_POLL_TIMEOUT_MS = 8_000;
 const ROOM_JOIN_TIMEOUT_MS = 8_000;
@@ -122,6 +123,7 @@ export class CloudMesh {
     this.localAudioBufferCache = new Map();
     this.audioRouteByTrack = new Map();
     this.queueAdditionAcknowledgements = new Map();
+    this.queueAdditionResults = new Map();
     this.activeBufferTransfers = new WeakSet();
     this.pendingAudioTransferAcks = new Map();
     this.deletedQueueIds = new Set();
@@ -1127,6 +1129,8 @@ export class CloudMesh {
     this.deletedQueueIds.delete(item.id);
 
     if (this.queueAdditionAcknowledgements.has(itemKey)) return true;
+    if (this.queueAdditionResults.has(itemKey) && currentQ.some(q => queueItemKey(q) === itemKey)) return true;
+    this.queueAdditionResults.delete(itemKey);
 
     if (!currentQ.some(q => queueItemKey(q) === itemKey)) {
       this.lastKnownQueue = [...currentQ, item];
@@ -1193,8 +1197,15 @@ export class CloudMesh {
       return false;
     });
     this.queueAdditionAcknowledgements.set(itemKey, acknowledgement);
-    acknowledgement.finally(() => {
+    acknowledgement.then(result => {
       if (this.queueAdditionAcknowledgements.get(itemKey) === acknowledgement) {
+        if (result) {
+          this.queueAdditionResults.delete(itemKey);
+          this.queueAdditionResults.set(itemKey, true);
+          while (this.queueAdditionResults.size > QUEUE_ACK_RESULT_CACHE_MAX_ITEMS) {
+            this.queueAdditionResults.delete(this.queueAdditionResults.keys().next().value);
+          }
+        }
         this.queueAdditionAcknowledgements.delete(itemKey);
       }
     }).catch(() => {});
@@ -1206,7 +1217,13 @@ export class CloudMesh {
     const exact = this.queueAdditionAcknowledgements?.get(queueItemId);
     if (exact) return exact;
     const key = resolveQueueItemKey(this.lastKnownQueue || [], queueItemId);
-    return this.queueAdditionAcknowledgements?.get(key) || Promise.resolve(false);
+    const pending = this.queueAdditionAcknowledgements?.get(key);
+    if (pending) return pending;
+    if (this.queueAdditionResults?.has(key)) {
+      const stillQueued = (this.lastKnownQueue || []).some(item => queueItemKey(item) === key);
+      return Promise.resolve(stillQueued && this.queueAdditionResults.get(key));
+    }
+    return Promise.resolve(false);
   }
 
   requestControl(action, details = {}) {

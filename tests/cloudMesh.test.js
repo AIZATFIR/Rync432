@@ -1487,6 +1487,25 @@ describe('CloudMesh audio transfer', () => {
     await expect(mesh.waitForQueueItemAcknowledgement(track.queueItemId)).resolves.toBe(true);
   });
 
+  it('preserves a successful queue acknowledgement for a waiter that arrives afterward', async () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'peer-1';
+    mesh.deviceName = 'Host';
+    const track = { id: 'quick-track', name: 'Quick track' };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, queue: [{ ...track, queueItemId: track.queueItemId }], queueRevision: 1 })
+    }));
+
+    await mesh.addToQueue(track);
+    await vi.waitFor(() => expect(mesh.queueAdditionAcknowledgements.has(track.queueItemId)).toBe(false));
+
+    await expect(mesh.waitForQueueItemAcknowledgement(track.queueItemId)).resolves.toBe(true);
+    mesh.lastKnownQueue = [];
+    await expect(mesh.waitForQueueItemAcknowledgement(track.queueItemId)).resolves.toBe(false);
+  });
+
   it('ends a stalled room queue acknowledgement after a bounded timeout', async () => {
     vi.useFakeTimers();
     const events = [];
