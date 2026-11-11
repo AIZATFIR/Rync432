@@ -20,6 +20,9 @@ const AUDIO_ROUTE_LABELS = {
 const escapeHtml = value => String(value).replace(/[&<>"']/g, char => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
 })[char]);
+const peerAudioRouteLabel = peer => peer?.audioRoute === 'unknown' && peer?.readiness === 'READY'
+  ? 'Belum ada audio'
+  : AUDIO_ROUTE_LABELS[peer?.audioRoute] || AUDIO_ROUTE_LABELS.unknown;
 
 export function upcomingQueueItems(queue, currentTrackId, currentTrackName) {
   if (!Array.isArray(queue)) return [];
@@ -2974,7 +2977,7 @@ export class UIManager {
         AUTOPLAY_BLOCKED: 'Perlu tekan Play'
       };
       const readiness = peer.readiness || 'PREPARING';
-      const audioRoute = AUDIO_ROUTE_LABELS[peer.audioRoute] || AUDIO_ROUTE_LABELS.unknown;
+      const audioRoute = peerAudioRouteLabel(peer);
       const statusColor = readiness === 'READY' ? 'var(--spotify-green)' : readiness === 'FAILED' || readiness === 'AUTOPLAY_BLOCKED' ? '#ff5c6c' : '#fbbf24';
       const statusText = `<span style="color:${statusColor};font-weight:600;">${readinessLabels[readiness] || 'Menyiapkan audio…'} • ${audioRoute} • ${roleStr} • ${peer.isHost ? 'Host' : 'Satellite'}</span>`;
 
@@ -3030,7 +3033,7 @@ export class UIManager {
       const isSelf = peer.id === this.app.socketClient.peerId;
       const deviceName = escapeHtml(peer.deviceName || 'Speaker');
       const role = escapeHtml(typeof peer.role === 'string' && peer.role ? peer.role.toUpperCase() : 'STEREO');
-      const audioRoute = AUDIO_ROUTE_LABELS[peer.audioRoute] || AUDIO_ROUTE_LABELS.unknown;
+      const audioRoute = peerAudioRouteLabel(peer);
       const div = document.createElement('div');
       div.className = 'device-item';
       div.innerHTML = `

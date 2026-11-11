@@ -851,6 +851,28 @@ describe('YouTube search queue UI', () => {
     expect(devicesList.children[0].innerHTML).toContain('P2P');
   });
 
+  it('does not show an audio route as searching after an idle peer is ready', () => {
+    const makeElement = () => ({
+      children: [], className: '', style: {}, dataset: {}, innerHTML: '',
+      appendChild(child) { this.children.push(child); },
+      addEventListener() {},
+      querySelector() { return { addEventListener() {} }; }
+    });
+    vi.stubGlobal('document', { createElement: makeElement });
+    const ui = new UIManager({ socketClient: { peerId: 'host', isHost: false } });
+    const devicesList = makeElement();
+    ui.elements = {
+      devicesList, devicesMatrixList: null,
+      activeSpeakerCount: null, roomReadinessIndicator: null,
+      roomReadinessText: null, peerLoadingNotice: null
+    };
+
+    ui.renderPeerList([{ id: 'guest', readiness: 'READY', audioRoute: 'unknown' }]);
+
+    expect(devicesList.children[0].innerHTML).toContain('Belum ada audio');
+    expect(devicesList.children[0].innerHTML).not.toContain('Mencari jalur audio');
+  });
+
   it('loads an empty solo queue when browser storage is unavailable', () => {
     vi.stubGlobal('localStorage', undefined);
     const ui = new UIManager({});
