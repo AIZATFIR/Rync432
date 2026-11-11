@@ -1,6 +1,7 @@
 const RESULT_LIMIT = 8;
 const QUERY_MAX_LENGTH = 200;
 const PROVIDER_REQUEST_TIMEOUT_MS = 3_000;
+const DURATION_ENRICHMENT_TIMEOUT_MS = 500;
 const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
 const SEARCH_CACHE_MAX_ITEMS = 100;
 const searchCache = new Map();
@@ -36,7 +37,7 @@ function sendProviderError(res, response, payload) {
   return res.status(502).json({ error: 'PROVIDER_UNAVAILABLE', provider: 'youtube', retryable: true });
 }
 
-async function fetchJson(url) {
+async function fetchJson(url, timeoutMs = PROVIDER_REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
   let timeout;
   try {
@@ -50,7 +51,7 @@ async function fetchJson(url) {
         timeout = setTimeout(() => {
           controller.abort();
           reject(Object.assign(new Error('PROVIDER_TIMEOUT'), { name: 'TimeoutError' }));
-        }, PROVIDER_REQUEST_TIMEOUT_MS);
+        }, timeoutMs);
       })
     ]);
   } finally {
@@ -98,7 +99,7 @@ export default async function handler(req, res) {
     detailsUrl.search = new URLSearchParams({ key, part: 'contentDetails', id: videos.map(item => item.id.videoId).join(',') });
     let detailsData = {};
     try {
-      const { response: detailsResponse, data } = await fetchJson(detailsUrl);
+      const { response: detailsResponse, data } = await fetchJson(detailsUrl, DURATION_ENRICHMENT_TIMEOUT_MS);
       if (detailsResponse.ok) detailsData = data;
     } catch (error) {
       // Duration is supplemental; valid video results remain usable if enrichment is slow.

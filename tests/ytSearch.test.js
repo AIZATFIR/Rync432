@@ -77,7 +77,7 @@ describe('YouTube search API', () => {
     expect(result.body.error).toBe('RATE_LIMITED');
   });
 
-  it('keeps valid search results when duration enrichment times out', async () => {
+  it('returns valid search results promptly when duration enrichment stalls', async () => {
     vi.useFakeTimers();
     vi.stubEnv('YOUTUBE_DATA_API_KEY', 'test-key');
     const fetchMock = vi.fn()
@@ -91,9 +91,17 @@ describe('YouTube search API', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const search = callSearch(`metadata timeout ${Date.now()}`);
-    await vi.advanceTimersByTimeAsync(3_000);
-    const result = await search;
+    let result;
+    let settled = false;
+    const completed = search.then(value => { result = value; settled = true; });
+    await vi.advanceTimersByTimeAsync(500);
+    const resolvedPromptly = settled;
+    if (!resolvedPromptly) {
+      await vi.advanceTimersByTimeAsync(2_500);
+      await completed;
+    }
 
+    expect(resolvedPromptly).toBe(true);
     expect(result.statusCode).toBe(200);
     expect(result.body.results).toEqual([expect.objectContaining({
       id: 'dQw4w9WgXcQ', title: 'Song title', duration: 0

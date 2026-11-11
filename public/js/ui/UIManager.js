@@ -1273,7 +1273,8 @@ export class UIManager {
       title.textContent = itemTitle;
       const meta = document.createElement('div');
       meta.className = 'yt-result-meta';
-      meta.textContent = `${itemArtist} • ${item.durationText || this.formatTime(item.duration)}`;
+      const duration = item.durationText || (Number(item.duration) > 0 ? this.formatTime(item.duration) : '');
+      meta.textContent = [itemArtist, duration].filter(Boolean).join(' • ');
       const info = document.createElement('div');
       info.className = 'yt-result-info';
       info.appendChild(title);

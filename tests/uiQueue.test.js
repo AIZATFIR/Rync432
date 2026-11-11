@@ -1090,7 +1090,7 @@ describe('YouTube search queue UI', () => {
     ui.renderSearchResults([{
       id: 'yt_abcdefghijk', sourceId: 'abcdefghijk', sourceType: 'youtube',
       sourceUrl: 'https://youtu.be/abcdefghijk',
-      name: '<img src=x onerror=alert(1)>', artist: '<svg onload=alert(1)>', duration: 60
+      name: '<img src=x onerror=alert(1)>', artist: '<svg onload=alert(1)>', duration: 0
     }]);
 
     expect(list.children[1].children).toHaveLength(3);
@@ -1100,6 +1100,7 @@ describe('YouTube search queue UI', () => {
     expect(list.children[1].children[2].children[1].className).toContain('add-yt-queue-btn');
     expect(list.children[1].children[2].children[1].style.cssText || '').not.toContain('28px');
     expect(list.children[1].children[1].children[0].textContent).toBe('<img src=x onerror=alert(1)>');
+    expect(list.children[1].children[1].children[1].textContent).toBe('<svg onload=alert(1)>');
     expect(list.children[1].children[1].children[0]._html).toBeUndefined();
   });
 
