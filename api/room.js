@@ -10,6 +10,11 @@ const MAX_SIGNAL_BYTES = 64 * 1024;
 const MAX_PENDING_SIGNALS = 256;
 const SIGNAL_TTL_MS = 30 * 1000;
 
+const queueRevisionOf = room => Number.isSafeInteger(room?.queueRevision) ? room.queueRevision : 0;
+const updateQueueRevision = (room, previousQueue) => {
+  if (previousQueue !== JSON.stringify(room.queue || [])) room.queueRevision = queueRevisionOf(room) + 1;
+};
+
 const roomStorePath = !process.env.VERCEL && process.env.NODE_ENV !== 'test'
   ? (process.env.RYNC_ROOM_STORE_PATH || path.join(process.cwd(), 'data', 'rooms.json'))
   : null;
@@ -101,6 +106,7 @@ export default async function handler(req, res) {
       const room = rooms.get(roomId);
       if (!requireHost(room, body.hostToken)) return;
       if (!room.queue) room.queue = [];
+      const previousQueueSnapshot = JSON.stringify(room.queue);
       let item = targetQueueId ? room.queue.find(q => q.id === targetQueueId) : null;
       if (!item) {
         item = room.queue.find(q => q.name === trackName && Math.abs((q.duration || 0) - duration) < 1);
@@ -146,9 +152,10 @@ export default async function handler(req, res) {
         room.track.audioId = audioId;
         room.track.audioUrl = audioUrl;
       }
+      updateQueueRevision(room, previousQueueSnapshot);
       room.updatedAt = now;
 
-      return res.status(200).json({ success: true, audioUrl, track: room.track, queue: room.queue, item });
+      return res.status(200).json({ success: true, audioUrl, track: room.track, queue: room.queue, queueRevision: queueRevisionOf(room), item });
     }
     return res.status(400).json({ error: 'Missing audioBase64 or roomId' });
   }
@@ -181,6 +188,7 @@ export default async function handler(req, res) {
       repeatMode: 'off',
       shuffle: false,
       shufflePlayedIds: [],
+      queueRevision: 0,
       updatedAt: now,
       queue: [],
       peers: {
@@ -238,6 +246,7 @@ export default async function handler(req, res) {
         state: room.state,
         track: room.track,
         queue: room.queue || [],
+        queueRevision: queueRevisionOf(room),
         targetServerTime: room.targetServerTime,
         startOffsetSec: room.startOffsetSec,
         repeatMode: room.repeatMode || 'off',
@@ -260,6 +269,7 @@ export default async function handler(req, res) {
     if (!room.peers?.[peerId]) {
       return res.status(403).json({ exists: true, error: 'ROOM_MEMBER_REQUIRED' });
     }
+    const previousQueueSnapshot = JSON.stringify(room.queue || []);
     if (isThisHost) {
       room.hostId = peerId;
       Object.entries(room.peers || {}).forEach(([id, peer]) => { peer.isHost = id === peerId; });
@@ -306,6 +316,7 @@ export default async function handler(req, res) {
       const delSet = new Set(body.deletedQueueIds);
       room.queue = (room.queue || []).filter(item => !delSet.has(item.id));
     }
+    if (isThisHost) updateQueueRevision(room, previousQueueSnapshot);
 
     const isHostAssigned = isThisHost;
 
@@ -343,6 +354,7 @@ export default async function handler(req, res) {
       state: room.state,
       track: room.track,
       queue: room.queue || [],
+      queueRevision: queueRevisionOf(room),
       targetServerTime: room.targetServerTime,
       startOffsetSec: room.startOffsetSec,
       repeatMode: room.repeatMode || 'off',
@@ -374,13 +386,15 @@ export default async function handler(req, res) {
       };
       rooms.set(roomId, room);
     }
+    const previousQueueSnapshot = JSON.stringify(room.queue || []);
     if (body.state) room.state = body.state;
     if (body.targetServerTime !== undefined) room.targetServerTime = body.targetServerTime;
     if (body.startOffsetSec !== undefined) room.startOffsetSec = body.startOffsetSec;
     if (body.track) room.track = body.track;
     if (Array.isArray(body.queue)) room.queue = body.queue;
+    updateQueueRevision(room, previousQueueSnapshot);
     room.updatedAt = now;
-    return res.status(200).json({ success: true, track: room.track, queue: room.queue });
+    return res.status(200).json({ success: true, track: room.track, queue: room.queue, queueRevision: queueRevisionOf(room) });
   }
 
   if (action === 'play') {
@@ -437,6 +451,7 @@ export default async function handler(req, res) {
     if (!room) return res.status(404).json({ success: false, error: 'ROOM_NOT_FOUND' });
     if (!peerId || !room.peers?.[peerId]) return res.status(403).json({ success: false, error: 'ROOM_MEMBER_REQUIRED' });
     if (!room.queue) room.queue = [];
+    const previousQueueSnapshot = JSON.stringify(room.queue);
 
     if (Array.isArray(body.items)) {
       if (body.items.length > MAX_QUEUE_ITEMS
@@ -495,11 +510,13 @@ export default async function handler(req, res) {
       }
     }
 
+    updateQueueRevision(room, previousQueueSnapshot);
     room.updatedAt = now;
     return res.status(200).json({
       success: true,
       track: room.track,
       queue: room.queue,
+      queueRevision: queueRevisionOf(room),
       state: room.state,
       targetServerTime: room.targetServerTime
     });
@@ -508,7 +525,19 @@ export default async function handler(req, res) {
   if (action === 'reorder_queue') {
     const room = rooms.get(roomId);
     if (!requireHost(room, body.hostToken)) return;
+    if (body.expectedQueueRevision !== undefined && !Number.isSafeInteger(body.expectedQueueRevision)) {
+      return res.status(400).json({ success: false, error: 'INVALID_QUEUE_REVISION' });
+    }
+    if (body.expectedQueueRevision !== undefined && body.expectedQueueRevision !== queueRevisionOf(room)) {
+      return res.status(409).json({
+        success: false,
+        error: 'QUEUE_CONFLICT',
+        queue: room.queue || [],
+        queueRevision: queueRevisionOf(room)
+      });
+    }
     if (room && Array.isArray(body.queue)) {
+      const previousQueueSnapshot = JSON.stringify(room.queue || []);
       const currentQueue = room.queue || [];
       const currentById = new Map(currentQueue.filter(item => item?.id).map(item => [item.id, item]));
       const reorderedQueue = [];
@@ -525,8 +554,9 @@ export default async function handler(req, res) {
         }
       });
       room.queue = reorderedQueue;
+      updateQueueRevision(room, previousQueueSnapshot);
       room.updatedAt = now;
-      return res.status(200).json({ success: true, queue: room.queue });
+      return res.status(200).json({ success: true, queue: room.queue, queueRevision: queueRevisionOf(room) });
     }
     return res.status(200).json({ success: false });
   }
@@ -538,12 +568,14 @@ export default async function handler(req, res) {
       const qId = body.queueId;
       const targetIdx = room.queue.findIndex(q => q.id === qId);
       if (targetIdx !== -1) {
+        const previousQueueSnapshot = JSON.stringify(room.queue);
         const [item] = room.queue.splice(targetIdx, 1);
         const currentIdx = room.track ? room.queue.findIndex(q => q.id === room.track.id) : -1;
         const insertIdx = currentIdx >= 0 ? currentIdx + 1 : 0;
         room.queue.splice(insertIdx, 0, item);
+        updateQueueRevision(room, previousQueueSnapshot);
         room.updatedAt = now;
-        return res.status(200).json({ success: true, queue: room.queue });
+        return res.status(200).json({ success: true, queue: room.queue, queueRevision: queueRevisionOf(room) });
       }
     }
     return res.status(404).json({ error: 'Track not found' });
@@ -566,6 +598,7 @@ export default async function handler(req, res) {
           success: true,
           track: room.track,
           queue: room.queue,
+          queueRevision: queueRevisionOf(room),
           state: room.state,
           targetServerTime: null,
           startOffsetSec: 0
@@ -579,10 +612,12 @@ export default async function handler(req, res) {
     const room = rooms.get(roomId);
     if (!requireHost(room, body.hostToken)) return;
     if (room && room.queue) {
+      const previousQueueSnapshot = JSON.stringify(room.queue);
       const qId = body.queueId;
       room.queue = room.queue.filter(q => q.id !== qId);
+      updateQueueRevision(room, previousQueueSnapshot);
       room.updatedAt = now;
-      return res.status(200).json({ success: true, queue: room.queue });
+      return res.status(200).json({ success: true, queue: room.queue, queueRevision: queueRevisionOf(room) });
     }
     return res.status(200).json({ success: false });
   }
@@ -594,6 +629,7 @@ export default async function handler(req, res) {
       || body.queueIds.some(id => typeof id !== 'string' || id.length > 160)) {
       return res.status(400).json({ success: false, error: 'INVALID_QUEUE_IDS' });
     }
+    const previousQueueSnapshot = JSON.stringify(room.queue || []);
     const ids = new Set(body.queueIds);
     const currentTrackId = room.track?.id;
     const removed = [];
@@ -604,8 +640,9 @@ export default async function handler(req, res) {
       }
       return true;
     });
+    updateQueueRevision(room, previousQueueSnapshot);
     room.updatedAt = now;
-    return res.status(200).json({ success: true, queue: room.queue, removed });
+    return res.status(200).json({ success: true, queue: room.queue, queueRevision: queueRevisionOf(room), removed });
   }
 
   if (action === 'restore_queue') {
@@ -616,6 +653,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ success: false, error: 'INVALID_QUEUE_RESTORE' });
     }
     const queue = [...(room.queue || [])];
+    const previousQueueSnapshot = JSON.stringify(queue);
     const existingIds = new Set(queue.map(item => item.id));
     const additions = body.removed.filter(entry => {
       if (existingIds.has(entry.item.id)) return false;
@@ -629,8 +667,9 @@ export default async function handler(req, res) {
       queue.splice(Math.min(entry.index, queue.length), 0, entry.item);
     }
     room.queue = queue;
+    updateQueueRevision(room, previousQueueSnapshot);
     room.updatedAt = now;
-    return res.status(200).json({ success: true, queue: room.queue });
+    return res.status(200).json({ success: true, queue: room.queue, queueRevision: queueRevisionOf(room) });
   }
 
   if (action === 'next_track') {

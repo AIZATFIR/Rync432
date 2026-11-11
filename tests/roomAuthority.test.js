@@ -57,6 +57,27 @@ describe('room authority', () => {
     });
 
     expect(result.body.queue.map(item => item.id)).toEqual(['track-c', 'track-a', 'track-b']);
+    expect(result.body.queueRevision).toBe(2);
+  });
+
+  it('increments queue revisions and returns the canonical snapshot for a stale reorder', async () => {
+    const roomId = `J${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
+      { id: 'track-a', name: 'A' }, { id: 'track-b', name: 'B' }
+    ] });
+    const current = await callRoom('poll', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken });
+    const staleReorder = await callRoom('reorder_queue', {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken,
+      expectedQueueRevision: 0,
+      queue: [{ id: 'track-b' }, { id: 'track-a' }]
+    });
+
+    expect(created.body.room.queueRevision).toBe(0);
+    expect(current.body.queueRevision).toBe(1);
+    expect(staleReorder.statusCode).toBe(409);
+    expect(staleReorder.body.queueRevision).toBe(1);
+    expect(staleReorder.body.queue.map(item => item.id)).toEqual(['track-a', 'track-b']);
   });
 
   it('keeps tracks added by members while preserving the host reordered list', async () => {

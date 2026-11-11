@@ -19,6 +19,7 @@ export class CloudMesh {
     this.lastKnownOffsetSec = 0;
     this.lastKnownTrack = null;
     this.lastKnownQueue = null;
+    this.queueRevision = 0;
     this.isPaused = true;
     this.lastPauseTime = 0;
     this.repeatMode = 'off';
@@ -116,6 +117,7 @@ export class CloudMesh {
       if (!result.success || typeof result.hostToken !== 'string') throw new Error(result.error || 'Room creation failed');
       this.hostToken = result.hostToken;
       this.saveHostToken(roomId, this.hostToken);
+      this.rememberQueueRevision(result.room);
       this.applyPlaybackOptions(result.room);
       this.startPolling();
       return result.room;
@@ -166,6 +168,7 @@ export class CloudMesh {
 
   applyRoomSnapshot(snapshot) {
     if (!snapshot) return;
+    this.rememberQueueRevision(snapshot);
     this.applyPlaybackOptions(snapshot);
     if (this.isHost) return;
     if (Array.isArray(snapshot.queue)) {
@@ -208,6 +211,12 @@ export class CloudMesh {
       if (changed) this.onEvent('PAUSED', { currentOffsetSec: offset });
     }
     this.lastKnownOffsetSec = offset;
+  }
+
+  rememberQueueRevision(snapshot = {}) {
+    if (Number.isSafeInteger(snapshot.queueRevision) && snapshot.queueRevision >= 0) {
+      this.queueRevision = snapshot.queueRevision;
+    }
   }
 
   applyPlaybackOptions(snapshot = {}) {
@@ -609,6 +618,7 @@ export class CloudMesh {
           isHost: this.isHost,
           hostId: this.isHost ? this.peerId : undefined,
           queue: this.isHost ? (this.lastKnownQueue || []) : undefined,
+          queueRevision: this.isHost ? this.queueRevision : undefined,
           deletedQueueIds: this.isHost ? Array.from(this.deletedQueueIds) : [],
           track: this.isHost ? this.lastKnownTrack : undefined,
           state: this.isPaused ? 'PAUSED' : 'PLAYING',
@@ -619,6 +629,7 @@ export class CloudMesh {
       if (!res.ok) return;
 
       const data = await res.json();
+      this.rememberQueueRevision(data);
       this.applyPlaybackOptions(data);
 
       if (data.kicked && !this.isHost) {
@@ -858,6 +869,7 @@ export class CloudMesh {
       })
     }).then(async res => {
       const data = await res.json();
+      this.rememberQueueRevision(data);
       if (!res.ok || !data.success) {
         this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Antrean tersimpan di perangkat ini, sinkronisasi room gagal.' });
         return;
@@ -925,6 +937,7 @@ export class CloudMesh {
         body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, queueId })
       });
       const data = await res.json();
+      this.rememberQueueRevision(data);
       if (data.track) {
         this.lastKnownTrack = data.track;
         this.isPaused = !autoplay;
@@ -984,6 +997,7 @@ export class CloudMesh {
         body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, queueId })
       });
       const data = await res.json();
+      this.rememberQueueRevision(data);
       if (data.queue) {
         this.lastKnownQueue = data.queue;
         this.lastKnownQueueStr = JSON.stringify(data.queue);
@@ -1015,9 +1029,16 @@ export class CloudMesh {
       const res = await fetch('/api/room?action=reorder_queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, queue: newQueue })
+        body: JSON.stringify({
+          roomId: this.roomId,
+          peerId: this.peerId,
+          hostToken: this.hostToken,
+          queue: newQueue,
+          expectedQueueRevision: this.queueRevision
+        })
       });
       const data = await res.json();
+      this.rememberQueueRevision(data);
       if (data.queue) {
         this.lastKnownQueue = data.queue;
         this.lastKnownQueueStr = JSON.stringify(data.queue);
@@ -1054,6 +1075,7 @@ export class CloudMesh {
         })
       });
       const data = await res.json();
+      this.rememberQueueRevision(data);
       if (data.queue) {
         this.lastKnownQueue = data.queue.filter(q => !this.deletedQueueIds.has(q.id));
         this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
@@ -1082,6 +1104,7 @@ export class CloudMesh {
         body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, queueIds: [...ids] })
       });
       const data = await res.json();
+      this.rememberQueueRevision(data);
       if (!res.ok || !data.success) throw new Error(data.error || 'QUEUE_CLEAR_FAILED');
       this.lastKnownQueue = data.queue || [];
       this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
@@ -1110,6 +1133,7 @@ export class CloudMesh {
         body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, removed })
       });
       const data = await res.json();
+      this.rememberQueueRevision(data);
       if (!res.ok || !data.success) throw new Error(data.error || 'QUEUE_RESTORE_FAILED');
       this.lastKnownQueue = data.queue || [];
       this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);

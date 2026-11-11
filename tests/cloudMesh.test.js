@@ -122,6 +122,27 @@ describe('CloudMesh audio transfer', () => {
     expect(events).toContainEqual({ type: 'PLAYBACK_OPTIONS_UPDATED', payload: { repeatMode: 'all', shuffle: true } });
   });
 
+  it('uses the room queue revision when reordering and accepts a conflict snapshot', async () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.isHost = true;
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'host-peer';
+    mesh.hostToken = 'private-host-token';
+    mesh.queueRevision = 4;
+    const canonicalQueue = [{ id: 'a' }, { id: 'new-from-guest' }];
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 409, json: async () => ({
+      success: false, error: 'QUEUE_CONFLICT', queue: canonicalQueue, queueRevision: 5
+    }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await mesh.reorderQueue([{ id: 'a' }]);
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).expectedQueueRevision).toBe(4);
+    expect(mesh.queueRevision).toBe(5);
+    expect(mesh.lastKnownQueue).toEqual(canonicalQueue);
+  });
+
   it('clears upcoming tracks optimistically while keeping the active track', async () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
