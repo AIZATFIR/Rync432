@@ -5,7 +5,7 @@ const P2P_AUDIO_CHUNK_BYTES = 32 * 1024;
 const P2P_AUDIO_FRAME_HEADER_BYTES = 12;
 const MAX_P2P_AUDIO_BYTES = 64 * 1024 * 1024;
 const P2P_AUDIO_TRANSFER_TIMEOUT_MS = 10_000;
-const P2P_AUDIO_ACK_TIMEOUT_MS = 10_000;
+const P2P_AUDIO_ACK_TIMEOUT_MS = 5_000;
 const P2P_AUDIO_BACKPRESSURE_TIMEOUT_MS = 10_000;
 const P2P_BACKPRESSURE_POLL_INTERVAL_MS = 100;
 const P2P_BUFFER_REQUEST_MAX_ATTEMPTS = 10;
@@ -270,22 +270,7 @@ export class CloudMesh {
         this.onEvent('QUEUE_UPDATED', { queue: snapshot.queue });
       }
     }
-    let trackChanged = false;
-    if (snapshot.track) {
-      if (snapshot.track.sourceType === 'youtube' && !snapshot.track.sourceId) {
-        const videoId = youtubeVideoId(snapshot.track);
-        if (videoId) snapshot.track.sourceId = videoId;
-      }
-      trackChanged = !this.lastKnownTrack
-        || (snapshot.track.id && this.lastKnownTrack.id
-          ? snapshot.track.id !== this.lastKnownTrack.id
-          : snapshot.track.name !== this.lastKnownTrack.name);
-      if (trackChanged) {
-        this.lastKnownTrack = snapshot.track;
-        this.onEvent('TRACK_METADATA', snapshot.track);
-        this.loadTrackBuffer(snapshot.track);
-      }
-    }
+    const trackChanged = this.updateTrackFromSnapshot(snapshot.track);
     const offset = snapshot.startOffsetSec || 0;
     if (snapshot.state === 'PLAYING' && snapshot.targetServerTime) {
       const changed = this.isPaused || this.lastKnownState !== snapshot.targetServerTime || trackChanged;
@@ -305,6 +290,34 @@ export class CloudMesh {
       if (changed) this.onEvent('PAUSED', { currentOffsetSec: offset });
     }
     this.lastKnownOffsetSec = offset;
+  }
+
+  updateTrackFromSnapshot(track) {
+    if (!track) return false;
+    if (track.sourceType === 'youtube' && !track.sourceId) {
+      const videoId = youtubeVideoId(track);
+      if (videoId) track.sourceId = videoId;
+    }
+
+    const previous = this.lastKnownTrack;
+    const trackChanged = !previous || (track.id && previous.id
+      ? track.id !== previous.id
+      : track.name !== previous.name);
+    const metadataKeys = ['name', 'artist', 'duration', 'thumbnail', 'sourceType', 'sourceId', 'sourceUrl', 'audioId', 'audioUrl'];
+    const metadataChanged = trackChanged || metadataKeys.some(key => track[key] !== previous?.[key]);
+    const sourceChanged = trackChanged || ['sourceType', 'sourceId', 'audioId', 'audioUrl'].some(key => track[key] !== previous?.[key]);
+
+    if (metadataChanged) {
+      this.lastKnownTrack = track;
+      this.onEvent('TRACK_METADATA', track);
+    }
+
+    if (sourceChanged) {
+      const cachedBuffer = [track.id, track.audioId, track.audioUrl, !track.id && track.name]
+        .some(key => key && this.localAudioBufferCache.has(key));
+      if (trackChanged || !cachedBuffer) this.loadTrackBuffer(track);
+    }
+    return trackChanged;
   }
 
   rememberQueueRevision(snapshot = {}) {
@@ -853,23 +866,7 @@ export class CloudMesh {
       }
 
       // 3. Track update & Auto-fetch with buffer synchronization
-      let trackChanged = false;
-      if (data.track) {
-        if (data.track.sourceType === 'youtube' && !data.track.sourceId) {
-          const videoId = youtubeVideoId(data.track);
-          if (videoId) data.track.sourceId = videoId;
-        }
-        const isDifferent = !this.lastKnownTrack 
-          || (data.track.id && this.lastKnownTrack.id && data.track.id !== this.lastKnownTrack.id)
-          || (data.track.name !== this.lastKnownTrack.name);
-        
-        if (isDifferent) {
-          trackChanged = true;
-          this.lastKnownTrack = data.track;
-          this.onEvent('TRACK_METADATA', data.track);
-          this.loadTrackBuffer(data.track);
-        }
-      }
+      const trackChanged = this.updateTrackFromSnapshot(data.track);
 
       // 4. Playback state with clean Pause protection and exact track synchronization
       if (data.state === 'PLAYING') {
@@ -2509,7 +2506,7 @@ export class CloudMesh {
       const status = e.message === 'P2P_BACKPRESSURE_TIMEOUT'
         ? 'Koneksi P2P lambat atau macet. Coba lagi.'
         : e.message === 'P2P_ACK_TIMEOUT'
-          ? 'Penerima tidak mengonfirmasi file P2P. Beralih ke relay.'
+          ? 'Penerima tidak mengonfirmasi P2P. Coba lagi atau pilih sumber lain.'
         : 'Koneksi P2P terputus. Coba lagi.';
       this.broadcastReadiness('FAILED', trackId);
       this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status });

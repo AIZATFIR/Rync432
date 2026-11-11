@@ -2081,7 +2081,8 @@ export class UIManager {
     mesh.rememberQueueRevision(result);
     mesh.applyCanonicalQueue(result.queue);
     mesh.localAudioBufferCache.set(result.item.audioUrl, arrayBuffer);
-    if (selected) mesh.lastKnownTrack = result.item;
+    if (result.track?.id === track.id) await mesh.sendTrackMetadata(result.track);
+    else if (selected) mesh.lastKnownTrack = result.item;
     mesh.loadTrackBuffer(result.item);
     return result.item;
   }

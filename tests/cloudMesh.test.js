@@ -1190,19 +1190,24 @@ describe('CloudMesh audio transfer', () => {
     expect(receiver.audioRouteByTrack.get('track-1')).toBe('p2p');
   });
 
-  it('falls back when the P2P receiver does not acknowledge a completed send', async () => {
+  it('reports a missing P2P acknowledgement after a bounded wait', async () => {
     vi.useFakeTimers();
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
     const channel = makeChannel();
-    const transfer = mesh.streamAudioToPeer(channel, new ArrayBuffer(16), 'Track', 'track-1');
+    let settled = false;
+    const transfer = mesh.streamAudioToPeer(channel, new ArrayBuffer(16), 'Track', 'track-1').then(result => {
+      settled = true;
+      return result;
+    });
 
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(5_000);
 
+    expect(settled).toBe(true);
     await expect(transfer).resolves.toBe(false);
     expect(events).toContainEqual(expect.objectContaining({
       type: 'AUDIO_TRANSFER_PROGRESS',
-      payload: expect.objectContaining({ status: expect.stringContaining('Beralih ke relay') })
+      payload: expect.objectContaining({ status: expect.stringContaining('Penerima tidak mengonfirmasi P2P') })
     }));
   });
 
@@ -1289,6 +1294,39 @@ describe('CloudMesh audio transfer', () => {
     expect(events.filter(event => event.type === 'QUEUE_UPDATED')).toHaveLength(1);
     expect(events.filter(event => event.type === 'SCHEDULED_PLAY')).toHaveLength(1);
     expect(events.find(event => event.type === 'SCHEDULED_PLAY').payload.startOffsetSec).toBe(12);
+  });
+
+  it('retries an uncached room track when the server adds its relay source', () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.loadTrackBuffer = vi.fn();
+    const localTrack = { id: 'local-a', name: 'Local A', sourceType: 'local-file', audioUrl: '' };
+
+    mesh.applyRoomSnapshot({ track: localTrack, state: 'PAUSED' });
+    mesh.applyRoomSnapshot({ track: {
+      ...localTrack,
+      audioId: 'aud_123',
+      audioUrl: '/api/room?action=get_audio&audioId=aud_123'
+    }, state: 'PAUSED' });
+
+    expect(mesh.lastKnownTrack.audioUrl).toContain('audioId=aud_123');
+    expect(mesh.loadTrackBuffer).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a ready P2P buffer when the room later publishes a relay URL', () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.loadTrackBuffer = vi.fn();
+    const localTrack = { id: 'local-a', name: 'Local A', sourceType: 'local-file', audioUrl: '' };
+
+    mesh.applyRoomSnapshot({ track: localTrack, state: 'PAUSED' });
+    mesh.localAudioBufferCache.set(localTrack.id, new ArrayBuffer(8));
+    mesh.applyRoomSnapshot({ track: {
+      ...localTrack,
+      audioId: 'aud_123',
+      audioUrl: '/api/room?action=get_audio&audioId=aud_123'
+    }, state: 'PAUSED' });
+
+    expect(mesh.loadTrackBuffer).toHaveBeenCalledOnce();
+    expect(mesh.lastKnownTrack.audioId).toBe('aud_123');
   });
 
   it('does not schedule autoplay for an empty next-track response', async () => {

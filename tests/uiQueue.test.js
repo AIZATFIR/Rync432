@@ -602,13 +602,19 @@ describe('YouTube search queue UI', () => {
       rememberQueueRevision: vi.fn(),
       applyCanonicalQueue: vi.fn(),
       loadTrackBuffer: vi.fn(),
+      sendTrackMetadata: vi.fn(),
       lastKnownTrack: null
     };
     const socketClient = { roomId: 'ROOM', cloudMesh: mesh, addToQueue: vi.fn().mockResolvedValue(true) };
     const ui = new UIManager({ socketClient });
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ success: true, item: { id: 'local-3', audioUrl: '/api/room?action=get_audio' }, queue: [{ id: 'local-3' }], queueRevision: 3 })
+      json: async () => ({
+        success: true,
+        item: { id: 'local-3', audioUrl: '/api/room?action=get_audio' },
+        track: { id: 'local-3', audioUrl: '/api/room?action=get_audio' },
+        queue: [{ id: 'local-3' }], queueRevision: 3
+      })
     }));
 
     await ui.uploadLocalTrackToRoom({ id: 'local-3', name: 'Local song', duration: 3 }, new ArrayBuffer(8));
@@ -616,6 +622,9 @@ describe('YouTube search queue UI', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(JSON.parse(fetch.mock.calls[0][1].body)).toMatchObject({ roomId: 'ROOM', peerId: 'host-peer', hostToken: 'host-token', id: 'local-3' });
     expect(mesh.loadTrackBuffer).toHaveBeenCalled();
+    expect(mesh.sendTrackMetadata).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'local-3', audioUrl: '/api/room?action=get_audio'
+    }));
   });
 
   it('reuses an already acknowledged local room queue item without adding it again', async () => {
