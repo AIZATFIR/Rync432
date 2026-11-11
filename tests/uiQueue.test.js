@@ -28,6 +28,30 @@ describe('Rync page structure', () => {
 });
 
 describe('YouTube search queue UI', () => {
+  it('waits for the audio context before toggling the audible metronome', async () => {
+    let makeMetronomeReady;
+    const metronome = { start: vi.fn(), stop: vi.fn() };
+    const audioEngine = {
+      metronome: null,
+      ensureContext: vi.fn(() => new Promise(resolve => {
+        makeMetronomeReady = () => {
+          audioEngine.metronome = metronome;
+          resolve();
+        };
+      }))
+    };
+    const ui = new UIManager({ audioEngine });
+
+    const starting = ui.setMetronomeEnabled(true);
+    expect(metronome.start).not.toHaveBeenCalled();
+    makeMetronomeReady();
+    await expect(starting).resolves.toBe(true);
+    expect(metronome.start).toHaveBeenCalledOnce();
+
+    await ui.setMetronomeEnabled(false);
+    expect(metronome.stop).toHaveBeenCalledOnce();
+  });
+
   it('auto-advances a solo queue when audio playback ends', () => {
     const ui = new UIManager({ socketClient: { roomId: null, isHost: false } });
     ui.setPlayState = vi.fn();

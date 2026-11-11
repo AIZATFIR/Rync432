@@ -1016,12 +1016,16 @@ export class UIManager {
     // Settings: Metronome
     if (elements.metronomeToggle) {
       elements.metronomeToggle.addEventListener('change', (e) => {
-        app.audioEngine.ensureContext();
-        if (e.target.checked) {
-          app.audioEngine.metronome.start();
-        } else {
-          app.audioEngine.metronome.stop();
-        }
+        const toggle = e.target;
+        this.setMetronomeEnabled(toggle.checked).then(enabled => {
+          if (!enabled && toggle.checked) {
+            toggle.checked = false;
+            this.showUrlFeedback('Metronome tidak tersedia di browser ini.', 'error');
+          }
+        }).catch(() => {
+          toggle.checked = false;
+          this.showUrlFeedback('Audio belum bisa diaktifkan. Coba lagi.', 'error');
+        });
       });
     }
 
@@ -2310,6 +2314,20 @@ export class UIManager {
       this.setYouTubePlayerStatus('Mengaktifkan audio…');
     }
     return started;
+  }
+
+  async setMetronomeEnabled(enabled) {
+    const audioEngine = this.app?.audioEngine;
+    if (!audioEngine) return false;
+    if (!enabled) {
+      audioEngine.metronome?.stop();
+      return true;
+    }
+
+    await audioEngine.ensureContext();
+    if (!audioEngine.metronome) return false;
+    audioEngine.metronome.start();
+    return true;
   }
 
   setView(view) {
