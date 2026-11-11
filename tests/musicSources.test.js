@@ -129,5 +129,18 @@ describe('Music Sources & Resolver Layer', () => {
       expect(endpoint.playableUrl).toBe('/sample.wav');
       expect(endpoint.usedProxy).toBe(false);
     });
+
+    it('preserves cancellation instead of returning a proxy endpoint', async () => {
+      const controller = new AbortController();
+      const abortError = Object.assign(new Error('aborted'), { name: 'AbortError' });
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(abortError));
+      const resolver = new AudioResolver();
+
+      await expect(resolver.resolvePlayableEndpoint({
+        trackId: 'direct_test',
+        playableUrl: 'https://audio.example/song.mp3',
+        sourceType: MusicSourceType.DIRECT_URL
+      }, controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
+    });
   });
 });
