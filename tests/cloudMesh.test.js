@@ -14,6 +14,15 @@ function makeChannel() {
   };
 }
 
+function makeAudioChunkFrame(sequence, timestamp, bytes) {
+  const frame = new ArrayBuffer(12 + bytes.length);
+  const view = new DataView(frame);
+  view.setUint32(0, sequence, true);
+  view.setFloat64(4, timestamp, true);
+  new Uint8Array(frame, 12).set(bytes);
+  return frame;
+}
+
 describe('CloudMesh audio transfer', () => {
   it('retries P2P buffer requests while an open peer channel has no cached audio yet', () => {
     vi.useFakeTimers();
@@ -347,6 +356,37 @@ describe('CloudMesh audio transfer', () => {
     }));
   });
 
+  it('reassembles sequence and timestamp framed P2P audio chunks', () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.updateLoadingState = vi.fn();
+    const channel = makeChannel();
+    mesh.setupDataChannel('peer-2', channel);
+    channel.onmessage({ data: JSON.stringify({
+      type: 'AUDIO_HEADER', chunkProtocol: 1, name: 'Track', id: 'track-1', totalBytes: 3, totalChunks: 1
+    }) });
+    channel.onmessage({ data: makeAudioChunkFrame(0, 42.5, [4, 5, 6]) });
+
+    expect(new Uint8Array(events.find(event => event.type === 'BINARY_AUDIO_RECEIVED').payload.arrayBuffer)).toEqual(new Uint8Array([4, 5, 6]));
+  });
+
+  it('rejects an out-of-order framed P2P audio chunk', () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.updateLoadingState = vi.fn();
+    const channel = makeChannel();
+    mesh.setupDataChannel('peer-2', channel);
+    channel.onmessage({ data: JSON.stringify({
+      type: 'AUDIO_HEADER', chunkProtocol: 1, name: 'Track', id: 'track-1', totalBytes: 2, totalChunks: 1
+    }) });
+    channel.onmessage({ data: makeAudioChunkFrame(1, 42.5, [4, 5]) });
+
+    expect(mesh.incomingAudioChunks.has('peer-2')).toBe(false);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'AUDIO_TRANSFER_PROGRESS', payload: expect.objectContaining({ status: 'Paket audio P2P tidak valid.' })
+    }));
+  });
+
   it('clears a partial audio transfer and reports failure when the peer disconnects', () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
@@ -412,6 +452,22 @@ describe('CloudMesh audio transfer', () => {
     expect(events).toContainEqual(expect.objectContaining({
       type: 'AUDIO_TRANSFER_PROGRESS', payload: expect.objectContaining({ status: expect.stringContaining('terlalu besar') })
     }));
+  });
+
+  it('sends P2P audio frames with increasing sequence and monotonic timestamps', async () => {
+    const mesh = new CloudMesh(() => {});
+    const channel = makeChannel();
+    const sent = await mesh.streamAudioToPeer(channel, new ArrayBuffer(32 * 1024 + 1), 'Track', 'track-1');
+    const header = JSON.parse(channel.sent[0]);
+    const first = new DataView(channel.sent[1]);
+    const second = new DataView(channel.sent[2]);
+
+    expect(sent).toBe(true);
+    expect(header.chunkProtocol).toBe(1);
+    expect(first.getUint32(0, true)).toBe(0);
+    expect(second.getUint32(0, true)).toBe(1);
+    expect(Number.isFinite(first.getFloat64(4, true))).toBe(true);
+    expect(second.getFloat64(4, true)).toBeGreaterThanOrEqual(first.getFloat64(4, true));
   });
 
   it('does not start overlapping P2P sends while a track transfer is in flight', async () => {

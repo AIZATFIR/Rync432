@@ -2,6 +2,7 @@
 // Connects Laptop & Mobile Phones with Sub-Millisecond Clock Alignment
 
 const P2P_AUDIO_CHUNK_BYTES = 32 * 1024;
+const P2P_AUDIO_FRAME_HEADER_BYTES = 12;
 const MAX_P2P_AUDIO_BYTES = 64 * 1024 * 1024;
 const P2P_AUDIO_TRANSFER_TIMEOUT_MS = 30_000;
 const P2P_AUDIO_BACKPRESSURE_TIMEOUT_MS = 15_000;
@@ -1711,6 +1712,7 @@ export class CloudMesh {
               && msg.totalBytes <= MAX_P2P_AUDIO_BYTES
               && Number.isSafeInteger(msg.totalChunks)
               && msg.totalChunks === Math.ceil(msg.totalBytes / P2P_AUDIO_CHUNK_BYTES)
+              && (msg.chunkProtocol === undefined || msg.chunkProtocol === 1)
               && typeof msg.name === 'string'
               && msg.name.length <= 200
               && (msg.id === undefined || (typeof msg.id === 'string' && msg.id.length <= 160));
@@ -1727,6 +1729,8 @@ export class CloudMesh {
               id: msg.id,
               totalBytes: msg.totalBytes,
               totalChunks: msg.totalChunks,
+              chunkProtocol: msg.chunkProtocol || 0,
+              lastChunkTimestamp: -Infinity,
               receivedBytes: 0,
               chunks: []
             };
@@ -1796,15 +1800,32 @@ export class CloudMesh {
       if (event.data instanceof ArrayBuffer) {
         const stream = this.incomingAudioChunks.get(targetPeerId);
         if (stream) {
-          if (event.data.byteLength === 0
-            || event.data.byteLength > P2P_AUDIO_CHUNK_BYTES
-            || stream.receivedBytes + event.data.byteLength > stream.totalBytes
+          let chunk = event.data;
+          if (stream.chunkProtocol === 1) {
+            if (event.data.byteLength <= P2P_AUDIO_FRAME_HEADER_BYTES
+              || event.data.byteLength > P2P_AUDIO_CHUNK_BYTES + P2P_AUDIO_FRAME_HEADER_BYTES) {
+              this.failIncomingAudioTransfer(targetPeerId, stream.id, 'Paket audio P2P tidak valid.', stream.name);
+              return;
+            }
+            const frame = new DataView(event.data);
+            const sequence = frame.getUint32(0, true);
+            const timestamp = frame.getFloat64(4, true);
+            if (sequence !== stream.chunks.length || !Number.isFinite(timestamp) || timestamp < stream.lastChunkTimestamp) {
+              this.failIncomingAudioTransfer(targetPeerId, stream.id, 'Paket audio P2P tidak valid.', stream.name);
+              return;
+            }
+            stream.lastChunkTimestamp = timestamp;
+            chunk = event.data.slice(P2P_AUDIO_FRAME_HEADER_BYTES);
+          }
+          if (chunk.byteLength === 0
+            || chunk.byteLength > P2P_AUDIO_CHUNK_BYTES
+            || stream.receivedBytes + chunk.byteLength > stream.totalBytes
             || stream.chunks.length >= stream.totalChunks) {
             this.failIncomingAudioTransfer(targetPeerId, stream.id, 'Paket audio P2P tidak valid.', stream.name);
             return;
           }
-          stream.chunks.push(event.data);
-          stream.receivedBytes += event.data.byteLength;
+          stream.chunks.push(chunk);
+          stream.receivedBytes += chunk.byteLength;
           stream.resetTimeout?.();
           const pct = Math.min(99, Math.round((stream.receivedBytes / stream.totalBytes) * 100));
           this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct, status: `Menerima P2P (${pct}%)...` });
@@ -1973,6 +1994,7 @@ export class CloudMesh {
     try {
       channel.send(JSON.stringify({
         type: 'AUDIO_HEADER',
+        chunkProtocol: 1,
         name: trackName,
         id: trackId,
         totalBytes,
@@ -1992,7 +2014,12 @@ export class CloudMesh {
         if (channel.readyState !== 'open') throw new Error('P2P_CHANNEL_CLOSED');
 
         const chunk = arrayBuffer.slice(offset, offset + P2P_AUDIO_CHUNK_BYTES);
-        channel.send(chunk);
+        const frameBuffer = new ArrayBuffer(P2P_AUDIO_FRAME_HEADER_BYTES + chunk.byteLength);
+        const frame = new DataView(frameBuffer);
+        frame.setUint32(0, Math.floor(offset / P2P_AUDIO_CHUNK_BYTES), true);
+        frame.setFloat64(4, globalThis.performance?.now?.() ?? Date.now(), true);
+        new Uint8Array(frameBuffer, P2P_AUDIO_FRAME_HEADER_BYTES).set(new Uint8Array(chunk));
+        channel.send(frameBuffer);
       }
       return true;
     } catch (e) {
