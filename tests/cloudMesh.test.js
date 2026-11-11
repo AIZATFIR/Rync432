@@ -1333,6 +1333,76 @@ describe('CloudMesh audio transfer', () => {
     }));
   });
 
+  it('does not mark the sending device failed when a single peer rejects P2P chunks', async () => {
+    const mesh = new CloudMesh(() => {});
+    const sent = [];
+    const channel = {
+      readyState: 'open',
+      bufferedAmount: 0,
+      send(value) {
+        if (value instanceof ArrayBuffer) throw new Error('P2P_CHANNEL_SEND_FAILED');
+        sent.push(value);
+      }
+    };
+    mesh.dataChannels.set('peer-2', channel);
+    mesh.localPeersMap.set('peer-2', { id: 'peer-2', readiness: 'PREPARING' });
+    mesh.broadcastReadiness = vi.fn();
+
+    await expect(mesh.streamAudioToPeer(channel, new ArrayBuffer(16), 'Track', 'track-1')).resolves.toBe(false);
+
+    expect(mesh.broadcastReadiness).not.toHaveBeenCalledWith('FAILED', 'track-1');
+    expect(sent.map(message => JSON.parse(message))).toContainEqual(expect.objectContaining({
+      type: 'AUDIO_TRANSFER_FAILED', id: 'track-1'
+    }));
+    expect(mesh.localPeersMap.get('peer-2').readiness).toBe('FAILED');
+  });
+
+  it('applies a peer-specific P2P failure to the receiving device state', () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.lastKnownTrack = { id: 'track-1', name: 'Track' };
+    mesh.updateLoadingState = vi.fn();
+    mesh.broadcastReadiness = vi.fn();
+    const channel = makeChannel();
+    mesh.dataChannels.set('peer-1', channel);
+    mesh.setupDataChannel('peer-1', channel);
+
+    channel.onmessage({ data: JSON.stringify({
+      type: 'AUDIO_TRANSFER_FAILED',
+      id: 'track-1',
+      name: 'Track',
+      status: 'Koneksi P2P lambat atau macet. Coba lagi.'
+    }) });
+
+    expect(mesh.broadcastReadiness).toHaveBeenCalledWith('FAILED', 'track-1');
+    expect(mesh.updateLoadingState).toHaveBeenCalledWith(false, 'Koneksi P2P lambat atau macet. Coba lagi.');
+    expect(channel.sent.map(message => JSON.parse(message))).toContainEqual({
+      type: 'AUDIO_TRANSFER_ACK', id: 'track-1', success: false
+    });
+  });
+
+  it('does not roll the queue revision backward when a late poll arrives', () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.queueRevision = 8;
+    mesh.queueRevisionRoomId = 'ROOM';
+
+    mesh.rememberQueueRevision({ queueRevision: 7 });
+
+    expect(mesh.queueRevision).toBe(8);
+  });
+
+  it('starts a new queue revision scope when the active room changes', () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM-B';
+    mesh.queueRevision = 8;
+    mesh.queueRevisionRoomId = 'ROOM-A';
+
+    mesh.rememberQueueRevision({ queueRevision: 1 }, 'ROOM-B');
+
+    expect(mesh.queueRevision).toBe(1);
+    expect(mesh.queueRevisionRoomId).toBe('ROOM-B');
+  });
+
   it('does not send a P2P buffer above the configured size limit', async () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
@@ -1340,7 +1410,9 @@ describe('CloudMesh audio transfer', () => {
 
     await mesh.streamAudioToPeer(channel, { byteLength: 64 * 1024 * 1024 + 1 }, 'Huge', 'huge');
 
-    expect(channel.sent).toEqual([]);
+    expect(channel.sent.map(message => JSON.parse(message))).toContainEqual(expect.objectContaining({
+      type: 'AUDIO_TRANSFER_FAILED', id: 'huge'
+    }));
     expect(events).toContainEqual(expect.objectContaining({
       type: 'AUDIO_TRANSFER_PROGRESS', payload: expect.objectContaining({ status: expect.stringContaining('terlalu besar') })
     }));

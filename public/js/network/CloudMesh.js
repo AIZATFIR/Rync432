@@ -109,6 +109,7 @@ export class CloudMesh {
     this.readinessSync = Promise.resolve();
     this.trackPreparationStartedAt = new Map();
     this.queueRevision = 0;
+    this.queueRevisionRoomId = null;
     this.isPaused = true;
     this.hostDisconnected = false;
     this.lastPauseTime = 0;
@@ -198,6 +199,9 @@ export class CloudMesh {
 
   async createRoom(roomId, peerId, deviceName) {
     this.roomId = roomId;
+    this.queueRevision = 0;
+    this.queueRevisionRoomId = roomId;
+    this.resetQueueMutationState();
     this.peerId = peerId;
     this.deviceName = deviceName;
     this.isHost = true;
@@ -221,19 +225,22 @@ export class CloudMesh {
       if (!response.ok) throw new Error(`Room creation failed (${response.status})`);
       const result = await response.json();
       if (!result.success || typeof result.hostToken !== 'string') throw new Error(result.error || 'Room creation failed');
+      if (this.roomId !== roomId) return result.room;
       this.hostToken = result.hostToken;
       this.saveHostToken(roomId, this.hostToken);
-      this.rememberQueueRevision(result.room);
+      this.rememberQueueRevision(result.room, roomId);
       this.applyPlaybackOptions(result.room);
       this.broadcastReadiness('READY', '');
       this.startPolling();
       return result.room;
     } catch (error) {
-      this.roomId = null;
-      this.peerId = null;
-      this.isHost = false;
-      this.hostToken = null;
-      this.onEvent('ROOM_ERROR', { message: 'Room gagal dibuat. Coba lagi.' });
+      if (this.roomId === roomId && this.peerId === peerId) {
+        this.roomId = null;
+        this.peerId = null;
+        this.isHost = false;
+        this.hostToken = null;
+        this.onEvent('ROOM_ERROR', { message: 'Room gagal dibuat. Coba lagi.' });
+      }
       throw error;
     }
   }
@@ -241,6 +248,9 @@ export class CloudMesh {
   async joinRoom(roomId, peerId, deviceName) {
     const joinStartedAt = globalThis.performance?.now?.() ?? Date.now();
     this.roomId = roomId;
+    this.queueRevision = 0;
+    this.queueRevisionRoomId = null;
+    this.resetQueueMutationState();
     this.peerId = peerId;
     this.deviceName = deviceName;
     this.isHost = false;
@@ -257,28 +267,31 @@ export class CloudMesh {
       });
       if (!response.ok || !data.room) throw new Error(data.error || 'Room tidak ditemukan.');
       if (data.room.roomId && data.room.roomId !== roomId) throw new Error('Room response mismatch');
+      if (this.roomId !== roomId) return data.room;
       this.isHost = data.room.isHost === true;
       if (!this.isHost) this.hostToken = null;
-      this.applyRoomSnapshot(data.room);
+      this.applyRoomSnapshot(data.room, roomId);
       if (!data.room.track) this.broadcastReadiness('READY', '');
       this.startPolling();
       recordLocalMetric('room_join_ms', (globalThis.performance?.now?.() ?? Date.now()) - joinStartedAt);
       return data.room;
     } catch (error) {
       recordLocalMetric('room_join_ms', (globalThis.performance?.now?.() ?? Date.now()) - joinStartedAt, { outcome: 'failure' });
-      this.unsubscribe();
-      this.roomId = null;
-      this.peerId = null;
-      this.isHost = false;
-      this.hostToken = null;
-      this.onEvent('ROOM_ERROR', { message: 'Room tidak bisa dimasuki. Periksa kode atau koneksi.' });
+      if (this.roomId === roomId && this.peerId === peerId) {
+        this.unsubscribe();
+        this.roomId = null;
+        this.peerId = null;
+        this.isHost = false;
+        this.hostToken = null;
+        this.onEvent('ROOM_ERROR', { message: 'Room tidak bisa dimasuki. Periksa kode atau koneksi.' });
+      }
       throw error;
     }
   }
 
-  applyRoomSnapshot(snapshot) {
+  applyRoomSnapshot(snapshot, responseRoomId = this.roomId) {
     if (!snapshot) return;
-    this.rememberQueueRevision(snapshot);
+    this.rememberQueueRevision(snapshot, responseRoomId);
     this.applyPlaybackOptions(snapshot);
     this.setHostDisconnected(snapshot.hostDisconnected === true);
     if (this.isHost) return;
@@ -341,10 +354,22 @@ export class CloudMesh {
     return trackChanged;
   }
 
-  rememberQueueRevision(snapshot = {}) {
+  rememberQueueRevision(snapshot = {}, responseRoomId = this.roomId) {
     if (Number.isSafeInteger(snapshot.queueRevision) && snapshot.queueRevision >= 0) {
-      this.queueRevision = snapshot.queueRevision;
+      if (!responseRoomId || responseRoomId !== this.roomId) return;
+      if (this.queueRevisionRoomId !== responseRoomId) {
+        this.queueRevisionRoomId = responseRoomId;
+        this.queueRevision = snapshot.queueRevision;
+      } else {
+        this.queueRevision = Math.max(this.queueRevision, snapshot.queueRevision);
+      }
     }
+  }
+
+  resetQueueMutationState() {
+    this.deletedQueueIds.clear();
+    this.queueAdditionAcknowledgements.clear();
+    this.queueAdditionResults.clear();
   }
 
   setHostDisconnected(disconnected) {
@@ -760,6 +785,7 @@ export class CloudMesh {
 
   async pollLoop() {
     if (!this.roomId || !this.peerId) return true;
+    const requestRoomId = this.roomId;
     const supportsWebRTC = typeof RTCPeerConnection === 'function';
 
     try {
@@ -770,7 +796,7 @@ export class CloudMesh {
         signal: controller.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          roomId: this.roomId,
+          roomId: requestRoomId,
           peerId: this.peerId,
           hostToken: this.hostToken || undefined,
           deviceName: this.deviceName,
@@ -796,8 +822,9 @@ export class CloudMesh {
           }, ROOM_POLL_TIMEOUT_MS);
         })
       ]).finally(() => clearTimeout(pollTimeout));
+      if (this.roomId !== requestRoomId) return;
       if (!res.ok) return;
-      this.rememberQueueRevision(data);
+      this.rememberQueueRevision(data, requestRoomId);
       this.setHostDisconnected(data.hostDisconnected === true);
       this.applyPlaybackOptions(data);
 
@@ -1034,6 +1061,7 @@ export class CloudMesh {
 
   async addQueueItems(tracks) {
     if (!Array.isArray(tracks) || tracks.length === 0) return true;
+    const requestRoomId = this.roomId;
     const currentQueue = this.lastKnownQueue || [];
     const knownIds = new Set(currentQueue.map(queueItemKey).filter(Boolean));
     const additions = [];
@@ -1073,7 +1101,7 @@ export class CloudMesh {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          roomId: this.roomId,
+          roomId: requestRoomId,
           peerId: this.peerId,
           deviceName: this.deviceName,
           expectedQueueRevision,
@@ -1081,7 +1109,8 @@ export class CloudMesh {
         })
       });
       const data = await res.json();
-      this.rememberQueueRevision(data);
+      if (this.roomId !== requestRoomId) return false;
+      this.rememberQueueRevision(data, requestRoomId);
       if (res.status === 409 && conflictRetries < QUEUE_CONFLICT_RETRY_LIMIT && Array.isArray(data.queue)
         && Number.isSafeInteger(data.queueRevision)) {
         this.applyCanonicalQueue(data.queue);
@@ -1111,6 +1140,7 @@ export class CloudMesh {
     try {
       return await submit(this.queueRevision);
     } catch (error) {
+      if (this.roomId !== requestRoomId) return false;
       this.onEvent('QUEUE_SYNC_ERROR', {
         queue: this.lastKnownQueue,
         message: 'Antrean tersimpan di perangkat ini, sinkronisasi room gagal.'
@@ -1120,6 +1150,7 @@ export class CloudMesh {
   }
 
   async addToQueue(track) {
+    const requestRoomId = this.roomId;
     // Optimistic immediate queue update
     const currentQ = this.lastKnownQueue || [];
     const item = {
@@ -1161,7 +1192,7 @@ export class CloudMesh {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          roomId: this.roomId,
+          roomId: requestRoomId,
           peerId: this.peerId,
           deviceName: this.deviceName,
           expectedQueueRevision,
@@ -1169,7 +1200,8 @@ export class CloudMesh {
         })
       });
       const data = await res.json();
-      this.rememberQueueRevision(data);
+      if (this.roomId !== requestRoomId) return false;
+      this.rememberQueueRevision(data, requestRoomId);
       if (res.status === 409 && conflictRetries < QUEUE_CONFLICT_RETRY_LIMIT && Array.isArray(data.queue)
         && Number.isSafeInteger(data.queueRevision)) {
         this.applyCanonicalQueue(data.queue);
@@ -1209,6 +1241,7 @@ export class CloudMesh {
       return true;
     };
     const acknowledgement = submitAddition(this.queueRevision).catch(() => {
+      if (this.roomId !== requestRoomId) return false;
       recordLocalMetric('queue_ack_ms', (globalThis.performance?.now?.() ?? Date.now()) - queueMutationStartedAt, { outcome: 'failure' });
       this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Antrean tersimpan di perangkat ini, sinkronisasi room gagal.' });
       return false;
@@ -1274,14 +1307,16 @@ export class CloudMesh {
 
   async playQueueItem(queueId, autoplay = false) {
     if (!this.isHost) return false;
+    const requestRoomId = this.roomId;
     try {
       const res = await fetchQueueMutation('/api/room?action=play_queue_item', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, queueId, expectedQueueRevision: this.queueRevision })
+        body: JSON.stringify({ roomId: requestRoomId, peerId: this.peerId, hostToken: this.hostToken, queueId, expectedQueueRevision: this.queueRevision })
       });
       const data = await res.json();
-      this.rememberQueueRevision(data);
+      if (this.roomId !== requestRoomId) return false;
+      this.rememberQueueRevision(data, requestRoomId);
       if (res.status === 409) {
         this.applyCanonicalQueue(data.queue);
         this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Antrean berubah di perangkat lain. Coba lagi.' });
@@ -1346,6 +1381,7 @@ export class CloudMesh {
       }
       return data.track || false;
     } catch (error) {
+      if (this.roomId !== requestRoomId) return false;
       this.onEvent('QUEUE_SYNC_ERROR', {
         message: error.name === 'TimeoutError'
           ? 'Room lambat merespons. Pemilihan lagu dibatalkan; coba lagi.'
@@ -1395,6 +1431,7 @@ export class CloudMesh {
 
   async reorderQueue(newQueue) {
     if (!this.isHost) return;
+    const requestRoomId = this.roomId;
     const previousQueue = [...(this.lastKnownQueue || [])];
     this.lastQueueReorderTime = Date.now();
     this.lastKnownQueue = newQueue;
@@ -1415,7 +1452,7 @@ export class CloudMesh {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          roomId: this.roomId,
+          roomId: requestRoomId,
           peerId: this.peerId,
           hostToken: this.hostToken,
           queue: newQueue,
@@ -1423,7 +1460,8 @@ export class CloudMesh {
         })
       });
       const data = await res.json();
-      this.rememberQueueRevision(data);
+      if (this.roomId !== requestRoomId) return false;
+      this.rememberQueueRevision(data, requestRoomId);
       if (!res.ok || !data.success) {
         if (res.status === 409 && Array.isArray(data.queue)) {
           this.applyCanonicalQueue(data.queue);
@@ -1442,6 +1480,7 @@ export class CloudMesh {
       }
       return true;
     } catch (error) {
+      if (this.roomId !== requestRoomId) return false;
       this.applyCanonicalQueue(previousQueue);
       this.onEvent('QUEUE_SYNC_ERROR', {
         queue: previousQueue,
@@ -1455,6 +1494,7 @@ export class CloudMesh {
 
   async removeFromQueue(queueId) {
     if (!this.isHost) return;
+    const requestRoomId = this.roomId;
     queueId = resolveQueueItemKey(this.lastKnownQueue || [], queueId);
     const previousQueue = [...(this.lastKnownQueue || [])];
     if (queueId) {
@@ -1472,7 +1512,7 @@ export class CloudMesh {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          roomId: this.roomId,
+          roomId: requestRoomId,
           peerId: this.peerId,
           hostToken: this.hostToken,
           queueId,
@@ -1480,7 +1520,8 @@ export class CloudMesh {
         })
       });
       const data = await res.json();
-      this.rememberQueueRevision(data);
+      if (this.roomId !== requestRoomId) return false;
+      this.rememberQueueRevision(data, requestRoomId);
       if (res.status === 409) {
         if (queueId) this.deletedQueueIds.delete(queueId);
         this.applyCanonicalQueue(data.queue);
@@ -1495,6 +1536,7 @@ export class CloudMesh {
       }
       return true;
     } catch (error) {
+      if (this.roomId !== requestRoomId) return false;
       if (queueId) this.deletedQueueIds.delete(queueId);
       this.applyCanonicalQueue(previousQueue);
       this.onEvent('QUEUE_SYNC_ERROR', { queue: previousQueue, message: 'Lagu gagal dihapus dari room. Antrean dipulihkan; coba lagi.' });
@@ -1504,6 +1546,7 @@ export class CloudMesh {
 
   async clearQueue(queueIds) {
     if (!this.isHost || !Array.isArray(queueIds) || queueIds.length === 0) return { removed: [], queue: this.lastKnownQueue || [] };
+    const requestRoomId = this.roomId;
     queueIds = queueIds.map(id => resolveQueueItemKey(this.lastKnownQueue || [], id));
     const currentTrackId = queueItemKey(this.lastKnownTrack);
     const ids = new Set(queueIds.filter(id => id && id !== currentTrackId));
@@ -1520,10 +1563,11 @@ export class CloudMesh {
       const res = await fetchQueueMutation('/api/room?action=clear_queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, queueIds: [...ids], expectedQueueRevision: this.queueRevision })
+        body: JSON.stringify({ roomId: requestRoomId, peerId: this.peerId, hostToken: this.hostToken, queueIds: [...ids], expectedQueueRevision: this.queueRevision })
       });
       const data = await res.json();
-      this.rememberQueueRevision(data);
+      if (this.roomId !== requestRoomId) return { removed: [], queue: this.lastKnownQueue || [] };
+      this.rememberQueueRevision(data, requestRoomId);
       if (res.status === 409) {
         ids.forEach(id => this.deletedQueueIds.delete(id));
         this.applyCanonicalQueue(data.queue);
@@ -1538,6 +1582,7 @@ export class CloudMesh {
       this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
       return { removed: data.removed || [], queue: this.lastKnownQueue };
     } catch (error) {
+      if (this.roomId !== requestRoomId) return { removed: [], queue: this.lastKnownQueue || [] };
       ids.forEach(id => this.deletedQueueIds.delete(id));
       this.lastKnownQueue = previousQueue;
       this.lastKnownQueueStr = JSON.stringify(previousQueue);
@@ -1550,15 +1595,17 @@ export class CloudMesh {
 
   async restoreQueue(removed) {
     if (!this.isHost || !Array.isArray(removed) || removed.length === 0) return false;
+    const requestRoomId = this.roomId;
     removed.forEach(entry => this.deletedQueueIds.delete(queueItemKey(entry.item)));
     try {
       const res = await fetchQueueMutation('/api/room?action=restore_queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, removed, expectedQueueRevision: this.queueRevision })
+        body: JSON.stringify({ roomId: requestRoomId, peerId: this.peerId, hostToken: this.hostToken, removed, expectedQueueRevision: this.queueRevision })
       });
       const data = await res.json();
-      this.rememberQueueRevision(data);
+      if (this.roomId !== requestRoomId) return false;
+      this.rememberQueueRevision(data, requestRoomId);
       if (res.status === 409) {
         removed.forEach(entry => this.deletedQueueIds.add(queueItemKey(entry.item)));
         this.applyCanonicalQueue(data.queue);
@@ -1574,6 +1621,7 @@ export class CloudMesh {
       this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
       return true;
     } catch (error) {
+      if (this.roomId !== requestRoomId) return false;
       removed.forEach(entry => this.deletedQueueIds.add(queueItemKey(entry.item)));
       this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Undo gagal disinkronkan. Coba lagi.' });
       return false;
@@ -2261,6 +2309,15 @@ export class CloudMesh {
               this.updateLoadingState(true, `Menerima ${msg.name}...`);
               this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status: `Menerima ${msg.name} P2P...` });
             }
+          } else if (msg.type === 'AUDIO_TRANSFER_FAILED') {
+            const allowedStatuses = [
+              'Koneksi P2P lambat atau macet. Coba lagi.',
+              'Penerima tidak mengonfirmasi P2P. Coba lagi atau pilih sumber lain.',
+              'Koneksi P2P terputus. Coba lagi.',
+              'Audio terlalu besar untuk transfer P2P (maks. 64 MiB).'
+            ];
+            const status = allowedStatuses.includes(msg.status) ? msg.status : 'Transfer audio P2P gagal. Coba lagi.';
+            this.failIncomingAudioTransfer(targetPeerId, msg.id || '', status, msg.name || '');
           } else if (msg.type === 'AUDIO_TRANSFER_ACK') {
             const pending = this.pendingAudioTransferAcks.get(channel);
             if (pending && pending.trackId === (msg.id || '')) {
@@ -2550,8 +2607,7 @@ export class CloudMesh {
     if (!channel || channel.readyState !== 'open' || !arrayBuffer) return false;
     const totalBytes = arrayBuffer.byteLength;
     if (!Number.isSafeInteger(totalBytes) || totalBytes <= 0 || totalBytes > MAX_P2P_AUDIO_BYTES) {
-      this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status: 'Audio terlalu besar untuk transfer P2P (maks. 64 MiB).' });
-      this.broadcastReadiness('FAILED', trackId);
+      this.reportPeerAudioTransferFailure(channel, trackId, trackName, 'Audio terlalu besar untuk transfer P2P (maks. 64 MiB).');
       return false;
     }
     const totalChunks = Math.ceil(totalBytes / P2P_AUDIO_CHUNK_BYTES);
@@ -2611,10 +2667,26 @@ export class CloudMesh {
         : e.message === 'P2P_ACK_TIMEOUT'
           ? 'Penerima tidak mengonfirmasi P2P. Coba lagi atau pilih sumber lain.'
         : 'Koneksi P2P terputus. Coba lagi.';
-      this.broadcastReadiness('FAILED', trackId);
-      this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status });
+      this.reportPeerAudioTransferFailure(channel, trackId, trackName, status);
       return false;
     }
+  }
+
+  reportPeerAudioTransferFailure(channel, trackId, trackName, status) {
+    const peerId = [...this.dataChannels.entries()].find(([, candidate]) => candidate === channel)?.[0];
+    const peer = peerId && this.localPeersMap.get(peerId);
+    if (peer) {
+      peer.readiness = 'FAILED';
+      peer.isAudioLoading = false;
+      peer.loadingStatus = status;
+      this.dispatchLocalPeers();
+    }
+    if (channel?.readyState === 'open') {
+      const id = typeof trackId === 'string' ? trackId.slice(0, 160) : '';
+      const name = typeof trackName === 'string' ? trackName.slice(0, 200) : '';
+      try { channel.send(JSON.stringify({ type: 'AUDIO_TRANSFER_FAILED', id, name, status })); } catch (error) { }
+    }
+    this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status, peerId });
   }
 
   failIncomingAudioTransfer(peerId, trackId, status, trackName = '') {
