@@ -1949,6 +1949,7 @@ export class CloudMesh {
       this.localAudioBufferCache.set(url, arrayBuffer);
       this.currentAudioArrayBuffer = arrayBuffer;
       this.audioRouteByTrack.set(trackId || trackName, audioRoute);
+      this.cancelP2PTransfersForTrack(trackId);
 
       this.currentFetchingTrackKey = null;
       this.pendingTrackBufferRequest = null;
@@ -2331,6 +2332,11 @@ export class CloudMesh {
             this.failIncomingAudioTransfer(targetPeerId, msg.id || '', status, msg.name || '');
           } else if (msg.type === 'AUDIO_TRANSFER_CANCEL') {
             this.cancelIncomingAudioTransfer(targetPeerId, msg.id || '');
+            const activeTransfer = this.activeBufferTransfers.get(channel);
+            if (activeTransfer?.trackId === (msg.id || '')) {
+              activeTransfer.cancelled = true;
+              if (activeTransfer.pending?.trackId === activeTransfer.trackId) activeTransfer.pending = null;
+            }
           } else if (msg.type === 'AUDIO_TRANSFER_ACK') {
             const pending = this.pendingAudioTransferAcks.get(channel);
             if (pending && pending.trackId === (msg.id || '')) {
@@ -2735,6 +2741,18 @@ export class CloudMesh {
     const channel = this.dataChannels.get(peerId);
     if (channel?.readyState === 'open') {
       try { channel.send(JSON.stringify({ type: 'AUDIO_TRANSFER_ACK', id: trackId || '', success: false })); } catch (error) { }
+    }
+  }
+
+  cancelP2PTransfersForTrack(trackId) {
+    if (!trackId) return;
+    for (const [peerId, transfer] of this.incomingAudioChunks) {
+      if (transfer.id !== trackId) continue;
+      const channel = this.dataChannels.get(peerId);
+      if (channel?.readyState === 'open') {
+        try { channel.send(JSON.stringify({ type: 'AUDIO_TRANSFER_CANCEL', id: trackId })); } catch (error) { }
+      }
+      this.cancelIncomingAudioTransfer(peerId, trackId);
     }
   }
 

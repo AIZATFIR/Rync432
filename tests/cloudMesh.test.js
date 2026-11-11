@@ -651,6 +651,44 @@ describe('CloudMesh audio transfer', () => {
     expect(mesh.audioRouteByTrack.get('track-1')).toBe('relay');
   });
 
+  it('cancels a partial P2P transfer when the relay delivers the same audio first', async () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.broadcastReadiness = vi.fn();
+    mesh.updateLoadingState = vi.fn();
+    const channel = makeChannel();
+    mesh.dataChannels.set('peer-2', channel);
+    mesh.incomingAudioChunks.set('peer-2', {
+      id: 'track-1', name: 'Track', buffer: new Uint8Array(8), timeout: setTimeout(() => {}, 10_000)
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(new Uint8Array([4, 5, 6, 7, 8, 9, 10, 11]))));
+
+    await mesh.fetchRemoteAudioUrl('/api/room?action=get_audio&audioId=audio-1', 'Track', 'track-1');
+
+    expect(mesh.incomingAudioChunks.has('peer-2')).toBe(false);
+    expect(channel.sent.map(message => typeof message === 'string' ? JSON.parse(message) : message)).toContainEqual({
+      type: 'AUDIO_TRANSFER_CANCEL', id: 'track-1'
+    });
+    expect(mesh.audioRouteByTrack.get('track-1')).toBe('relay');
+  });
+
+  it('stops a peer sender when the receiver cancels after relay fallback succeeds', async () => {
+    vi.useFakeTimers();
+    const mesh = new CloudMesh(() => {});
+    const channel = makeChannel();
+    channel.bufferedAmount = 1024 * 1024;
+    mesh.setupDataChannel('peer-2', channel);
+    mesh.dataChannels.set('peer-2', channel);
+    const transfer = mesh.sendAudioTransferToPeer(channel, new ArrayBuffer(32 * 1024 + 1), 'Track', 'track-1');
+
+    channel.onmessage({ data: JSON.stringify({ type: 'AUDIO_TRANSFER_CANCEL', id: 'track-1' }) });
+    await vi.advanceTimersByTimeAsync(150);
+
+    await expect(transfer).resolves.toBe(false);
+    expect(channel.sent.filter(message => message instanceof ArrayBuffer)).toHaveLength(0);
+    expect(mesh.pendingAudioTransferAcks.has(channel)).toBe(false);
+  });
+
   it('authenticates host updates to a remote speaker', async () => {
     const mesh = new CloudMesh(() => {});
     mesh.isHost = true;
