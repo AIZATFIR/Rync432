@@ -728,7 +728,7 @@ describe('CloudMesh audio transfer', () => {
 
   it('reclaims the host role on same-browser join using the stored private token', async () => {
     const token = 'stored-host-token-test-000000000000000000000000000000000000';
-    vi.stubGlobal('localStorage', { getItem: vi.fn(() => token), setItem: vi.fn() });
+    vi.stubGlobal('sessionStorage', { getItem: vi.fn(() => token), setItem: vi.fn(), removeItem: vi.fn() });
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({
       room: { roomId: 'ROOM', isHost: true, queue: [] }
     }) });
@@ -742,6 +742,31 @@ describe('CloudMesh audio transfer', () => {
     expect(mesh.isHost).toBe(true);
     expect(room.isHost).toBe(true);
     mesh.leaveRoom();
+  });
+
+  it('stores host tokens in tab-scoped storage', () => {
+    const mesh = new CloudMesh(() => {});
+    const sessionStore = { getItem: vi.fn(), setItem: vi.fn(), removeItem: vi.fn() };
+    const localStore = { getItem: vi.fn(), setItem: vi.fn(), removeItem: vi.fn() };
+    vi.stubGlobal('sessionStorage', sessionStore);
+    vi.stubGlobal('localStorage', localStore);
+
+    mesh.saveHostToken('ROOM', 'private-token');
+
+    expect(sessionStore.setItem).toHaveBeenCalledWith('rync_host_token_ROOM', 'private-token');
+    expect(localStore.setItem).not.toHaveBeenCalled();
+  });
+
+  it('migrates an existing host token into tab-scoped storage and removes the shared copy', () => {
+    const mesh = new CloudMesh(() => {});
+    const sessionStore = { getItem: vi.fn(() => null), setItem: vi.fn(), removeItem: vi.fn() };
+    const localStore = { getItem: vi.fn(() => 'legacy-token'), setItem: vi.fn(), removeItem: vi.fn() };
+    vi.stubGlobal('sessionStorage', sessionStore);
+    vi.stubGlobal('localStorage', localStore);
+
+    expect(mesh.loadHostToken('ROOM')).toBe('legacy-token');
+    expect(sessionStore.setItem).toHaveBeenCalledWith('rync_host_token_ROOM', 'legacy-token');
+    expect(localStore.removeItem).toHaveBeenCalledWith('rync_host_token_ROOM');
   });
 
   it('times out a stalled room join and clears the pending room identity', async () => {

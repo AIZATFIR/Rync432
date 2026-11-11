@@ -130,12 +130,24 @@ export class CloudMesh {
   }
 
   loadHostToken(roomId) {
-    try { return localStorage.getItem(this.hostTokenStorageKey(roomId)); } catch (error) { return null; }
+    const key = this.hostTokenStorageKey(roomId);
+    try {
+      const tabToken = sessionStorage.getItem(key);
+      if (tabToken) return tabToken;
+      const legacyToken = localStorage.getItem(key);
+      if (!legacyToken) return null;
+      sessionStorage.setItem(key, legacyToken);
+      localStorage.removeItem(key);
+      return legacyToken;
+    } catch (error) { return null; }
   }
 
   saveHostToken(roomId, token) {
+    if (!token) return;
+    const key = this.hostTokenStorageKey(roomId);
     try {
-      if (token) localStorage.setItem(this.hostTokenStorageKey(roomId), token);
+      sessionStorage.setItem(key, token);
+      localStorage.removeItem(key);
     } catch (error) { }
   }
 
