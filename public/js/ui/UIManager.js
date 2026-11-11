@@ -2758,6 +2758,13 @@ export class UIManager {
   async seedCurrentTrackIntoRoom() {
     const track = this.currentTrack || this.app.socketClient.cloudMesh?.lastKnownTrack;
     if (!track) return;
+    const wasPlaying = this.isPlayingState;
+    const getTrackPosition = () => {
+      const position = track.sourceType === 'youtube'
+        ? this.app.youtubePlayer?.getCurrentTime?.()
+        : this.app.audioEngine?.getCurrentPlaybackPosition?.();
+      return Number.isFinite(position) ? position : this.app.audioEngine?.pauseOffsetSec || 0;
+    };
     if (track.sourceType === 'youtube' && !track.sourceId) {
       const id = track.id?.startsWith('yt_') ? track.id.slice(3) : '';
       if (/^[A-Za-z0-9_-]{11}$/.test(id)) track.sourceId = id;
@@ -2778,9 +2785,11 @@ export class UIManager {
       if (!localTrack?.audioData) throw new Error('File lokal sudah tidak tersedia di perangkat ini.');
       const sharedTrack = await this.uploadLocalTrackToRoom(roomTrack, localTrack.audioData);
       this.app.socketClient.cloudMesh.lastKnownTrack = sharedTrack;
-      if (this.currentTrack && this.isPlayingState) {
+      if (this.currentTrack && wasPlaying) {
+        const offset = getTrackPosition();
+        const selectionStartedAt = Date.now();
         const selected = await this.app.socketClient.playQueueItem(sharedTrack.id, false);
-        if (selected) this.app.socketClient.schedulePlay(800, this.app.audioEngine.getCurrentPlaybackPosition());
+        if (selected) this.app.socketClient.schedulePlay(800, offset + (Date.now() - selectionStartedAt) / 1000);
       }
       return;
     }
@@ -2788,11 +2797,13 @@ export class UIManager {
     this.app.socketClient.cloudMesh.lastKnownTrack = roomTrack;
     this.app.socketClient.cloudMesh.lastKnownQueue = this.app.socketClient.cloudMesh.lastKnownQueue || [];
     if (this.app.socketClient.isHost) {
-      const selected = this.currentTrack && this.isPlayingState
+      const offset = getTrackPosition();
+      const selectionStartedAt = Date.now();
+      const selected = this.currentTrack && wasPlaying
         ? await this.app.socketClient.playQueueItem(roomTrack.id, false)
         : true;
-      if (selected && this.isPlayingState && roomTrack.sourceType === 'youtube') {
-        this.app.socketClient.schedulePlay(800, this.app.youtubePlayer?.getCurrentTime?.() || 0);
+      if (selected && this.currentTrack && wasPlaying) {
+        this.app.socketClient.schedulePlay(800, offset + (Date.now() - selectionStartedAt) / 1000);
       }
     }
   }

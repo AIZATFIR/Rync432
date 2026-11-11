@@ -758,7 +758,55 @@ describe('YouTube search queue UI', () => {
     await ui.seedCurrentTrackIntoRoom();
 
     expect(selected).toHaveBeenCalledWith(track.id, false);
-    expect(schedulePlay).toHaveBeenCalledWith(800, 12);
+    expect(schedulePlay).toHaveBeenCalledWith(800, expect.any(Number));
+    expect(schedulePlay.mock.calls[0][1]).toBeGreaterThanOrEqual(12);
+  });
+
+  it('preserves active playback when room selection pauses the solo player', async () => {
+    const track = { id: 'direct-current', name: 'Direct song', sourceType: 'direct-url', audioUrl: '/audio/current.mp3' };
+    const schedulePlay = vi.fn();
+    const room = {
+      roomId: 'ROOM', isHost: true,
+      cloudMesh: { lastKnownTrack: track },
+      addToQueue: vi.fn().mockResolvedValue(true),
+      playQueueItem: vi.fn().mockImplementation(async () => {
+        ui.setPlayState(false);
+        return true;
+      }),
+      schedulePlay
+    };
+    const ui = new UIManager({ socketClient: room, audioEngine: { getCurrentPlaybackPosition: () => 9 } });
+    ui.currentTrack = track;
+    ui.isPlayingState = true;
+
+    await ui.seedCurrentTrackIntoRoom();
+
+    expect(room.playQueueItem).toHaveBeenCalledWith(track.id, false);
+    expect(schedulePlay).toHaveBeenCalledWith(800, expect.any(Number));
+    expect(schedulePlay.mock.calls[0][1]).toBeGreaterThanOrEqual(9);
+  });
+
+  it('keeps a true zero start offset instead of reusing a stale pause offset', async () => {
+    const track = { id: 'direct-start', name: 'Direct song', sourceType: 'direct-url', audioUrl: '/audio/current.mp3' };
+    const schedulePlay = vi.fn();
+    const socketClient = {
+      roomId: 'ROOM', isHost: true,
+      cloudMesh: { lastKnownTrack: track },
+      addToQueue: vi.fn().mockResolvedValue(true),
+      playQueueItem: vi.fn().mockResolvedValue(true),
+      schedulePlay
+    };
+    const ui = new UIManager({
+      socketClient,
+      audioEngine: { getCurrentPlaybackPosition: () => 0, pauseOffsetSec: 42 }
+    });
+    ui.currentTrack = track;
+    ui.isPlayingState = true;
+
+    await ui.seedCurrentTrackIntoRoom();
+
+    expect(schedulePlay).toHaveBeenCalledWith(800, expect.any(Number));
+    expect(schedulePlay.mock.calls[0][1]).toBeLessThan(1);
   });
 
   it('copies the full solo queue in order when a room is created', async () => {
