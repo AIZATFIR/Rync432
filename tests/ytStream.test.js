@@ -16,6 +16,23 @@ describe('YouTube stream API', () => {
     tempDir = null;
   });
 
+  it('routes direct audio URLs through the SSRF-protected range proxy', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    let redirectUrl;
+    const res = {
+      setHeader() {},
+      redirect(url) { redirectUrl = url; return this; },
+      status() { return this; },
+      json() { return this; }
+    };
+
+    await handler({ method: 'GET', query: { url: 'http://127.0.0.1:8080/private.wav' } }, res);
+
+    expect(redirectUrl).toBe('/api/stream?url=http%3A%2F%2F127.0.0.1%3A8080%2Fprivate.wav');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('uses yt-dlp Android audio instead of replacing it with Android VR', async () => {
     tempDir = await mkdtemp(path.join(os.tmpdir(), 'rync-yt-stream-'));
     const executable = path.join(tempDir, 'yt-dlp');

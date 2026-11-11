@@ -21,20 +21,18 @@ export default async function handler(req, res) {
   const queryUrl = req.query?.url || '';
   const queryId = req.query?.id || '';
 
-  // 1. Direct Audio File URL (MP3 / WAV / OGG / FLAC)
-  if (queryUrl.startsWith('http') && !queryUrl.includes('youtube.com') && !queryUrl.includes('youtu.be')) {
+  // Direct audio must go through the SSRF-protected, range-aware stream proxy.
+  if (queryUrl) {
+    let parsedUrl;
     try {
-      const audioResp = await fetch(queryUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-      });
-      if (audioResp.ok) {
-        const ct = audioResp.headers.get('content-type') || 'audio/mpeg';
-        res.setHeader('Content-Type', ct);
-        const buf = await audioResp.arrayBuffer();
-        return res.status(200).send(Buffer.from(buf));
-      }
-    } catch (e) {
-      return res.redirect(queryUrl);
+      parsedUrl = new URL(queryUrl);
+    } catch (error) {
+      return res.status(400).json({ error: 'INVALID_URL: URL tidak valid' });
+    }
+    const hostname = parsedUrl.hostname.toLowerCase();
+    const isYoutubeHost = hostname === 'youtu.be' || hostname === 'youtube.com' || hostname.endsWith('.youtube.com');
+    if ((parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:') && !isYoutubeHost) {
+      return res.redirect(`/api/stream?url=${encodeURIComponent(parsedUrl.href)}`);
     }
   }
 
