@@ -639,6 +639,28 @@ describe('CloudMesh audio transfer', () => {
     await expect(mesh.waitForQueueItemAcknowledgement('local-track')).resolves.toBe(true);
   });
 
+  it('ends a stalled room queue acknowledgement after a bounded timeout', async () => {
+    vi.useFakeTimers();
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'peer-1';
+    vi.stubGlobal('fetch', vi.fn((_url, options = {}) => new Promise((resolve, reject) => {
+      options.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+    })));
+
+    await mesh.addToQueue({ id: 'stalled-track', name: 'Stalled track' });
+    const acknowledgement = mesh.waitForQueueItemAcknowledgement('stalled-track');
+    let settled = false;
+    acknowledgement.then(() => { settled = true; });
+    await vi.advanceTimersByTimeAsync(8_000);
+    await Promise.resolve();
+
+    expect(settled).toBe(true);
+    await expect(acknowledgement).resolves.toBe(false);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'QUEUE_SYNC_ERROR' }));
+  });
+
   it('keeps local-file queue addition optimistic while exposing a separate server acknowledgement', async () => {
     const mesh = new CloudMesh(() => {});
     mesh.roomId = 'ROOM';

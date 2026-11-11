@@ -6,6 +6,28 @@ const P2P_AUDIO_FRAME_HEADER_BYTES = 12;
 const MAX_P2P_AUDIO_BYTES = 64 * 1024 * 1024;
 const P2P_AUDIO_TRANSFER_TIMEOUT_MS = 30_000;
 const P2P_AUDIO_BACKPRESSURE_TIMEOUT_MS = 15_000;
+const QUEUE_MUTATION_TIMEOUT_MS = 8_000;
+
+async function fetchQueueMutation(url, options) {
+  const controller = new AbortController();
+  let timeout;
+  try {
+    const request = fetch(url, { ...options, signal: controller.signal });
+    return await Promise.race([
+      request,
+      new Promise((resolve, reject) => {
+        timeout = setTimeout(() => {
+          controller.abort();
+          const error = new Error('QUEUE_MUTATION_TIMEOUT');
+          error.name = 'TimeoutError';
+          reject(error);
+        }, QUEUE_MUTATION_TIMEOUT_MS);
+      })
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 function youtubeVideoId(track) {
   if (!track) return null;
@@ -941,7 +963,7 @@ export class CloudMesh {
     if (!this.roomId || !this.peerId) return true;
 
     const submitAddition = async (expectedQueueRevision, retryConflict) => {
-      const res = await fetch('/api/room?action=add_queue', {
+      const res = await fetchQueueMutation('/api/room?action=add_queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
