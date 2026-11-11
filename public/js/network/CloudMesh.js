@@ -15,6 +15,7 @@ const QUEUE_ACK_RESULT_CACHE_MAX_ITEMS = 500;
 const QUEUE_CONFLICT_RETRY_LIMIT = 5;
 const ROOM_POLL_TIMEOUT_MS = 8_000;
 const ROOM_JOIN_TIMEOUT_MS = 8_000;
+const SIGNAL_DEDUPE_MAX_ITEMS = 512;
 const AUDIO_ROUTES = new Set(['unknown', 'p2p', 'relay', 'direct', 'youtube', 'local', 'cache']);
 const queueItemKey = item => item?.queueItemId || item?.id;
 const resolveQueueItemKey = (queue, id) => {
@@ -24,6 +25,7 @@ const resolveQueueItemKey = (queue, id) => {
   return matches.length === 1 ? queueItemKey(matches[0]) : id;
 };
 const createQueueItemId = () => `qi_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+const createSignalId = () => `sig_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 
 async function fetchRoomJoin(url, options) {
   const controller = new AbortController();
@@ -111,6 +113,7 @@ export class CloudMesh {
     this.repeatMode = 'off';
     this.shuffle = false;
     this.seenControlRequestIds = new Set();
+    this.seenSignalIds = new Set();
 
     // WebRTC P2P Connections
     this.peerConnections = new Map();
@@ -2398,10 +2401,11 @@ export class CloudMesh {
   }
 
   async sendSignal(targetPeerId, signalData) {
+    const signal = { ...signalData, signalId: signalData.signalId || createSignalId() };
     this.publishMqtt(`rync432/v1/peer/${targetPeerId}`, {
       type: 'SIGNAL',
       from: this.peerId,
-      data: signalData
+      data: signal
     });
 
     try {
@@ -2412,7 +2416,7 @@ export class CloudMesh {
           roomId: this.roomId,
           peerId: this.peerId,
           to: targetPeerId,
-          data: signalData
+          data: signal
         })
       }).catch(() => {});
     } catch (e) { }
@@ -2431,6 +2435,15 @@ export class CloudMesh {
   }
 
   async handleIncomingSignal(fromPeerId, signalData) {
+    if (!signalData || typeof signalData !== 'object') return;
+    if (typeof signalData.signalId === 'string' && signalData.signalId.length <= 100) {
+      const signalKey = `${fromPeerId}:${signalData.signalId}`;
+      if (this.seenSignalIds.has(signalKey)) return;
+      this.seenSignalIds.add(signalKey);
+      if (this.seenSignalIds.size > SIGNAL_DEDUPE_MAX_ITEMS) {
+        this.seenSignalIds.delete(this.seenSignalIds.values().next().value);
+      }
+    }
     let pc = this.peerConnections.get(fromPeerId);
     if (!pc) {
       pc = this.createPeerConnection(fromPeerId);
@@ -2667,6 +2680,7 @@ export class CloudMesh {
 
   unsubscribe() {
     this.stopPolling();
+    this.seenSignalIds.clear();
     if (this.mqttClient) {
       try { this.mqttClient.end(true); } catch (e) {}
       this.mqttClient = null;

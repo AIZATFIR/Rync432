@@ -24,6 +24,49 @@ function makeAudioChunkFrame(sequence, timestamp, bytes) {
 }
 
 describe('CloudMesh audio transfer', () => {
+  it('applies a signaling message only once when MQTT and HTTP deliver the same signal', async () => {
+    class FakePeerConnection {
+      signalingState = 'stable';
+      setRemoteDescription = vi.fn(async () => {});
+      createAnswer = vi.fn(async () => ({ type: 'answer', sdp: 'answer' }));
+      async setLocalDescription(description) {
+        this.localDescription = { ...description, toJSON: () => description };
+      }
+      addIceCandidate = vi.fn(async () => {});
+    }
+    vi.stubGlobal('RTCPeerConnection', FakePeerConnection);
+    vi.stubGlobal('RTCSessionDescription', class { constructor(value) { Object.assign(this, value); } });
+    const mesh = new CloudMesh(() => {});
+    mesh.sendSignal = vi.fn().mockResolvedValue(undefined);
+    const signal = { type: 'offer', sdp: { type: 'offer', sdp: 'offer' }, signalId: 'signal-1' };
+
+    await mesh.handleIncomingSignal('peer-1', signal);
+    await mesh.handleIncomingSignal('peer-1', signal);
+
+    const peer = mesh.peerConnections.get('peer-1');
+    expect(peer.setRemoteDescription).toHaveBeenCalledOnce();
+    expect(peer.createAnswer).toHaveBeenCalledOnce();
+    expect(mesh.sendSignal).toHaveBeenCalledOnce();
+  });
+
+  it('uses the same generated signal id on the MQTT and HTTP transports', async () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'peer-1';
+    mesh.publishMqtt = vi.fn();
+    const fetchMock = vi.fn().mockResolvedValue({});
+    vi.stubGlobal('fetch', fetchMock);
+    const payload = { type: 'candidate', candidate: { candidate: 'candidate:1' } };
+
+    await mesh.sendSignal('peer-2', payload);
+
+    const mqttSignal = mesh.publishMqtt.mock.calls[0][1].data;
+    const httpSignal = JSON.parse(fetchMock.mock.calls[0][1].body).data;
+    expect(mqttSignal.signalId).toMatch(/^sig_/);
+    expect(httpSignal).toEqual(mqttSignal);
+    expect(payload.signalId).toBeUndefined();
+  });
+
   it('keeps a peer during a transient disconnect and cancels cleanup after recovery', () => {
     vi.useFakeTimers();
     class FakePeerConnection {
