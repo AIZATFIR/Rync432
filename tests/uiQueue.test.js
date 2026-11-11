@@ -113,6 +113,77 @@ describe('YouTube search queue UI', () => {
     expect(audioEngine.loadAudioFromArrayBuffer).toHaveBeenCalled();
   });
 
+  it('uses one P2P transfer for local room audio when a peer channel is ready', async () => {
+    const bytes = new ArrayBuffer(8);
+    const mesh = {
+      isHost: true,
+      hostToken: 'host-token',
+      dataChannels: new Map([['peer', { readyState: 'open' }]]),
+      localAudioBufferCache: new Map(),
+      waitForQueueItemAcknowledgement: vi.fn().mockResolvedValue(true),
+      streamAudioToRoom: vi.fn().mockResolvedValue({ sent: 1, total: 1 }),
+      lastKnownTrack: null
+    };
+    const socketClient = { roomId: 'ROOM', peerId: 'host-peer', cloudMesh: mesh, addToQueue: vi.fn().mockResolvedValue(true) };
+    const ui = new UIManager({ socketClient });
+
+    await ui.uploadLocalTrackToRoom({ id: 'local-2', name: 'Local song', duration: 3 }, bytes);
+
+    expect(socketClient.addToQueue).toHaveBeenCalledWith(expect.objectContaining({ id: 'local-2', sourceType: 'local-file' }));
+    expect(mesh.streamAudioToRoom).toHaveBeenCalledTimes(1);
+    expect(mesh.waitForQueueItemAcknowledgement).toHaveBeenCalledWith('local-2');
+  });
+
+  it('uses the room relay when no P2P peer is available', async () => {
+    const mesh = {
+      isHost: true,
+      hostToken: 'host-token',
+      roomId: 'ROOM',
+      peerId: 'host-peer',
+      queueRevision: 2,
+      dataChannels: new Map(),
+      localAudioBufferCache: new Map(),
+      waitForQueueItemAcknowledgement: vi.fn().mockResolvedValue(true),
+      rememberQueueRevision: vi.fn(),
+      applyCanonicalQueue: vi.fn(),
+      loadTrackBuffer: vi.fn(),
+      lastKnownTrack: null
+    };
+    const socketClient = { roomId: 'ROOM', cloudMesh: mesh, addToQueue: vi.fn().mockResolvedValue(true) };
+    const ui = new UIManager({ socketClient });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, item: { id: 'local-3', audioUrl: '/api/room?action=get_audio' }, queue: [{ id: 'local-3' }], queueRevision: 3 })
+    }));
+
+    await ui.uploadLocalTrackToRoom({ id: 'local-3', name: 'Local song', duration: 3 }, new ArrayBuffer(8));
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toMatchObject({ roomId: 'ROOM', peerId: 'host-peer', hostToken: 'host-token', id: 'local-3' });
+    expect(mesh.loadTrackBuffer).toHaveBeenCalled();
+  });
+
+  it('reuses an already acknowledged local room queue item without adding it again', async () => {
+    const mesh = {
+      isHost: true,
+      hostToken: 'host-token',
+      dataChannels: new Map([['peer', { readyState: 'open' }]]),
+      localAudioBufferCache: new Map(),
+      lastKnownQueue: [{ id: 'local-4', name: 'Local song', sourceType: 'local-file' }],
+      waitForQueueItemAcknowledgement: vi.fn(),
+      streamAudioToRoom: vi.fn().mockResolvedValue({ sent: 1, total: 1 }),
+      lastKnownTrack: null
+    };
+    const socketClient = { roomId: 'ROOM', cloudMesh: mesh, addToQueue: vi.fn() };
+    const ui = new UIManager({ socketClient });
+
+    await ui.uploadLocalTrackToRoom({ id: 'local-4', name: 'Local song', duration: 3 }, new ArrayBuffer(8));
+
+    expect(socketClient.addToQueue).not.toHaveBeenCalled();
+    expect(mesh.waitForQueueItemAcknowledgement).not.toHaveBeenCalled();
+    expect(mesh.streamAudioToRoom).toHaveBeenCalledTimes(1);
+  });
+
   it('waits for room track selection before scheduling an already playing solo track', async () => {
     const track = { id: 'yt_dQw4w9WgXcQ', name: 'Song', sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ' };
     const selected = vi.fn().mockResolvedValue(track);

@@ -232,8 +232,6 @@ export class SocketClient {
       this.onEvent('YOUTUBE_TRACK_REQUESTED', payload);
     } else if (event === 'QUEUE_UPDATED') {
       this.onEvent('QUEUE_UPDATED', payload);
-    } else if (event === 'LOCAL_FILE_QUEUE_ACCEPTED') {
-      this.onEvent(event, payload);
     } else if (event === 'PLAYBACK_OPTIONS_UPDATED') {
       this.onEvent('PLAYBACK_OPTIONS_UPDATED', payload);
     } else if (event === 'HOST_DISCONNECTED' || event === 'HOST_RECONNECTED') {

@@ -1000,9 +1000,6 @@ export class CloudMesh {
       return true;
     }
     this.queueAdditionAcknowledgements.set(item.id, acknowledgement);
-    acknowledgement.then(accepted => {
-      if (accepted && item.sourceType === 'local-file') this.onEvent('LOCAL_FILE_QUEUE_ACCEPTED', item);
-    }).catch(() => {});
     acknowledgement.finally(() => {
       if (this.queueAdditionAcknowledgements.get(item.id) === acknowledgement) {
         this.queueAdditionAcknowledgements.delete(item.id);

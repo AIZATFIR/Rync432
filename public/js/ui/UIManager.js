@@ -1757,15 +1757,19 @@ export class UIManager {
     if (!mesh?.isHost || !mesh.hostToken) throw new Error('Hanya host room yang bisa membagikan file lokal');
     const queuedTrack = { ...track, sourceType: 'local-file', audioUrl: '' };
     mesh.localAudioBufferCache.set(track.id, arrayBuffer);
-    await this.app.socketClient.addToQueue(queuedTrack);
-    const added = await mesh.waitForQueueItemAcknowledgement(track.id);
-    if (!added) throw new Error('File lokal tidak masuk ke queue room');
+    const alreadyQueued = mesh.lastKnownQueue?.some(item => item.id === track.id);
+    if (!alreadyQueued) {
+      await this.app.socketClient.addToQueue(queuedTrack);
+      const added = await mesh.waitForQueueItemAcknowledgement(track.id);
+      if (!added) throw new Error('File lokal tidak masuk ke queue room');
+    }
     const selected = mesh.lastKnownTrack?.id === track.id;
     const openPeerCount = [...mesh.dataChannels.values()].filter(channel => channel.readyState === 'open').length;
     if (openPeerCount > 0 && arrayBuffer.byteLength <= 64 * 1024 * 1024) {
-      mesh.streamAudioToRoom(arrayBuffer, track.name, track.id);
-      if (selected) return mesh.lastKnownTrack;
-      if (arrayBuffer.byteLength > 20 * 1024 * 1024) return queuedTrack;
+      const transfer = await mesh.streamAudioToRoom(arrayBuffer, track.name, track.id);
+      if (transfer.sent === transfer.total && transfer.total > 0) {
+        return selected ? mesh.lastKnownTrack : queuedTrack;
+      }
     }
     if (arrayBuffer.byteLength > 20 * 1024 * 1024) throw new Error('File melebihi batas relay 20 MiB dan belum ada peer P2P yang siap.');
     const bytes = new Uint8Array(arrayBuffer);
