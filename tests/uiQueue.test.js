@@ -50,11 +50,13 @@ describe('YouTube search queue UI', () => {
   });
 
   it('requests host playback without starting a second local player or waiting for room queue sync', async () => {
-    const itemPromise = new Promise(() => {});
+    let acknowledgeQueue;
+    const acknowledgement = new Promise(resolve => { acknowledgeQueue = resolve; });
+    const itemPromise = Promise.resolve(true);
     const player = { setVolume: vi.fn(), playAt: vi.fn().mockResolvedValue(undefined) };
     const socketClient = {
       roomId: 'ROOM', isHost: true,
-      cloudMesh: { lastKnownTrack: null, loadTrackBuffer: vi.fn() },
+      cloudMesh: { lastKnownTrack: null, loadTrackBuffer: vi.fn(), waitForQueueItemAcknowledgement: vi.fn(() => acknowledgement) },
       addToQueue: vi.fn(() => itemPromise),
       playQueueItem: vi.fn()
     };
@@ -67,16 +69,23 @@ describe('YouTube search queue UI', () => {
 
     expect(audioEngine.ensureContext).not.toHaveBeenCalled();
     expect(socketClient.addToQueue).toHaveBeenCalledOnce();
-    expect(socketClient.playQueueItem).toHaveBeenCalledWith('yt_dQw4w9WgXcQ', true);
+    expect(socketClient.playQueueItem).not.toHaveBeenCalled();
     expect(player.playAt).not.toHaveBeenCalled();
     expect(item.id).toBe('yt_dQw4w9WgXcQ');
+    await Promise.resolve();
+    expect(socketClient.cloudMesh.waitForQueueItemAcknowledgement).toHaveBeenCalledWith(item.id);
+    expect(socketClient.playQueueItem).not.toHaveBeenCalled();
+    acknowledgeQueue(true);
+    await acknowledgement;
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(socketClient.playQueueItem).toHaveBeenCalledWith(item.id, true);
   });
 
   it('lets guests request YouTube room playback without starting the host-only player locally', async () => {
     const player = { setVolume: vi.fn(), playAt: vi.fn() };
     const socketClient = {
       roomId: 'ROOM', isHost: false,
-      cloudMesh: { lastKnownTrack: null },
+      cloudMesh: { lastKnownTrack: null, waitForQueueItemAcknowledgement: vi.fn().mockResolvedValue(true) },
       addToQueue: vi.fn().mockResolvedValue(true),
       requestControl: vi.fn()
     };
@@ -86,10 +95,32 @@ describe('YouTube search queue UI', () => {
 
     await ui.streamAudioFromUrl('https://youtu.be/dQw4w9WgXcQ', 'Song');
 
+    expect(socketClient.requestControl).not.toHaveBeenCalled();
+    await new Promise(resolve => setTimeout(resolve, 0));
     expect(socketClient.requestControl).toHaveBeenCalledWith('play_queue_item', {
       queueId: 'yt_dQw4w9WgXcQ', name: 'Song'
     });
     expect(player.playAt).not.toHaveBeenCalled();
+  });
+
+  it('plays an existing YouTube queue item without inserting it or waiting for a new acknowledgement', async () => {
+    const item = { id: 'yt_dQw4w9WgXcQ', name: 'Song', sourceType: 'youtube' };
+    const socketClient = {
+      roomId: 'ROOM', isHost: true,
+      cloudMesh: { lastKnownQueue: [item], lastKnownTrack: null },
+      addToQueue: vi.fn(), playQueueItem: vi.fn()
+    };
+    const ui = new UIManager({ socketClient, audioEngine: {}, youtubePlayer: {} });
+    ui.updateTrackUI = vi.fn();
+    ui.setYouTubePlayerVisible = vi.fn();
+    ui.setYouTubePlayerStatus = vi.fn();
+    ui.showUrlFeedback = vi.fn();
+
+    await ui.streamAudioFromUrl('https://youtu.be/dQw4w9WgXcQ', 'Song');
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(socketClient.addToQueue).not.toHaveBeenCalled();
+    expect(socketClient.playQueueItem).toHaveBeenCalledWith(item.id, true);
   });
 
   it('starts a selected solo YouTube track in the official player', async () => {

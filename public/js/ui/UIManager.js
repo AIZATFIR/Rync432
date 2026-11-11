@@ -1267,20 +1267,29 @@ export class UIManager {
       this.updateTrackUI(item.name, item.duration, item.thumbnail);
       return item;
     }
-    const queueSync = this.app.socketClient.addToQueue(item);
-    if (this.app.socketClient.isHost) {
-      this.app.socketClient.cloudMesh.lastKnownTrack = item;
-      this.app.socketClient.playQueueItem(item.id, true);
-    } else {
-      this.app.socketClient.requestControl('play_queue_item', { queueId: item.id, name: item.name });
-    }
+    const socketClient = this.app.socketClient;
+    const alreadyQueued = (socketClient.cloudMesh?.lastKnownQueue || []).some(queued => queued.id === item.id);
+    const queueSync = alreadyQueued ? Promise.resolve(true) : Promise.resolve(socketClient.addToQueue(item)).then(added => {
+      if (added === false) return false;
+      const waitForAck = socketClient.cloudMesh?.waitForQueueItemAcknowledgement;
+      return waitForAck ? waitForAck.call(socketClient.cloudMesh, item.id) : added;
+    });
     this.updateTrackUI(item.name, item.duration, item.thumbnail);
     this.setYouTubePlayerVisible(true);
     if (this.app.socketClient.isHost) this.setYouTubePlayerStatus('Menyiapkan pemutaran room…');
     else this.setYouTubePlayerStatus('Meminta host memutar lagu…');
     queueSync.then(synced => {
-      if (synced === false) this.showUrlFeedback('Lagu diputar di perangkat ini, tetapi antrean room belum tersinkron.', 'error');
-    }).catch(() => this.showUrlFeedback('Lagu diputar, tetapi antrean room belum tersinkron.', 'error'));
+      if (synced === false) {
+        this.showUrlFeedback('Antrean room gagal disinkronkan. Coba tambahkan lagu lagi.', 'error');
+        return;
+      }
+      if (socketClient.isHost) {
+        socketClient.cloudMesh.lastKnownTrack = item;
+        socketClient.playQueueItem(item.id, true);
+      } else {
+        socketClient.requestControl('play_queue_item', { queueId: item.id, name: item.name });
+      }
+    }).catch(() => this.showUrlFeedback('Antrean room gagal disinkronkan. Coba tambahkan lagu lagi.', 'error'));
     return item;
   }
 
