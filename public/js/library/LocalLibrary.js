@@ -3,7 +3,7 @@
  * Ensures solo listening and personal collections persist across sessions on this device.
  */
 export class LocalLibrary {
-  constructor(dbName = 'rync_library_db', version = 1) {
+  constructor(dbName = 'rync_library_db', version = 2) {
     this.dbName = dbName;
     this.version = version;
     this.db = null;
@@ -26,6 +26,9 @@ export class LocalLibrary {
         }
         if (!db.objectStoreNames.contains('playlists')) {
           db.createObjectStore('playlists', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('localAudio')) {
+          db.createObjectStore('localAudio', { keyPath: 'id' });
         }
       };
 
@@ -135,6 +138,40 @@ export class LocalLibrary {
       hist.unshift({ ...track, timestamp: Date.now() });
       localStorage.setItem('rync_history', JSON.stringify(hist.slice(0, 100)));
     } catch (e) {}
+  }
+
+  async saveLocalAudio(track, arrayBuffer) {
+    if (!track?.id || !(arrayBuffer instanceof ArrayBuffer)) return false;
+    const db = await this.open();
+    if (!db) return false;
+    return new Promise(resolve => {
+      const tx = db.transaction('localAudio', 'readwrite');
+      tx.objectStore('localAudio').put({ ...track, audioData: arrayBuffer, savedAt: Date.now() });
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+      tx.onabort = () => resolve(false);
+    });
+  }
+
+  async getLocalAudio(trackId) {
+    const db = await this.open();
+    if (!db) return null;
+    return new Promise(resolve => {
+      const request = db.transaction('localAudio', 'readonly').objectStore('localAudio').get(trackId);
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => resolve(null);
+    });
+  }
+
+  async getLocalAudioTracks() {
+    const db = await this.open();
+    if (!db) return [];
+    return new Promise(resolve => {
+      const request = db.transaction('localAudio', 'readonly').objectStore('localAudio').getAll();
+      request.onsuccess = () => resolve((request.result || []).map(({ audioData, ...track }) => track)
+        .sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0)));
+      request.onerror = () => resolve([]);
+    });
   }
 
   async getRecentHistory(limit = 30) {

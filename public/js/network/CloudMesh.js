@@ -57,6 +57,7 @@ export class CloudMesh {
     this.incomingAudioChunks = new Map();
     this.currentAudioArrayBuffer = null;
     this.localAudioBufferCache = new Map();
+    this.queueAdditionAcknowledgements = new Map();
     this.activeBufferTransfers = new WeakSet();
     this.deletedQueueIds = new Set();
 
@@ -654,7 +655,7 @@ export class CloudMesh {
   }
 
   async pollLoop() {
-    if (!this.roomId || !this.peerId) return;
+    if (!this.roomId || !this.peerId) return true;
 
     try {
       const res = await fetch('/api/room?action=poll', {
@@ -936,7 +937,8 @@ export class CloudMesh {
       this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
       this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
     }
-    if (!this.roomId || !this.peerId) return;
+    else return true;
+    if (!this.roomId || !this.peerId) return true;
 
     const submitAddition = async (expectedQueueRevision, retryConflict) => {
       const res = await fetch('/api/room?action=add_queue', {
@@ -964,7 +966,7 @@ export class CloudMesh {
         } else {
           this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Antrean tersimpan di perangkat ini, sinkronisasi room gagal.' });
         }
-        return;
+        return false;
       }
       if (data.queue) {
         const confirmedTracks = data.queue.filter(track => !this.deletedQueueIds.has(track.id));
@@ -986,10 +988,32 @@ export class CloudMesh {
           });
         }
       }
+      return true;
     };
-    submitAddition(this.queueRevision, true).catch(() => {
+    const acknowledgement = submitAddition(this.queueRevision, true).catch(() => {
       this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Antrean tersimpan di perangkat ini, sinkronisasi room gagal.' });
+      return false;
     });
+    const previousAcknowledgement = this.queueAdditionAcknowledgements.get(item.id);
+    if (previousAcknowledgement) {
+      acknowledgement.catch(() => {});
+      return true;
+    }
+    this.queueAdditionAcknowledgements.set(item.id, acknowledgement);
+    acknowledgement.then(accepted => {
+      if (accepted && item.sourceType === 'local-file') this.onEvent('LOCAL_FILE_QUEUE_ACCEPTED', item);
+    }).catch(() => {});
+    acknowledgement.finally(() => {
+      if (this.queueAdditionAcknowledgements.get(item.id) === acknowledgement) {
+        this.queueAdditionAcknowledgements.delete(item.id);
+      }
+    }).catch(() => {});
+    acknowledgement.catch(() => {});
+    return true;
+  }
+
+  waitForQueueItemAcknowledgement(trackId) {
+    return this.queueAdditionAcknowledgements?.get(trackId) || Promise.resolve(false);
   }
 
   requestControl(action, details = {}) {
@@ -1038,6 +1062,11 @@ export class CloudMesh {
       }
       if (data.track) {
         this.lastKnownTrack = data.track;
+        const cachedBuffer = this.localAudioBufferCache.get(data.track.id);
+        if (cachedBuffer && data.track.audioUrl) {
+          this.localAudioBufferCache.set(data.track.audioUrl, cachedBuffer);
+          this.onEvent('BINARY_AUDIO_RECEIVED', { arrayBuffer: cachedBuffer, trackName: data.track.name, trackId: data.track.id });
+        }
         this.isPaused = !autoplay;
         this.lastKnownOffsetSec = 0;
         this.lastKnownState = autoplay ? (data.targetServerTime || this.serverTimeNow() + 800) : 'PAUSED';
@@ -2063,6 +2092,13 @@ export class CloudMesh {
         this.sendAudioTransferToPeer(channel, arrayBuffer, trackName, trackId);
       }
     });
+  }
+
+  async streamAudioToRoom(arrayBuffer, trackName = 'Uploaded Track', trackId = '') {
+    const peers = [...this.dataChannels.values()].filter(channel => channel.readyState === 'open');
+    if (!peers.length) return { sent: 0, total: 0 };
+    const results = await Promise.all(peers.map(channel => this.sendAudioTransferToPeer(channel, arrayBuffer, trackName, trackId)));
+    return { sent: results.filter(Boolean).length, total: peers.length };
   }
 
   sendAudioTransferToPeer(channel, arrayBuffer, trackName = 'Uploaded Track', trackId = '') {

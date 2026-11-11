@@ -243,6 +243,13 @@ class App {
         }
         break;
 
+      case 'LOCAL_FILE_QUEUE_ACCEPTED':
+        if (socketClient.isHost && payload?.id) {
+          const buffer = socketClient.cloudMesh.localAudioBufferCache.get(payload.id);
+          if (buffer) socketClient.cloudMesh.streamAudioToRoom(buffer, payload.name, payload.id);
+        }
+        break;
+
       case 'PLAYBACK_OPTIONS_UPDATED':
         uiManager.setPlaybackOptions(payload);
         break;

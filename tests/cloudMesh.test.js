@@ -621,7 +621,41 @@ describe('CloudMesh audio transfer', () => {
 
     expect(settled).toBe(true);
     expect(mesh.lastKnownQueue.map(track => track.id)).toEqual(['next-track']);
+    expect(mesh.waitForQueueItemAcknowledgement('next-track')).toBeInstanceOf(Promise);
     await add;
+  });
+
+  it('can wait for the authoritative acknowledgement of a specific queue item', async () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'peer-1';
+    mesh.deviceName = 'Host';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, queue: [{ id: 'local-track' }], queueRevision: 4 })
+    }));
+
+    await mesh.addToQueue({ id: 'local-track', name: 'Local track' });
+    await expect(mesh.waitForQueueItemAcknowledgement('local-track')).resolves.toBe(true);
+  });
+
+  it('keeps optimistic queue additions immediate while emitting local-file transfer after server acceptance', async () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'peer-1';
+    mesh.deviceName = 'Host';
+    let resolveFetch;
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(resolve => { resolveFetch = resolve; })));
+
+    await mesh.addToQueue({ id: 'local-track', name: 'Local track', sourceType: 'local-file' });
+    expect(mesh.lastKnownQueue.map(track => track.id)).toEqual(['local-track']);
+    expect(events.some(event => event.type === 'LOCAL_FILE_QUEUE_ACCEPTED')).toBe(false);
+
+    resolveFetch({ ok: true, json: async () => ({ success: true, queue: [{ id: 'local-track' }], queueRevision: 1 }) });
+    await expect(mesh.waitForQueueItemAcknowledgement('local-track')).resolves.toBe(true);
+    await Promise.resolve();
+    expect(events).toContainEqual(expect.objectContaining({ type: 'LOCAL_FILE_QUEUE_ACCEPTED', payload: expect.objectContaining({ id: 'local-track' }) }));
   });
 
   it('deduplicates repeated adds of the same stable queue id', async () => {

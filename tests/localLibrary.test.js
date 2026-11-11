@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { LocalLibrary } from '../public/js/library/LocalLibrary.js';
 
 describe('LocalLibrary Local Storage Fallback', () => {
@@ -80,5 +80,41 @@ describe('LocalLibrary Local Storage Fallback', () => {
     await fallbackLibrary.addFavorite({ id: 'fallback-track', name: 'Offline favorite' });
 
     expect(await fallbackLibrary.isFavorite('fallback-track')).toBe(true);
+  });
+
+  it('stores local audio only in IndexedDB and retrieves its bytes by track id', async () => {
+    const bytes = new ArrayBuffer(8);
+    const stored = new Map();
+    lib.open = async () => ({
+      transaction: () => ({
+        objectStore: () => ({
+          put: vi.fn(record => stored.set(record.id, record)),
+          get: () => {
+            const request = {};
+            queueMicrotask(() => {
+              request.result = stored.get('file-1');
+              request.onsuccess();
+            });
+            return request;
+          },
+          getAll: () => {
+            const request = {};
+            queueMicrotask(() => {
+              request.result = [...stored.values()];
+              request.onsuccess();
+            });
+            return request;
+          }
+        }),
+        set oncomplete(callback) { queueMicrotask(callback); },
+        set onerror(_) {},
+        set onabort(_) {}
+      })
+    });
+
+    expect(await lib.saveLocalAudio({ id: 'file-1' }, bytes)).toBe(true);
+    expect(await lib.getLocalAudio('file-1')).toMatchObject({ id: 'file-1', audioData: bytes });
+    expect(await lib.getLocalAudioTracks()).toEqual([expect.objectContaining({ id: 'file-1' })]);
+    expect(await lib.saveLocalAudio({ id: 'bad' }, new Uint8Array(8))).toBe(false);
   });
 });

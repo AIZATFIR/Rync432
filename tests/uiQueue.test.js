@@ -66,6 +66,52 @@ describe('YouTube search queue UI', () => {
     expect(ui.isPlayingState).toBe(true);
   });
 
+  it('plays a stored local file solo without creating a room', async () => {
+    const track = { id: 'local-1', name: 'Local song', sourceType: 'local-file', duration: 12 };
+    const bytes = new ArrayBuffer(16);
+    const socketClient = { roomId: null, cloudMesh: { lastKnownTrack: null }, clockSync: { getServerTime: () => 1000 } };
+    const audioEngine = {
+      ensureContext: vi.fn().mockResolvedValue(undefined),
+      loadAudioFromArrayBuffer: vi.fn().mockResolvedValue({ duration: 12 }),
+      schedulePlayAtServerTime: vi.fn()
+    };
+    const ui = new UIManager({ socketClient, audioEngine });
+    ui.localLibrary.getLocalAudio = vi.fn().mockResolvedValue({ ...track, audioData: bytes });
+    ui.addToSoloQueue = vi.fn();
+    ui.updateTrackUI = vi.fn();
+    ui.setPlayState = vi.fn();
+    ui.setView = vi.fn();
+
+    await ui.playLibraryTrack(track);
+
+    expect(socketClient.roomId).toBeNull();
+    expect(ui.localLibrary.getLocalAudio).toHaveBeenCalledWith(track.id);
+    expect(audioEngine.loadAudioFromArrayBuffer).toHaveBeenCalledWith(bytes, track.name, track.id);
+    expect(audioEngine.schedulePlayAtServerTime).toHaveBeenCalledWith(1050, 0);
+    expect(ui.setPlayState).toHaveBeenCalledWith(true);
+  });
+
+  it('accepts local-file queue entries without a remote URL for solo playback', async () => {
+    const track = { id: 'local-queue-track', name: 'Local queue track', sourceType: 'local-file' };
+    const socketClient = { roomId: null, cloudMesh: {}, clockSync: { getServerTime: () => 1000 } };
+    const audioEngine = {
+      ensureContext: vi.fn().mockResolvedValue(undefined),
+      loadAudioFromArrayBuffer: vi.fn().mockResolvedValue({ duration: 8 }),
+      schedulePlayAtServerTime: vi.fn()
+    };
+    const ui = new UIManager({ socketClient, audioEngine });
+    ui.localLibrary.getLocalAudio = vi.fn().mockResolvedValue({ audioData: new ArrayBuffer(4) });
+    ui.addToSoloQueue = vi.fn();
+    ui.updateTrackUI = vi.fn();
+    ui.setPlayState = vi.fn();
+    ui.setView = vi.fn();
+
+    await ui.playLibraryTrack(track);
+
+    expect(ui.localLibrary.getLocalAudio).toHaveBeenCalledWith(track.id);
+    expect(audioEngine.loadAudioFromArrayBuffer).toHaveBeenCalled();
+  });
+
   it('waits for room track selection before scheduling an already playing solo track', async () => {
     const track = { id: 'yt_dQw4w9WgXcQ', name: 'Song', sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ' };
     const selected = vi.fn().mockResolvedValue(track);

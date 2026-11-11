@@ -408,6 +408,51 @@ describe('room authority', () => {
     expect(upload.body.error).toBe('QUEUE_LIMIT_REACHED');
   });
 
+  it('stores a host uploaded local file as a shareable room queue item', async () => {
+    const roomId = `L${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    const uploaded = await callRoom('upload_audio', {
+      roomId,
+      peerId: 'host-peer',
+      hostToken: created.body.hostToken,
+      id: 'local-file-1',
+      audioBase64: 'AQID',
+      trackName: 'Local track',
+      duration: 9
+    });
+    const retrieved = await callRoom('get_audio', { roomId, audioId: uploaded.body.item.audioId });
+
+    expect(uploaded.statusCode).toBe(200);
+    expect(uploaded.body.item).toMatchObject({ id: 'local-file-1', audioUrl: expect.stringContaining('get_audio') });
+    expect(retrieved.statusCode).toBe(200);
+
+    const forbidden = await callRoom('upload_audio', {
+      roomId,
+      peerId: 'host-peer',
+      hostToken: created.body.hostToken,
+      id: 'local-file-2',
+      audioBase64: 'AQID',
+      trackName: 'Unauthorized-size-check',
+      duration: 9,
+      expectedQueueRevision: -1
+    });
+    expect(forbidden.statusCode).toBe(409);
+  });
+
+  it('rejects room audio uploads above the relay size limit', async () => {
+    const roomId = `B${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    const oversized = await callRoom('upload_audio', {
+      roomId,
+      peerId: 'host-peer',
+      hostToken: created.body.hostToken,
+      audioBase64: 'a'.repeat(28 * 1024 * 1024 + 1)
+    });
+
+    expect(oversized.statusCode).toBe(413);
+    expect(oversized.body.error).toBe('AUDIO_TOO_LARGE');
+  });
+
   it('does not return another uploaded file when an audio id is missing or unknown', async () => {
     const roomId = `F${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });

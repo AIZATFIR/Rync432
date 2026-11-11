@@ -146,6 +146,9 @@ export default async function handler(req, res) {
         return res.status(413).json({ success: false, error: 'QUEUE_LIMIT_REACHED', maxItems: MAX_QUEUE_ITEMS });
       }
 
+      if (audioBase64.length > 28 * 1024 * 1024) {
+        return res.status(413).json({ success: false, error: 'AUDIO_TOO_LARGE' });
+      }
       const audioId = 'aud_' + Math.random().toString(36).substring(2, 9);
       const audioEntry = {
         audioId,
@@ -174,6 +177,8 @@ export default async function handler(req, res) {
         };
         room.queue.push(item);
       }
+      if (targetQueueId) item.id = targetQueueId;
+      item.sourceType = 'local-file';
 
       if (!room.track) {
         room.track = item;
@@ -507,7 +512,7 @@ export default async function handler(req, res) {
           || (item.name !== undefined && (typeof item.name !== 'string' || item.name.length > 512))
           || (item.artist !== undefined && (typeof item.artist !== 'string' || item.artist.length > 512))
           || (item.audioUrl !== undefined && (typeof item.audioUrl !== 'string' || item.audioUrl.length > 4096))
-          || (item.sourceType !== undefined && item.sourceType !== 'youtube')
+          || (item.sourceType !== undefined && !['youtube', 'local-file'].includes(item.sourceType))
           || (item.sourceId !== undefined && (typeof item.sourceId !== 'string' || !/^[A-Za-z0-9_-]{11}$/.test(item.sourceId)))
           || (item.sourceUrl !== undefined && (typeof item.sourceUrl !== 'string' || item.sourceUrl.length > 4096))
           || (item.duration !== undefined && (!Number.isFinite(item.duration) || item.duration < 0)))) {
@@ -533,7 +538,7 @@ export default async function handler(req, res) {
         || (body.name !== undefined && typeof body.name !== 'string')
         || (body.artist !== undefined && typeof body.artist !== 'string')
         || (body.audioUrl !== undefined && typeof body.audioUrl !== 'string')
-        || (body.sourceType !== undefined && body.sourceType !== 'youtube')
+        || (body.sourceType !== undefined && !['youtube', 'local-file'].includes(body.sourceType))
         || (body.sourceId !== undefined && (typeof body.sourceId !== 'string' || !/^[A-Za-z0-9_-]{11}$/.test(body.sourceId)))
         || (body.sourceUrl !== undefined && (typeof body.sourceUrl !== 'string' || body.sourceUrl.length > 4096))
         || (body.duration !== undefined && (!Number.isFinite(body.duration) || body.duration < 0))) {

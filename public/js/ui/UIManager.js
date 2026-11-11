@@ -1465,6 +1465,17 @@ export class UIManager {
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
+        } else if (item.sourceType === 'local-file') {
+          this.localLibrary.getLocalAudio(item.id).then(local => {
+            if (!local?.audioData) throw new Error('File lokal sudah tidak tersedia.');
+            const blob = new Blob([local.audioData], { type: 'audio/mpeg' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = item.name || 'track';
+            a.click();
+            URL.revokeObjectURL(url);
+          }).catch(() => this.showUrlFeedback('File lokal tidak bisa diunduh.', 'error'));
         } else {
           alert('Audio stream tidak memiliki URL unduhan langsung.');
         }
@@ -1684,18 +1695,13 @@ export class UIManager {
     if (!files || files.length === 0) return;
     const app = this.app;
     await app.audioEngine.ensureContext();
-
-    if (!app.socketClient.roomId) {
-      await app.socketClient.createRoom(this.getDeviceName());
-    }
+    const inRoom = Boolean(app.socketClient.roomId);
 
     const fileList = Array.from(files);
     const totalFiles = fileList.length;
     for (let i = 0; i < totalFiles; i++) {
       const file = fileList[i];
-      const itemId = 'q_' + Math.random().toString(36).substring(2, 9);
-      const blobUrl = URL.createObjectURL(file);
-
+      const itemId = `local_${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2, 12)}`;
       this.setTrackLoading(`Membaca (${i + 1}/${totalFiles}) ${file.name}...`);
 
       try {
@@ -1708,95 +1714,33 @@ export class UIManager {
           console.warn('Audio decode duration notice:', decErr);
         }
 
-        // Cache locally by itemId, file.name, and blobUrl
-        if (app.socketClient.cloudMesh) {
-          app.socketClient.cloudMesh.localAudioBufferCache.set(itemId, arrayBuffer);
-          app.socketClient.cloudMesh.localAudioBufferCache.set(file.name, arrayBuffer);
-          app.socketClient.cloudMesh.localAudioBufferCache.set(blobUrl, arrayBuffer);
-        }
-
-        // 1. Direct High-Speed Cloud CDN Upload with Server Relay Fallback
-        this.setTrackLoading(`Mengunggah (${i + 1}/${totalFiles}) ${file.name}...`);
-        let cloudAudioUrl = '';
-        try {
-          const formData = new FormData();
-          formData.append('reqtype', 'fileupload');
-          formData.append('time', '72h');
-          formData.append('fileToUpload', file, file.name);
-
-          const uploadRes = await fetch('https://litterbox.catbox.moe/resources/internals/api.php', {
-            method: 'POST',
-            body: formData
-          });
-          if (uploadRes.ok) {
-            const returnedUrl = (await uploadRes.text()).trim();
-            if (returnedUrl.startsWith('http')) {
-              cloudAudioUrl = returnedUrl;
-            }
-          }
-        } catch (e) {
-          console.warn('Direct upload notice, trying server relay:', e);
-        }
-
-        if (!cloudAudioUrl && arrayBuffer.byteLength < 35 * 1024 * 1024) {
-          try {
-            const chunkSize = 0x8000;
-            const bytes = new Uint8Array(arrayBuffer);
-            let binary = '';
-            for (let b = 0; b < bytes.byteLength; b += chunkSize) {
-              const chunk = bytes.subarray(b, Math.min(b + chunkSize, bytes.byteLength));
-              binary += String.fromCharCode.apply(null, chunk);
-            }
-            const b64 = btoa(binary);
-
-            const uploadApiRes = await fetch('/api/upload-audio', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                audioBase64: b64,
-                fileName: file.name,
-                contentType: file.type || 'audio/mpeg'
-              })
-            });
-            if (uploadApiRes.ok) {
-              const uploadApiData = await uploadApiRes.json();
-              if (uploadApiData.audioUrl) {
-                cloudAudioUrl = uploadApiData.audioUrl;
-              }
-            }
-          } catch (relayErr) {
-            console.warn('Server upload relay notice:', relayErr);
-          }
-        }
-
-        if (!cloudAudioUrl) {
-          cloudAudioUrl = blobUrl;
-        }
-
-        // Cache locally for instant local playback
-        if (app.socketClient.cloudMesh) {
-          if (cloudAudioUrl) app.socketClient.cloudMesh.localAudioBufferCache.set(cloudAudioUrl, arrayBuffer);
-          app.socketClient.cloudMesh.localAudioBufferCache.set(itemId, arrayBuffer);
-          app.socketClient.cloudMesh.localAudioBufferCache.set(file.name, arrayBuffer);
-          app.socketClient.cloudMesh.localAudioBufferCache.set(blobUrl, arrayBuffer);
-        }
-
-        // 2. Add to queue with public cloudAudioUrl
         const queueItem = {
           id: itemId,
           name: file.name,
           artist: 'File Audio',
           duration: duration || 0,
-          audioUrl: cloudAudioUrl,
+          audioUrl: '',
+          sourceType: 'local-file',
           addedBy: this.getDeviceName()
         };
-        await app.socketClient.addToQueue(queueItem);
-        this.clearTrackLoading();
+        const saved = await this.localLibrary.saveLocalAudio(queueItem, arrayBuffer);
+        if (!saved) throw new Error('Penyimpanan lokal tidak tersedia untuk file ini');
 
-        // 3. WebRTC binary streaming as local fast fallback
-        app.socketClient.sendBinary(arrayBuffer, file.name, itemId);
+        if (app.socketClient.cloudMesh) {
+          app.socketClient.cloudMesh.localAudioBufferCache.set(itemId, arrayBuffer);
+          app.socketClient.cloudMesh.localAudioBufferCache.set(file.name, arrayBuffer);
+        }
+
+        this.addToSoloQueue(queueItem);
+        if (inRoom) {
+          if (!app.socketClient.isHost) throw new Error('Host room perlu menambahkan file lokal yang ingin dibagikan.');
+          await this.uploadLocalTrackToRoom(queueItem, arrayBuffer);
+        } else await this.playLibraryTrack(queueItem);
+        this.clearTrackLoading();
       } catch (err) {
         console.error('Audio load error for', file.name, err);
+        this.clearTrackLoading();
+        this.showUrlFeedback(err.message || `File ${file.name} gagal dimuat.`, 'error');
       }
     }
 
@@ -1806,6 +1750,52 @@ export class UIManager {
     if (app.audioEngine.currentTrackName && app.audioEngine.audioBuffer) {
       this.updateTrackUI(app.audioEngine.currentTrackName, app.audioEngine.currentTrackDuration);
     }
+  }
+
+  async uploadLocalTrackToRoom(track, arrayBuffer) {
+    const mesh = this.app.socketClient.cloudMesh;
+    if (!mesh?.isHost || !mesh.hostToken) throw new Error('Hanya host room yang bisa membagikan file lokal');
+    const queuedTrack = { ...track, sourceType: 'local-file', audioUrl: '' };
+    mesh.localAudioBufferCache.set(track.id, arrayBuffer);
+    await this.app.socketClient.addToQueue(queuedTrack);
+    const added = await mesh.waitForQueueItemAcknowledgement(track.id);
+    if (!added) throw new Error('File lokal tidak masuk ke queue room');
+    const selected = mesh.lastKnownTrack?.id === track.id;
+    const openPeerCount = [...mesh.dataChannels.values()].filter(channel => channel.readyState === 'open').length;
+    if (openPeerCount > 0 && arrayBuffer.byteLength <= 64 * 1024 * 1024) {
+      mesh.streamAudioToRoom(arrayBuffer, track.name, track.id);
+      if (selected) return mesh.lastKnownTrack;
+      if (arrayBuffer.byteLength > 20 * 1024 * 1024) return queuedTrack;
+    }
+    if (arrayBuffer.byteLength > 20 * 1024 * 1024) throw new Error('File melebihi batas relay 20 MiB dan belum ada peer P2P yang siap.');
+    const bytes = new Uint8Array(arrayBuffer);
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let offset = 0; offset < bytes.byteLength; offset += chunkSize) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(offset, Math.min(offset + chunkSize, bytes.byteLength)));
+    }
+    const response = await fetch('/api/room?action=upload_audio', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomId: mesh.roomId,
+        peerId: mesh.peerId,
+        hostToken: mesh.hostToken,
+        id: track.id,
+        audioBase64: btoa(binary),
+        trackName: track.name,
+        duration: track.duration,
+        expectedQueueRevision: mesh.queueRevision
+      })
+    });
+    const result = await response.json();
+    if (!response.ok || !result.success || !result.item?.id) throw new Error('File gagal dibagikan. Coba lagi dengan file lebih kecil.');
+    mesh.rememberQueueRevision(result);
+    mesh.applyCanonicalQueue(result.queue);
+    mesh.localAudioBufferCache.set(result.item.audioUrl, arrayBuffer);
+    if (selected) mesh.lastKnownTrack = result.item;
+    mesh.loadTrackBuffer(result.item);
+    return result.item;
   }
 
   showUrlFeedback(msg, type = 'info') {
@@ -2017,14 +2007,15 @@ export class UIManager {
 
   async refreshLibrary() {
     try {
-      const [playlists, favorites, recent] = await Promise.all([
+      const [playlists, favorites, recent, localFiles] = await Promise.all([
         this.localLibrary.getPlaylists(),
         this.localLibrary.getFavorites(),
-        this.localLibrary.getRecentHistory(20)
+        this.localLibrary.getRecentHistory(20),
+        this.localLibrary.getLocalAudioTracks()
       ]);
       this.renderPlaylists(playlists);
       this.renderLibraryTracks(this.elements.favoriteList, favorites, 'Belum ada lagu favorit.');
-      this.renderLibraryTracks(this.elements.recentList, recent, 'Lagu yang diputar akan muncul di sini.');
+      this.renderLibraryTracks(this.elements.recentList, [...localFiles, ...recent], 'Lagu yang diputar akan muncul di sini.');
     } catch (error) {
       console.warn('Library unavailable:', error);
     }
@@ -2136,7 +2127,7 @@ export class UIManager {
   }
 
   async playLibraryTrack(track) {
-    if (!track?.id || (!track.audioUrl && !(track.sourceType === 'youtube' && track.sourceId))) {
+    if (!track?.id || (!track.audioUrl && !(track.sourceType === 'youtube' && track.sourceId) && track.sourceType !== 'local-file')) {
       this.showUrlFeedback('Sumber audio lagu ini sudah tidak tersedia. Cari ulang untuk memutarnya.', 'error');
       return;
     }
@@ -2151,6 +2142,18 @@ export class UIManager {
         this.app.youtubePlayer?.setVolume(this.app.audioEngine.volume);
         this.app.youtubePlayer?.playAt(track.sourceId, Date.now() + 50, 0)
           .catch(() => this.setYouTubePlayerStatus('Tekan Play di player YouTube untuk mulai.'));
+        this.setPlayState(true);
+        this.setView('home');
+        return;
+      }
+      if (track.sourceType === 'local-file' && !this.app.socketClient.roomId) {
+        const localTrack = await this.localLibrary.getLocalAudio(track.id);
+        if (!localTrack?.audioData) throw new Error('File lokal sudah tidak tersedia');
+        this.addToSoloQueue(track);
+        await this.app.audioEngine.loadAudioFromArrayBuffer(localTrack.audioData, track.name, track.id);
+        this.currentTrack = track;
+        this.updateTrackUI(track.name, track.duration || this.app.audioEngine.currentTrackDuration, track.thumbnail || '');
+        this.app.audioEngine.schedulePlayAtServerTime(this.app.socketClient.clockSync?.getServerTime?.() + 50 || Date.now() + 50, 0);
         this.setPlayState(true);
         this.setView('home');
         return;
@@ -2210,13 +2213,30 @@ export class UIManager {
   async syncLocalQueueToRoom() {
     const room = this.app.socketClient;
     const activeTrack = this.currentTrack || room.cloudMesh?.lastKnownTrack;
+    if (activeTrack?.sourceType === 'local-file' && room.isHost) {
+      const localTrack = await this.localLibrary.getLocalAudio(activeTrack.id);
+      if (!localTrack?.audioData) throw new Error('File lokal sudah tidak tersedia di perangkat ini.');
+      await this.uploadLocalTrackToRoom(activeTrack, localTrack.audioData);
+    }
     const items = [...this.soloQueue];
     if (activeTrack?.id && !items.some(item => item?.id === activeTrack.id)) items.unshift(activeTrack);
     const seenIds = new Set();
     for (const item of items) {
       if (!item?.id || seenIds.has(item.id)) continue;
       seenIds.add(item.id);
-      await room.addToQueue(item);
+      if (item.id === activeTrack?.id && item.sourceType === 'local-file' && room.cloudMesh?.lastKnownTrack?.audioUrl) {
+        continue;
+      }
+      if (item.sourceType === 'local-file') {
+        const localTrack = await this.localLibrary.getLocalAudio(item.id);
+        if (!localTrack?.audioData) {
+          this.showUrlFeedback(`File ${item.name} tidak tersedia di perangkat ini.`, 'error');
+          continue;
+        }
+        await this.uploadLocalTrackToRoom(item, localTrack.audioData);
+      } else {
+        await room.addToQueue(item);
+      }
     }
   }
 
@@ -2238,6 +2258,17 @@ export class UIManager {
       thumbnail: track.thumbnail || '',
       ...source
     };
+    if (track.sourceType === 'local-file' && !this.app.socketClient.roomId) {
+      const localTrack = await this.localLibrary.getLocalAudio(track.id);
+      if (!localTrack?.audioData) throw new Error('File lokal sudah tidak tersedia di perangkat ini.');
+      const sharedTrack = await this.uploadLocalTrackToRoom(roomTrack, localTrack.audioData);
+      this.app.socketClient.cloudMesh.lastKnownTrack = sharedTrack;
+      if (this.currentTrack && this.isPlayingState) {
+        const selected = await this.app.socketClient.playQueueItem(sharedTrack.id, false);
+        if (selected) this.app.socketClient.schedulePlay(800, this.app.audioEngine.getCurrentPlaybackPosition());
+      }
+      return;
+    }
     await this.app.socketClient.addToQueue(roomTrack);
     this.app.socketClient.cloudMesh.lastKnownTrack = roomTrack;
     this.app.socketClient.cloudMesh.lastKnownQueue = this.app.socketClient.cloudMesh.lastKnownQueue || [];
