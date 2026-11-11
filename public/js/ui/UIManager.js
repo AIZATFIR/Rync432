@@ -6,6 +6,8 @@ import { MusicSourceType } from '../music/types.js';
 import { LocalLibrary } from '../library/LocalLibrary.js';
 
 const YOUTUBE_SEARCH_DEBOUNCE_MS = 250;
+const RECENT_YOUTUBE_SEARCHES_KEY = 'rync_recent_youtube_searches';
+const MAX_RECENT_YOUTUBE_SEARCHES = 8;
 const AUDIO_ROUTE_LABELS = {
   unknown: 'Mencari jalur audio…',
   p2p: 'P2P',
@@ -57,6 +59,7 @@ export class UIManager {
     this.youtubeSearchCache = new Map();
     this.youtubeSearchCacheTtlMs = 60_000;
     this.lastYoutubeSearchCacheState = 'network';
+    this.recentYoutubeSearches = this.loadRecentYoutubeSearches();
     this.activeYoutubeSearchHandler = null;
     this.suppressQueueRowClickUntil = 0;
     this.pendingQueueUndo = null;
@@ -212,6 +215,7 @@ export class UIManager {
       ytUrlInput: document.getElementById('ytUrlInput'),
       fetchYtAudioBtn: document.getElementById('fetchYtAudioBtn'),
       ytSearchResults: document.getElementById('ytSearchResults'),
+      ytSearchRecents: document.getElementById('ytSearchRecents'),
       ytSampleSynth: document.getElementById('ytSampleSynth'),
       ytSampleLofi: document.getElementById('ytSampleLofi'),
       ytSampleRock: document.getElementById('ytSampleRock'),
@@ -728,10 +732,14 @@ export class UIManager {
         if (requestId !== this.youtubeSearchSequence) return;
 
         if (results.length === 0) {
+          this.recordYoutubeSearch(queryOrUrl);
+          this.renderYoutubeSearchRecents();
           this.renderSearchMessage('Lagu tidak ditemukan. Coba kata kunci lain.', 'empty');
           return;
         }
 
+        this.recordYoutubeSearch(queryOrUrl);
+        this.renderYoutubeSearchRecents();
         this.renderSearchResults(results, { query: queryOrUrl, cached: this.lastYoutubeSearchCacheState !== 'network' });
       } catch (err) {
         if (err.name === 'AbortError' || requestId !== this.youtubeSearchSequence) return;
@@ -770,8 +778,10 @@ export class UIManager {
         clearTimeout(this.youtubeSearchDebounce);
         if (!query) {
           if (elements.ytSearchResults) elements.ytSearchResults.style.display = 'none';
+          this.renderYoutubeSearchRecents();
           return;
         }
+        if (elements.ytSearchRecents) elements.ytSearchRecents.style.display = 'none';
         if (/^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be|music\.youtube\.com)/i.test(query)) {
           if (elements.ytSearchResults) elements.ytSearchResults.style.display = 'none';
           return;
@@ -795,6 +805,7 @@ export class UIManager {
         }
       });
     }
+    this.renderYoutubeSearchRecents();
 
     // Quick Sample Chips
     if (elements.ytSampleSynth) {
@@ -1061,6 +1072,76 @@ export class UIManager {
     if (elements.activeEqNameTag) {
       elements.activeEqNameTag.innerText = labelMap[preset] || 'Studio Master';
     }
+  }
+
+  loadRecentYoutubeSearches() {
+    try {
+      const searches = JSON.parse(localStorage.getItem(RECENT_YOUTUBE_SEARCHES_KEY) || '[]');
+      return Array.isArray(searches)
+        ? searches.filter(query => typeof query === 'string' && query.trim()).slice(0, MAX_RECENT_YOUTUBE_SEARCHES)
+        : [];
+    } catch (error) {
+      return [];
+    }
+  }
+
+  recordYoutubeSearch(query) {
+    const value = typeof query === 'string' ? query.trim() : '';
+    if (!value) return;
+    const normalized = value.toLocaleLowerCase();
+    this.recentYoutubeSearches = [
+      value,
+      ...this.recentYoutubeSearches.filter(item => item.toLocaleLowerCase() !== normalized)
+    ].slice(0, MAX_RECENT_YOUTUBE_SEARCHES);
+    try { localStorage.setItem(RECENT_YOUTUBE_SEARCHES_KEY, JSON.stringify(this.recentYoutubeSearches)); } catch (error) {}
+  }
+
+  clearYoutubeSearches() {
+    this.recentYoutubeSearches = [];
+    try { localStorage.removeItem(RECENT_YOUTUBE_SEARCHES_KEY); } catch (error) {}
+    this.renderYoutubeSearchRecents();
+  }
+
+  renderYoutubeSearchRecents() {
+    const container = this.elements.ytSearchRecents;
+    if (!container) return;
+    container.replaceChildren();
+    if (this.elements.ytUrlInput?.value.trim() || !this.recentYoutubeSearches.length) {
+      container.style.display = 'none';
+      return;
+    }
+
+    container.style.display = 'flex';
+    const heading = document.createElement('div');
+    heading.className = 'yt-search-recents-heading';
+    const label = document.createElement('span');
+    label.textContent = 'Pencarian terbaru';
+    heading.appendChild(label);
+    const clear = document.createElement('button');
+    clear.type = 'button';
+    clear.className = 'yt-search-recents-clear';
+    clear.textContent = 'Hapus';
+    clear.setAttribute('aria-label', 'Hapus riwayat pencarian YouTube');
+    clear.addEventListener('click', () => this.clearYoutubeSearches());
+    heading.appendChild(clear);
+    container.appendChild(heading);
+
+    const list = document.createElement('div');
+    list.className = 'yt-search-recents-list';
+    this.recentYoutubeSearches.forEach(query => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'yt-search-recent';
+      button.textContent = query;
+      button.setAttribute('aria-label', `Cari lagi: ${query}`);
+      button.addEventListener('click', () => {
+        if (this.elements.ytUrlInput) this.elements.ytUrlInput.value = query;
+        container.style.display = 'none';
+        this.activeYoutubeSearchHandler?.(query);
+      });
+      list.appendChild(button);
+    });
+    container.appendChild(list);
   }
 
   async fetchYoutubeSearch(query, signal, { refresh = false } = {}) {

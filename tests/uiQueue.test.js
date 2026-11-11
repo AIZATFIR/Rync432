@@ -1006,6 +1006,53 @@ describe('YouTube search queue UI', () => {
     expect(ui.elements.ytSearchResults.children).toHaveLength(1);
   });
 
+  it('persists up to eight unique YouTube searches locally and can clear them', () => {
+    const values = new Map();
+    vi.stubGlobal('localStorage', {
+      getItem: key => values.get(key) || null,
+      setItem: (key, value) => values.set(key, value),
+      removeItem: key => values.delete(key)
+    });
+    const ui = new UIManager({});
+
+    for (let index = 0; index < 9; index++) ui.recordYoutubeSearch(`track ${index}`);
+    ui.recordYoutubeSearch(' TRACK 8 ');
+
+    expect(ui.recentYoutubeSearches).toHaveLength(8);
+    expect(ui.recentYoutubeSearches[0]).toBe('TRACK 8');
+    const restored = new UIManager({});
+    expect(restored.recentYoutubeSearches).toEqual(ui.recentYoutubeSearches);
+    restored.clearYoutubeSearches();
+    expect(values.has('rync_recent_youtube_searches')).toBe(false);
+    expect(new UIManager({}).recentYoutubeSearches).toEqual([]);
+  });
+
+  it('shows selectable recent searches only when the search input is empty', () => {
+    const makeElement = () => ({
+      children: [], style: {}, textContent: '', value: '',
+      setAttribute() {}, addEventListener(name, handler) { this[`on${name}`] = handler; },
+      appendChild(child) { this.children.push(child); }, replaceChildren() { this.children = []; }
+    });
+    vi.stubGlobal('document', { createElement: makeElement });
+    const ui = new UIManager({});
+    const input = makeElement();
+    const recents = makeElement();
+    const search = vi.fn();
+    ui.elements = { ytUrlInput: input, ytSearchRecents: recents };
+    ui.activeYoutubeSearchHandler = search;
+    ui.recentYoutubeSearches = ['ambient'];
+
+    ui.renderYoutubeSearchRecents();
+    expect(recents.style.display).toBe('flex');
+    const queryButton = recents.children[1].children[0];
+    queryButton.onclick();
+    expect(input.value).toBe('ambient');
+    expect(search).toHaveBeenCalledWith('ambient');
+
+    ui.renderYoutubeSearchRecents();
+    expect(recents.style.display).toBe('none');
+  });
+
   it('routes between the player, local library and room setup views', () => {
     const node = () => ({
       hidden: false,
