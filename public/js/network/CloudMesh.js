@@ -4,9 +4,11 @@
 const P2P_AUDIO_CHUNK_BYTES = 32 * 1024;
 const P2P_AUDIO_FRAME_HEADER_BYTES = 12;
 const MAX_P2P_AUDIO_BYTES = 64 * 1024 * 1024;
-const P2P_AUDIO_TRANSFER_TIMEOUT_MS = 30_000;
+const P2P_AUDIO_TRANSFER_TIMEOUT_MS = 10_000;
 const P2P_AUDIO_ACK_TIMEOUT_MS = 10_000;
-const P2P_AUDIO_BACKPRESSURE_TIMEOUT_MS = 15_000;
+const P2P_AUDIO_BACKPRESSURE_TIMEOUT_MS = 10_000;
+const P2P_BACKPRESSURE_POLL_INTERVAL_MS = 100;
+const P2P_BUFFER_REQUEST_MAX_ATTEMPTS = 10;
 const QUEUE_MUTATION_TIMEOUT_MS = 8_000;
 const ROOM_POLL_TIMEOUT_MS = 8_000;
 const ROOM_JOIN_TIMEOUT_MS = 8_000;
@@ -1722,7 +1724,7 @@ export class CloudMesh {
         return;
       }
       attempts++;
-      if (attempts >= 30) {
+      if (attempts >= P2P_BUFFER_REQUEST_MAX_ATTEMPTS) {
         clearInterval(this.peerBufferRequestInterval);
         this.peerBufferRequestInterval = null;
         this.peerBufferRequestTrackKey = null;
@@ -2476,7 +2478,7 @@ export class CloudMesh {
           if (Date.now() - backpressureStartedAt >= P2P_AUDIO_BACKPRESSURE_TIMEOUT_MS) {
             throw new Error('P2P_BACKPRESSURE_TIMEOUT');
           }
-          await new Promise(r => setTimeout(r, 15));
+          await new Promise(r => setTimeout(r, P2P_BACKPRESSURE_POLL_INTERVAL_MS));
         }
         if (channel.readyState !== 'open') throw new Error('P2P_CHANNEL_CLOSED');
 

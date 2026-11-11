@@ -392,7 +392,7 @@ describe('CloudMesh audio transfer', () => {
     expect(channel.sent).toHaveLength(2);
     vi.useRealTimers();
   });
-  it('ends a missing P2P audio wait with a visible failure after 30 seconds', () => {
+  it('ends a missing P2P audio wait with a visible failure after 10 seconds', () => {
     vi.useFakeTimers();
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
@@ -402,7 +402,7 @@ describe('CloudMesh audio transfer', () => {
     mesh.dataChannels.set('peer-2', makeChannel());
 
     mesh.requestTrackBufferFromPeers('Track', 'track-1');
-    vi.advanceTimersByTime(30_000);
+    vi.advanceTimersByTime(10_000);
 
     expect(events).toContainEqual(expect.objectContaining({
       type: 'AUDIO_TRANSFER_PROGRESS',
@@ -1023,7 +1023,7 @@ describe('CloudMesh audio transfer', () => {
       type: 'AUDIO_HEADER', name: 'Track', id: 'track-1', totalBytes: 8, totalChunks: 1
     }) });
 
-    vi.advanceTimersByTime(30_000);
+    vi.advanceTimersByTime(10_000);
 
     expect(mesh.incomingAudioChunks.has('peer-2')).toBe(false);
     expect(events).toContainEqual(expect.objectContaining({
@@ -1039,7 +1039,7 @@ describe('CloudMesh audio transfer', () => {
     channel.bufferedAmount = 1024 * 1024;
     const transfer = mesh.streamAudioToPeer(channel, new ArrayBuffer(16), 'Track', 'track-1');
 
-    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(10_000);
     await expect(transfer).resolves.toBe(false);
 
     expect(events).toContainEqual(expect.objectContaining({
@@ -1130,9 +1130,9 @@ describe('CloudMesh audio transfer', () => {
     channel.bufferedAmount = 1024 * 1024;
     mesh.setupDataChannel('peer-2', channel);
     const transfer = mesh.streamAudioToPeer(channel, new ArrayBuffer(16), 'Track', 'track-1');
-    await vi.advanceTimersByTimeAsync(11_000);
+    await vi.advanceTimersByTimeAsync(9_000);
     channel.bufferedAmount = 0;
-    await vi.advanceTimersByTimeAsync(20);
+    await vi.advanceTimersByTimeAsync(1_500);
     channel.onmessage({ data: JSON.stringify({ type: 'AUDIO_TRANSFER_ACK', id: 'track-1', success: true }) });
 
     await expect(transfer).resolves.toBe(true);
