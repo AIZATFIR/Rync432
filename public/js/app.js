@@ -135,7 +135,9 @@ class App {
     this.uiManager.setPlayState(false);
     this.uiManager.setYouTubeAutoplayBlocked(false);
     this.socketClient?.cloudMesh?.broadcastReadiness('FAILED', this.uiManager.currentTrack?.id || '', 'youtube');
-    this.uiManager.setYouTubePlayerStatus(messages[code] || 'Video YouTube gagal diputar. Coba video lain.');
+    this.uiManager.setYouTubePlayerStatus(messages[code] || 'Video YouTube gagal diputar. Coba video lain.', {
+      retryable: ![2, 100, 101, 150, 153].includes(code)
+    });
   }
 
   async handleNetworkEvent(type, payload) {
@@ -190,7 +192,7 @@ class App {
               payload.playbackState.startServerTime,
               payload.playbackState.startOffsetSec || 0
             ).catch(() => {
-              uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.');
+              uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.', { retryable: true });
               socketClient.cloudMesh.broadcastReadiness('FAILED', payload.currentTrack?.id || '', 'youtube');
             });
           } else {
@@ -226,7 +228,7 @@ class App {
           this.youtubePlayer.playAt(videoId, schedule, payload.startOffsetSec || 0)
             .then(() => uiManager.setYouTubePlayerStatus(''))
             .catch(() => {
-              uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.');
+              uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.', { retryable: true });
               socketClient.cloudMesh.broadcastReadiness('FAILED', payload.id || '', 'youtube');
             });
           break;
@@ -234,7 +236,7 @@ class App {
         this.youtubePlayer.cueVideo(videoId, payload.startOffsetSec || 0)
           .then(() => uiManager.setYouTubePlayerStatus(''))
           .catch(() => {
-            uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.');
+            uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.', { retryable: true });
             socketClient.cloudMesh.broadcastReadiness('FAILED', payload.id || '', 'youtube');
           });
         break;
@@ -399,7 +401,10 @@ class App {
               youtubeVideoId(track),
               payload.targetServerTime || payload.scheduledServerTime,
               payload.startOffsetSec || 0
-            ).catch(() => uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.'));
+            ).catch(() => {
+              uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.', { retryable: true });
+              socketClient.cloudMesh.broadcastReadiness('FAILED', track.id || '', 'youtube');
+            });
             break;
           }
         }

@@ -205,6 +205,7 @@ export class UIManager {
       hostDisconnectedNotice: document.getElementById('hostDisconnectedNotice'),
       youtubePlayerShell: document.getElementById('youtubePlayerShell'),
       youtubePlayerStatus: document.getElementById('youtubePlayerStatus'),
+      youtubePlayerRetryBtn: document.getElementById('youtubePlayerRetryBtn'),
       youtubeEnableAudioBtn: document.getElementById('youtubeEnableAudioBtn'),
       sharePlayerRoomBtn: document.getElementById('sharePlayerRoomBtn'),
 
@@ -307,6 +308,7 @@ export class UIManager {
     elements.queueUndoBtn?.addEventListener('click', () => this.restoreQueueUndo());
     elements.miniPlayerPlayBtn?.addEventListener('click', () => this.togglePlayback());
     elements.youtubeEnableAudioBtn?.addEventListener('click', () => this.enableYouTubeAudioFromGesture());
+    elements.youtubePlayerRetryBtn?.addEventListener('click', () => this.retryYouTubePlayback());
     elements.miniPlayerSeek?.addEventListener('input', () => { this.isMiniSeeking = true; });
     elements.miniPlayerSeek?.addEventListener('change', event => {
       this.isMiniSeeking = false;
@@ -2197,8 +2199,37 @@ export class UIManager {
     if (typeof document !== 'undefined') document.body?.classList.toggle('is-youtube-track', visible);
   }
 
-  setYouTubePlayerStatus(message = '') {
+  setYouTubePlayerStatus(message = '', { retryable = false, retrying = false } = {}) {
     if (this.elements.youtubePlayerStatus) this.elements.youtubePlayerStatus.textContent = message;
+    if (this.elements.youtubePlayerRetryBtn) {
+      this.elements.youtubePlayerRetryBtn.hidden = !message || (!retryable && !retrying);
+      this.elements.youtubePlayerRetryBtn.disabled = retrying;
+      this.elements.youtubePlayerRetryBtn.textContent = retrying ? 'Memuat…' : 'Coba lagi';
+    }
+  }
+
+  async retryYouTubePlayback() {
+    const track = this.currentTrack;
+    const player = this.app.youtubePlayer;
+    if (!track?.sourceId || track.sourceType !== 'youtube' || !player) return false;
+
+    const button = this.elements.youtubePlayerRetryBtn;
+    this.setYouTubePlayerStatus('Memuat video YouTube…', { retrying: true });
+    this.app.socketClient?.cloudMesh?.broadcastReadiness('PREPARING', track.id, 'youtube');
+    const startOffset = player.getCurrentTime?.() || this.app.audioEngine?.pauseOffsetSec || 0;
+    try {
+      player.destroy();
+      await player.playAt(track.sourceId, Date.now() + 50, startOffset);
+      return true;
+    } catch (error) {
+      this.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.', { retryable: true });
+      return false;
+    } finally {
+      if (button) {
+        button.disabled = false;
+        if (!button.hidden) button.textContent = 'Coba lagi';
+      }
+    }
   }
 
   setYouTubeAutoplayBlocked(blocked) {

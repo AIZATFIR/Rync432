@@ -1031,6 +1031,50 @@ describe('YouTube search queue UI', () => {
     expect(ui.elements.ytSearchResults.children).toHaveLength(1);
   });
 
+  it('shows YouTube playback retry only for retryable player failures', () => {
+    const status = { textContent: '' };
+    const retry = { hidden: true, disabled: false, textContent: 'Coba lagi' };
+    const ui = new UIManager({});
+    ui.elements = { youtubePlayerStatus: status, youtubePlayerRetryBtn: retry };
+
+    ui.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat.', { retryable: true });
+    expect(retry.hidden).toBe(false);
+    ui.setYouTubePlayerStatus('Memuat video YouTube…', { retrying: true });
+    expect(retry).toMatchObject({ hidden: false, disabled: true, textContent: 'Memuat…' });
+    ui.setYouTubePlayerStatus('Video ini tidak mengizinkan pemutaran.', { retryable: false });
+    expect(retry.hidden).toBe(true);
+    ui.setYouTubePlayerStatus('');
+    expect(retry.hidden).toBe(true);
+  });
+
+  it('retries the current YouTube track from its last known position', async () => {
+    const playAt = vi.fn().mockResolvedValue(undefined);
+    const youtubePlayer = { destroy: vi.fn(), playAt, getCurrentTime: () => 18 };
+    const retry = { hidden: false, disabled: false, textContent: 'Coba lagi' };
+    const status = { textContent: '' };
+    const ui = new UIManager({ youtubePlayer, audioEngine: { pauseOffsetSec: 4 } });
+    ui.currentTrack = { sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ' };
+    ui.elements = { youtubePlayerStatus: status, youtubePlayerRetryBtn: retry };
+
+    await ui.retryYouTubePlayback();
+
+    expect(youtubePlayer.destroy).toHaveBeenCalledOnce();
+    expect(playAt).toHaveBeenCalledWith('dQw4w9WgXcQ', expect.any(Number), 18);
+    expect(retry.disabled).toBe(false);
+  });
+
+  it('restores a retry action if YouTube playback fails again', async () => {
+    const youtubePlayer = { destroy: vi.fn(), playAt: vi.fn().mockRejectedValue(new Error('timeout')) };
+    const retry = { hidden: false, disabled: false, textContent: 'Coba lagi' };
+    const ui = new UIManager({ youtubePlayer, audioEngine: { pauseOffsetSec: 0 } });
+    ui.currentTrack = { id: 'yt_dQw4w9WgXcQ', sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ' };
+    ui.elements = { youtubePlayerStatus: { textContent: '' }, youtubePlayerRetryBtn: retry };
+
+    await expect(ui.retryYouTubePlayback()).resolves.toBe(false);
+
+    expect(retry).toMatchObject({ hidden: false, disabled: false, textContent: 'Coba lagi' });
+  });
+
   it('persists up to eight unique YouTube searches locally and can clear them', () => {
     const values = new Map();
     vi.stubGlobal('localStorage', {
