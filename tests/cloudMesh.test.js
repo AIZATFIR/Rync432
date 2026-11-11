@@ -38,6 +38,17 @@ describe('CloudMesh audio transfer', () => {
     expect(mesh.requestTrackBufferFromPeers).not.toHaveBeenCalled();
   });
 
+  it('marks a synthetic track ready after local preparation', () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.broadcastReadiness = vi.fn();
+
+    mesh.loadTrackBuffer({ id: 'demo-synth', name: 'Neon Groove Synthwave', isSynthetic: true });
+
+    expect(mesh.broadcastReadiness).toHaveBeenLastCalledWith('READY', 'demo-synth');
+    expect(events).toContainEqual(expect.objectContaining({ type: 'SYNTHETIC_TRACK_REQUESTED' }));
+  });
+
   it('creates a fresh room with an empty authoritative queue', async () => {
     const mesh = new CloudMesh(() => {});
     mesh.lastKnownQueue = [{ id: 'old-room-track' }];
@@ -52,6 +63,22 @@ describe('CloudMesh audio transfer', () => {
 
     expect(JSON.parse(fetch.mock.calls[0][1].body).queue).toEqual([]);
     mesh.stopPolling();
+  });
+
+  it('sends readiness changes to the authoritative peer snapshot in order', async () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'peer';
+    mesh.localPeersMap.set('peer', { id: 'peer' });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+
+    mesh.broadcastReadiness('PREPARING', 'track');
+    mesh.broadcastReadiness('READY', 'track');
+    await mesh.readinessSync;
+
+    expect(fetchMock.mock.calls.map(([, options]) => JSON.parse(options.body).readiness)).toEqual(['PREPARING', 'READY']);
+    expect(mesh.localPeersMap.get('peer')).toMatchObject({ readiness: 'READY', isAudioLoading: false });
   });
 
   it('keeps YouTube source metadata in the optimistic and server queue mutation', async () => {
@@ -115,8 +142,11 @@ describe('CloudMesh audio transfer', () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
     mesh.roomId = 'ROOM';
-    mesh.updateLoadingState = vi.fn();
     mesh.requestTrackBufferFromPeers = vi.fn();
+    mesh.broadcastReadiness = vi.fn();
+    mesh.updateLoadingState = vi.fn(isLoading => {
+      if (isLoading) mesh.broadcastReadiness('PREPARING', 'slow-track');
+    });
     vi.stubGlobal('fetch', vi.fn((_url, { signal }) => new Promise((resolve, reject) => {
       signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
     })));
@@ -126,6 +156,7 @@ describe('CloudMesh audio transfer', () => {
     await loading;
 
     expect(mesh.requestTrackBufferFromPeers).toHaveBeenCalledWith('Slow track', 'slow-track');
+    expect(mesh.broadcastReadiness).toHaveBeenCalledWith('PREPARING', 'slow-track');
     expect(events).toContainEqual(expect.objectContaining({
       type: 'AUDIO_TRANSFER_PROGRESS',
       payload: expect.objectContaining({ status: 'Menunggu audio...' })

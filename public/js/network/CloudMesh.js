@@ -40,6 +40,7 @@ export class CloudMesh {
     this.lastKnownOffsetSec = 0;
     this.lastKnownTrack = null;
     this.lastKnownQueue = null;
+    this.readinessSync = Promise.resolve();
     this.queueRevision = 0;
     this.isPaused = true;
     this.hostDisconnected = false;
@@ -138,6 +139,7 @@ export class CloudMesh {
       this.saveHostToken(roomId, this.hostToken);
       this.rememberQueueRevision(result.room);
       this.applyPlaybackOptions(result.room);
+      this.broadcastReadiness('READY', '');
       this.startPolling();
       return result.room;
     } catch (error) {
@@ -172,6 +174,7 @@ export class CloudMesh {
       this.isHost = data.room.isHost === true;
       if (!this.isHost) this.hostToken = null;
       this.applyRoomSnapshot(data.room);
+      if (!data.room.track) this.broadcastReadiness('READY', '');
       this.startPolling();
       return data.room;
     } catch (error) {
@@ -320,7 +323,8 @@ export class CloudMesh {
                 role: 'stereo',
                 volume: 1.0,
                 latencyOffset: 0,
-                isAudioLoading: false,
+                isAudioLoading: true,
+                readiness: 'PREPARING',
                 lastSeen: Date.now()
               }
             });
@@ -432,7 +436,7 @@ export class CloudMesh {
               if (msg.peerId && this.localPeersMap.has(msg.peerId)) {
                 const p = this.localPeersMap.get(msg.peerId);
                 p.readiness = msg.readiness || 'READY';
-                p.isAudioLoading = (msg.readiness === 'BUFFERING');
+                p.isAudioLoading = (msg.readiness === 'PREPARING');
                 this.dispatchLocalPeers();
               }
               break;
@@ -485,7 +489,8 @@ export class CloudMesh {
       role: 'stereo',
       volume: 1.0,
       latencyOffset: 0,
-      isAudioLoading: false,
+      isAudioLoading: true,
+      readiness: 'PREPARING',
       lastSeen: Date.now()
     });
 
@@ -530,7 +535,7 @@ export class CloudMesh {
           if (msg.peerId && this.localPeersMap.has(msg.peerId)) {
             const p = this.localPeersMap.get(msg.peerId);
             p.readiness = msg.readiness || 'READY';
-            p.isAudioLoading = (msg.readiness === 'BUFFERING');
+            p.isAudioLoading = (msg.readiness === 'PREPARING');
             this.dispatchLocalPeers();
           }
           break;
@@ -697,10 +702,11 @@ export class CloudMesh {
             p.isHost = this.isHost;
             if (existing) {
               p.isAudioLoading = existing.isAudioLoading;
+              p.readiness = existing.readiness;
               p.loadingStatus = existing.loadingStatus;
             }
           }
-          if (!existing || existing.role !== p.role || existing.isAudioLoading !== p.isAudioLoading || existing.volume !== p.volume || existing.isHost !== p.isHost || existing.deviceName !== p.deviceName) {
+          if (!existing || existing.role !== p.role || existing.isAudioLoading !== p.isAudioLoading || existing.readiness !== p.readiness || existing.volume !== p.volume || existing.isHost !== p.isHost || existing.deviceName !== p.deviceName) {
             peersChanged = true;
           }
           this.localPeersMap.set(p.id, p);
@@ -821,9 +827,11 @@ export class CloudMesh {
 
   async loadTrackBuffer(track) {
     if (!track) return;
+    this.broadcastReadiness('PREPARING', track.id || youtubeVideoId(track) || '');
     if (track.isSynthetic || track.name === 'Neon Groove Synthwave' || (track.name && track.name.toLowerCase().includes('synth'))) {
       this.currentFetchingTrackKey = null;
       this.updateLoadingState(false, 'Siap');
+      this.broadcastReadiness('READY', track.id || '');
       this.onEvent('SYNTHETIC_TRACK_REQUESTED', track);
       return;
     }
@@ -835,7 +843,6 @@ export class CloudMesh {
       this.currentFetchingTrackKey = null;
       this.pendingTrackBufferRequest = null;
       this.updateLoadingState(false, 'Siap');
-      this.broadcastReadiness('READY', track.id || videoId);
       this.onEvent('YOUTUBE_TRACK_REQUESTED', track);
       return;
     }
@@ -853,6 +860,7 @@ export class CloudMesh {
       if (track.id) this.localAudioBufferCache.set(track.id, cached);
       if (track.name) this.localAudioBufferCache.set(track.name, cached);
       this.updateLoadingState(false, 'Siap');
+      this.broadcastReadiness('READY', track.id || '');
       this.onEvent('BINARY_AUDIO_RECEIVED', { arrayBuffer: cached, trackName: track.name, trackId: track.id });
       return;
     }
@@ -879,6 +887,9 @@ export class CloudMesh {
 
   async updateLoadingState(isLoading, status = '') {
     const me = this.localPeersMap.get(this.peerId);
+    if (isLoading && me?.readiness !== 'PREPARING') {
+      this.broadcastReadiness('PREPARING', this.pendingTrackBufferRequest?.id || this.lastKnownTrack?.id || '');
+    }
     if (me) {
       me.isAudioLoading = isLoading;
       me.loadingStatus = status;
@@ -1529,11 +1540,12 @@ export class CloudMesh {
     } catch (err) {
       if (signal.aborted && !timedOut) return;
       this.currentFetchingTrackKey = null;
-      this.broadcastReadiness('FAILED', trackId);
       console.warn('Remote fetch notice, awaiting WebRTC stream:', err.message);
       if (!this.incomingAudioChunks.size) {
         this.updateLoadingState(true, 'Menunggu audio...');
         this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status: 'Menunggu audio...' });
+      } else {
+        this.broadcastReadiness('PREPARING', trackId);
       }
       this.requestTrackBufferFromPeers(trackName, trackId);
     } finally {
@@ -1545,7 +1557,8 @@ export class CloudMesh {
     const me = this.localPeersMap.get(this.peerId);
     if (me) {
       me.readiness = readiness;
-      me.isAudioLoading = (readiness === 'BUFFERING');
+      me.isAudioLoading = readiness === 'PREPARING';
+      me.loadingStatus = readiness === 'PREPARING' ? 'Menyiapkan audio…' : readiness.toLowerCase();
       this.dispatchLocalPeers();
     }
 
@@ -1560,6 +1573,18 @@ export class CloudMesh {
     this.broadcastDataChannelMessage(payload);
     if (this.broadcastChannel) {
       this.broadcastChannel.postMessage(payload);
+    }
+    if (this.roomId && this.peerId) {
+      const roomId = this.roomId;
+      const peerId = this.peerId;
+      this.readinessSync = this.readinessSync.catch(() => {}).then(() => {
+        if (this.roomId !== roomId || this.peerId !== peerId) return;
+        return fetch('/api/room?action=update_peer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ roomId, peerId, readiness, trackId })
+        });
+      }).catch(() => {});
     }
   }
 
@@ -1844,7 +1869,7 @@ export class CloudMesh {
             if (msg.peerId && this.localPeersMap.has(msg.peerId)) {
               const p = this.localPeersMap.get(msg.peerId);
               p.readiness = msg.readiness || 'READY';
-              p.isAudioLoading = (msg.readiness === 'BUFFERING');
+              p.isAudioLoading = (msg.readiness === 'PREPARING');
               this.dispatchLocalPeers();
             }
           } else if (msg.type === 'REQUEST_AUDIO_BUFFER') {

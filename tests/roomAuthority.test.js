@@ -536,6 +536,29 @@ describe('room authority', () => {
     expect(snapshot.body.peers.find(peer => peer.id === 'host-peer')).toMatchObject({ volume: 1, role: 'stereo' });
   });
 
+  it('starts a room without a track in READY state', async () => {
+    const roomId = `R${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+
+    expect(created.body.room.peers['host-peer']).toMatchObject({ readiness: 'READY', isAudioLoading: false });
+  });
+
+  it('stores and returns a validated peer readiness state', async () => {
+    const roomId = `R${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
+
+    const updated = await callRoom('update_peer', {
+      roomId, peerId: 'guest-peer', readiness: 'READY', isAudioLoading: true, trackId: 'yt_dQw4w9WgXcQ'
+    });
+    const snapshot = await callRoom('poll', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken });
+    const invalid = await callRoom('update_peer', { roomId, peerId: 'guest-peer', readiness: 'MAGIC_READY' });
+
+    expect(updated.statusCode).toBe(200);
+    expect(snapshot.body.peers.find(peer => peer.id === 'guest-peer')).toMatchObject({ readiness: 'READY', isAudioLoading: false });
+    expect(invalid.statusCode).toBe(400);
+  });
+
   it('supports shared repeat-one for automatic track advance', async () => {
     const roomId = `Q${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });

@@ -106,6 +106,30 @@ describe('YouTube search queue UI', () => {
     expect(ui.soloQueue).toHaveLength(1);
   });
 
+  it('counts only explicitly ready room peers as ready', () => {
+    const makeNode = () => ({ innerText: '', className: '' });
+    const makeElement = () => ({ children: [], className: '', style: {}, dataset: {}, innerHTML: '', appendChild(child) { this.children.push(child); }, addEventListener() {}, querySelector() { return { addEventListener() {} }; } });
+    vi.stubGlobal('document', { createElement: makeElement });
+    const ui = new UIManager({ socketClient: { peerId: 'host', isHost: false } });
+    ui.elements = {
+      devicesList: null,
+      activeSpeakerCount: makeNode(),
+      roomReadinessIndicator: makeNode(),
+      roomReadinessText: makeNode(),
+      peerLoadingNotice: null,
+      devicesMatrixList: null
+    };
+
+    ui.renderPeerList([
+      { id: 'host', readiness: 'READY' },
+      { id: 'guest', readiness: 'PREPARING' },
+      { id: 'new', readiness: undefined }
+    ]);
+
+    expect(ui.elements.roomReadinessText.innerText).toBe('1/3 Siap');
+    expect(ui.elements.roomReadinessIndicator.className).toBe('readiness-indicator buffering');
+  });
+
   it('loads an empty solo queue when browser storage is unavailable', () => {
     vi.stubGlobal('localStorage', undefined);
     const ui = new UIManager({});

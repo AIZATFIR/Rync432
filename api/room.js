@@ -227,6 +227,8 @@ export default async function handler(req, res) {
         [peerId]: {
           id: peerId,
           deviceName,
+          readiness: 'READY',
+          isAudioLoading: false,
           isHost: true,
           role: 'stereo',
           volume: 1.0,
@@ -266,6 +268,8 @@ export default async function handler(req, res) {
       id: peerId,
       deviceName,
       isHost: isReturningHost,
+      readiness: 'PREPARING',
+      isAudioLoading: true,
       role: 'stereo',
       volume: 1.0,
       latencyOffset: 0,
@@ -848,10 +852,26 @@ export default async function handler(req, res) {
     }
     if (targetPeerId !== peerId && !requireHost(room, body.hostToken)) return;
     if (room && room.peers[targetPeerId]) {
+      if (body.readiness !== undefined && !['PREPARING', 'READY', 'FAILED', 'AUTOPLAY_BLOCKED'].includes(body.readiness)) {
+        return res.status(400).json({ success: false, error: 'INVALID_PEER_READINESS' });
+      }
+      if (body.readiness !== undefined && body.trackId !== undefined
+        && (typeof body.trackId !== 'string' || body.trackId.length > 160)) {
+        return res.status(400).json({ success: false, error: 'INVALID_PEER_READINESS' });
+      }
       if (body.role) room.peers[targetPeerId].role = body.role;
       if (body.volume !== undefined) room.peers[targetPeerId].volume = body.volume;
-      if (body.isAudioLoading !== undefined) room.peers[targetPeerId].isAudioLoading = body.isAudioLoading;
+      if (body.isAudioLoading !== undefined) {
+        room.peers[targetPeerId].isAudioLoading = room.peers[targetPeerId].readiness !== undefined
+          ? room.peers[targetPeerId].readiness === 'PREPARING'
+          : body.isAudioLoading;
+      }
       if (body.loadingStatus !== undefined) room.peers[targetPeerId].loadingStatus = body.loadingStatus;
+      if (body.readiness !== undefined) {
+        room.peers[targetPeerId].readiness = body.readiness;
+        room.peers[targetPeerId].isAudioLoading = body.readiness === 'PREPARING';
+        if (body.trackId !== undefined) room.peers[targetPeerId].readinessTrackId = body.trackId;
+      }
       room.updatedAt = now;
       return res.status(200).json({ success: true });
     }

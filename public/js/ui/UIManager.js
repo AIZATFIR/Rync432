@@ -2400,13 +2400,13 @@ export class UIManager {
 
     // Update Room Readiness Indicator Badge
     if (this.elements.roomReadinessIndicator && this.elements.roomReadinessText) {
-      const readyCount = peers.filter(p => !p.isAudioLoading && p.readiness !== 'FAILED').length;
+      const readyCount = peers.filter(p => p.readiness === 'READY').length;
       const totalCount = peers.length;
       this.elements.roomReadinessText.innerText = `${readyCount}/${totalCount} Siap`;
 
       if (readyCount === totalCount && totalCount > 0) {
         this.elements.roomReadinessIndicator.className = 'readiness-indicator';
-      } else if (peers.some(p => p.readiness === 'FAILED')) {
+      } else if (peers.some(p => p.readiness === 'FAILED' || p.readiness === 'AUTOPLAY_BLOCKED')) {
         this.elements.roomReadinessIndicator.className = 'readiness-indicator failed';
       } else {
         this.elements.roomReadinessIndicator.className = 'readiness-indicator buffering';
@@ -2443,13 +2443,19 @@ export class UIManager {
       div.className = 'device-item';
 
       const roleStr = peer.role ? peer.role.toUpperCase() : 'STEREO';
-      const statusText = peer.isAudioLoading 
-        ? `<span style="color:#fbbf24;font-weight:600;">${peer.loadingStatus || 'Mengunduh...'}</span>`
-        : `<span style="color:var(--text-silver);">${roleStr} • ${peer.isHost ? 'Host' : 'Satellite'}</span>`;
+      const readinessLabels = {
+        PREPARING: 'Menyiapkan audio…',
+        READY: 'Siap',
+        FAILED: 'Audio gagal dimuat',
+        AUTOPLAY_BLOCKED: 'Perlu tekan Play'
+      };
+      const readiness = peer.readiness || 'PREPARING';
+      const statusColor = readiness === 'READY' ? 'var(--spotify-green)' : readiness === 'FAILED' || readiness === 'AUTOPLAY_BLOCKED' ? '#ff5c6c' : '#fbbf24';
+      const statusText = `<span style="color:${statusColor};font-weight:600;">${readinessLabels[readiness] || 'Menyiapkan audio…'} • ${roleStr} • ${peer.isHost ? 'Host' : 'Satellite'}</span>`;
 
       div.innerHTML = `
         <div class="device-name-group" style="flex: 1; cursor: pointer;">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${peer.isAudioLoading ? '#fbbf24' : 'var(--spotify-green)'}" stroke-width="2">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${statusColor}" stroke-width="2">
             ${peer.isHost ? '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>' : '<rect width="16" height="20" x="4" y="2" rx="2"/><circle cx="12" cy="14" r="4"/>'}
           </svg>
           <div>

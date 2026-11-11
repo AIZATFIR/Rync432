@@ -28,7 +28,10 @@ class App {
     this.youtubePlayer = new YouTubeEmbedPlayer('youtubePlayerContainer', {
       onStateChange: (state, player) => this.handleYouTubePlayerState(state, player),
       onError: code => this.handleYouTubePlayerError(code),
-      onAutoplayBlocked: () => this.uiManager.setYouTubePlayerStatus('Tekan Play di player YouTube untuk mengizinkan audio di perangkat ini.')
+      onAutoplayBlocked: () => {
+        this.uiManager.setYouTubePlayerStatus('Tekan Play di player YouTube untuk mengizinkan audio di perangkat ini.');
+        this.socketClient.cloudMesh.broadcastReadiness('AUTOPLAY_BLOCKED', this.uiManager.currentTrack?.id || '');
+      }
     });
 
     const canvas = document.getElementById('visualizerCanvas');
@@ -92,7 +95,10 @@ class App {
       }
       this.audioEngine.pauseOffsetSec = player?.getCurrentTime?.() || 0;
       this.uiManager.setYouTubePlayerStatus('');
+      this.socketClient.cloudMesh.broadcastReadiness('READY', this.uiManager.currentTrack?.id || '');
       this.uiManager.setPlayState(true);
+    } else if (state === YT?.PlayerState?.CUED || state === 5) {
+      this.socketClient.cloudMesh.broadcastReadiness('READY', this.uiManager.currentTrack?.id || '');
     } else if (state === YT?.PlayerState?.PAUSED || state === 2) {
       this.audioEngine.pauseOffsetSec = player?.getCurrentTime?.() || this.audioEngine.pauseOffsetSec;
       if (this.uiManager.isPlayingState) this.uiManager.setPlayState(false);
@@ -117,6 +123,7 @@ class App {
       153: 'Player YouTube tidak menerima identitas situs. Muat ulang halaman.'
     };
     this.uiManager.setPlayState(false);
+    this.socketClient?.cloudMesh?.broadcastReadiness('FAILED', this.uiManager.currentTrack?.id || '');
     this.uiManager.setYouTubePlayerStatus(messages[code] || 'Video YouTube gagal diputar. Coba video lain.');
   }
 
@@ -171,7 +178,10 @@ class App {
               youtubeVideoId(payload.currentTrack),
               payload.playbackState.startServerTime,
               payload.playbackState.startOffsetSec || 0
-            ).catch(() => uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.'));
+            ).catch(() => {
+              uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.');
+              socketClient.cloudMesh.broadcastReadiness('FAILED', payload.currentTrack?.id || '');
+            });
           } else {
             audioEngine.schedulePlayAtServerTime(
               payload.playbackState.startServerTime,
@@ -203,12 +213,18 @@ class App {
         if (typeof schedule === 'number' && schedule > Date.now()) {
           this.youtubePlayer.playAt(videoId, schedule, payload.startOffsetSec || 0)
             .then(() => uiManager.setYouTubePlayerStatus(''))
-            .catch(() => uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.'));
+            .catch(() => {
+              uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.');
+              socketClient.cloudMesh.broadcastReadiness('FAILED', payload.id || '');
+            });
           break;
         }
         this.youtubePlayer.cueVideo(videoId, payload.startOffsetSec || 0)
           .then(() => uiManager.setYouTubePlayerStatus(''))
-          .catch(() => uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.'));
+          .catch(() => {
+            uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.');
+            socketClient.cloudMesh.broadcastReadiness('FAILED', payload.id || '');
+          });
         break;
       }
 
