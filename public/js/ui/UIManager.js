@@ -77,7 +77,9 @@ export class UIManager {
       createPlaylistBtn: document.getElementById('createPlaylistBtn'),
       playlistList: document.getElementById('playlistList'),
       favoriteList: document.getElementById('favoriteList'),
+      localAudioList: document.getElementById('localAudioList'),
       recentList: document.getElementById('recentList'),
+      clearHistoryBtn: document.getElementById('clearHistoryBtn'),
       queueCardSection: document.getElementById('queueCardSection'),
       roomCodeDisplay: document.getElementById('roomCodeDisplay'),
       userRoleBadge: document.getElementById('userRoleBadge'),
@@ -299,6 +301,16 @@ export class UIManager {
       } catch (error) {
         this.showUrlFeedback(error.message, 'error');
       }
+    });
+
+    elements.clearHistoryBtn?.addEventListener('click', async () => {
+      if (!window.confirm('Hapus semua riwayat putar di perangkat ini?')) return;
+      const cleared = await this.localLibrary.clearRecentHistory();
+      if (!cleared) {
+        this.showUrlFeedback('Riwayat gagal dihapus.', 'error');
+        return;
+      }
+      this.refreshLibrary();
     });
 
     // 1. Settings & Auth Modal
@@ -2097,7 +2109,8 @@ export class UIManager {
       ]);
       this.renderPlaylists(playlists);
       this.renderLibraryTracks(this.elements.favoriteList, favorites, 'Belum ada lagu favorit.');
-      this.renderLibraryTracks(this.elements.recentList, [...localFiles, ...recent], 'Lagu yang diputar akan muncul di sini.');
+      this.renderLibraryTracks(this.elements.localAudioList, localFiles, 'File audio yang kamu simpan di perangkat ini akan muncul di sini.', null, true);
+      this.renderLibraryTracks(this.elements.recentList, recent, 'Lagu yang diputar akan muncul di sini.');
     } catch (error) {
       console.warn('Library unavailable:', error);
     }
@@ -2223,7 +2236,7 @@ export class UIManager {
     }
   }
 
-  renderLibraryTracks(container, tracks = [], emptyMessage, playlistId = null) {
+  renderLibraryTracks(container, tracks = [], emptyMessage, playlistId = null, allowLocalDelete = false) {
     if (!container) return;
     container.replaceChildren();
     if (!tracks.length) {
@@ -2256,6 +2269,23 @@ export class UIManager {
         this.refreshLibrary();
       });
       row.append(like);
+      if (allowLocalDelete) {
+        const removeLocal = document.createElement('button');
+        removeLocal.type = 'button';
+        removeLocal.className = 'library-action danger';
+        removeLocal.textContent = 'Hapus';
+        removeLocal.setAttribute('aria-label', `Hapus file lokal ${track.name || 'audio'}`);
+        removeLocal.addEventListener('click', async () => {
+          if (!window.confirm(`Hapus ${track.name || 'file audio'} dari perangkat ini?`)) return;
+          const removed = await this.localLibrary.deleteLocalAudio(track.id);
+          if (!removed) {
+            this.showUrlFeedback('File lokal gagal dihapus.', 'error');
+            return;
+          }
+          this.refreshLibrary();
+        });
+        row.append(removeLocal);
+      }
       if (playlistId) {
         const reorder = (direction) => {
           const button = document.createElement('button');

@@ -163,6 +163,20 @@ export class LocalLibrary {
     });
   }
 
+  async deleteLocalAudio(trackId) {
+    if (!trackId) return false;
+    let db;
+    try { db = await this.open(); } catch (error) { return false; }
+    if (!db) return false;
+    return new Promise(resolve => {
+      const tx = db.transaction('localAudio', 'readwrite');
+      tx.objectStore('localAudio').delete(trackId);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+      tx.onabort = () => resolve(false);
+    });
+  }
+
   async getLocalAudioTracks() {
     const db = await this.open();
     if (!db) return [];
@@ -194,6 +208,26 @@ export class LocalLibrary {
       return hist.slice(0, limit);
     } catch (e) {
       return [];
+    }
+  }
+
+  async clearRecentHistory() {
+    let db;
+    try { db = await this.open(); } catch (error) { return false; }
+    if (db) {
+      return new Promise(resolve => {
+        const tx = db.transaction('history', 'readwrite');
+        tx.objectStore('history').clear();
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+        tx.onabort = () => resolve(false);
+      });
+    }
+    try {
+      localStorage.removeItem('rync_history');
+      return true;
+    } catch (error) {
+      return false;
     }
   }
 

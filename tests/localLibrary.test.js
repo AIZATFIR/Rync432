@@ -51,6 +51,21 @@ describe('LocalLibrary Local Storage Fallback', () => {
     expect(history[0].name).toBe('Song 2');
   });
 
+  it('clears recent history from the device fallback store', async () => {
+    await lib.addHistory({ id: 'track-1', name: 'Old track' });
+
+    expect(await lib.clearRecentHistory()).toBe(true);
+    expect(await lib.getRecentHistory()).toEqual([]);
+  });
+
+  it('deletes one saved local audio file from IndexedDB', async () => {
+    const remove = vi.fn();
+    lib.open = async () => ({ transaction: () => ({ objectStore: () => ({ delete: remove }), set oncomplete(callback) { queueMicrotask(callback); }, set onerror(_) {} }) });
+
+    expect(await lib.deleteLocalAudio('file-1')).toBe(true);
+    expect(remove).toHaveBeenCalledWith('file-1');
+  });
+
   it('creates, renames, populates and deletes playlists', async () => {
     const playlist = await lib.createPlaylist('Late night');
     expect(playlist.name).toBe('Late night');

@@ -426,8 +426,15 @@
         <h3 id="favoritesHeading">Liked tracks</h3>
         <div id="favoriteList" class="library-list"></div>
       </section>
+      <section class="library-group" aria-labelledby="localAudioHeading">
+        <h3 id="localAudioHeading">Audio on this device</h3>
+        <div id="localAudioList" class="library-list"></div>
+      </section>
       <section class="library-group" aria-labelledby="recentHeading">
-        <h3 id="recentHeading">Recently played</h3>
+        <div class="library-group-heading">
+          <h3 id="recentHeading">Recently played</h3>
+          <button type="button" class="library-action" id="clearHistoryBtn">Hapus riwayat</button>
+        </div>
         <div id="recentList" class="library-list"></div>
       </section>
     </section>

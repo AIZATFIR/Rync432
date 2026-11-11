@@ -93,6 +93,24 @@ describe('YouTube search queue UI', () => {
     expect(ui.renderQueue).toHaveBeenCalledWith(ui.soloQueue);
   });
 
+  it('shows saved audio files separately from playback history', async () => {
+    const localFile = { id: 'file-1', name: 'On device', sourceType: 'local-file' };
+    const recent = { id: 'recent-1', name: 'Recent song' };
+    const ui = new UIManager({});
+    ui.elements = { favoriteList: {}, localAudioList: {}, recentList: {} };
+    ui.localLibrary.getPlaylists = vi.fn().mockResolvedValue([]);
+    ui.localLibrary.getFavorites = vi.fn().mockResolvedValue([]);
+    ui.localLibrary.getRecentHistory = vi.fn().mockResolvedValue([recent]);
+    ui.localLibrary.getLocalAudioTracks = vi.fn().mockResolvedValue([localFile]);
+    ui.renderPlaylists = vi.fn();
+    ui.renderLibraryTracks = vi.fn();
+
+    await ui.refreshLibrary();
+
+    expect(ui.renderLibraryTracks).toHaveBeenCalledWith(ui.elements.localAudioList, [localFile], expect.any(String), null, true);
+    expect(ui.renderLibraryTracks).toHaveBeenCalledWith(ui.elements.recentList, [recent], expect.any(String));
+  });
+
   it('requests host playback without starting a second local player or waiting for room queue sync', async () => {
     let acknowledgeQueue;
     const acknowledgement = new Promise(resolve => { acknowledgeQueue = resolve; });
