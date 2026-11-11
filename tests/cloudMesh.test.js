@@ -24,6 +24,82 @@ function makeAudioChunkFrame(sequence, timestamp, bytes) {
 }
 
 describe('CloudMesh audio transfer', () => {
+  it('keeps a peer during a transient disconnect and cancels cleanup after recovery', () => {
+    vi.useFakeTimers();
+    class FakePeerConnection {
+      connectionState = 'connected';
+      close = vi.fn(() => { this.connectionState = 'closed'; });
+    }
+    vi.stubGlobal('RTCPeerConnection', FakePeerConnection);
+    const mesh = new CloudMesh(() => {});
+    const peer = mesh.createPeerConnection('peer-2');
+    const channel = makeChannel();
+    mesh.dataChannels.set('peer-2', channel);
+
+    peer.connectionState = 'disconnected';
+    peer.onconnectionstatechange();
+    expect(peer.close).not.toHaveBeenCalled();
+    expect(mesh.peerConnections.get('peer-2')).toBe(peer);
+    expect(mesh.dataChannels.get('peer-2')).toBe(channel);
+
+    peer.connectionState = 'connected';
+    peer.onconnectionstatechange();
+    vi.advanceTimersByTime(10_000);
+    expect(peer.close).not.toHaveBeenCalled();
+    expect(mesh.peerConnections.get('peer-2')).toBe(peer);
+  });
+
+  it('cleans up a peer that remains disconnected past the grace period', () => {
+    vi.useFakeTimers();
+    class FakePeerConnection {
+      connectionState = 'connected';
+      close = vi.fn(() => { this.connectionState = 'closed'; });
+    }
+    vi.stubGlobal('RTCPeerConnection', FakePeerConnection);
+    const mesh = new CloudMesh(() => {});
+    const peer = mesh.createPeerConnection('peer-2');
+    const channel = makeChannel();
+    mesh.dataChannels.set('peer-2', channel);
+    mesh.pendingIceCandidates.set('peer-2', []);
+
+    peer.connectionState = 'disconnected';
+    peer.onconnectionstatechange();
+    vi.advanceTimersByTime(10_000);
+
+    expect(peer.close).toHaveBeenCalledOnce();
+    expect(mesh.peerConnections.has('peer-2')).toBe(false);
+    expect(mesh.dataChannels.has('peer-2')).toBe(false);
+    expect(mesh.pendingIceCandidates.has('peer-2')).toBe(false);
+  });
+
+  it('does not replace a disconnected peer while its recovery grace period is active', async () => {
+    vi.useFakeTimers();
+    class FakePeerConnection {
+      connectionState = 'connected';
+      close = vi.fn(() => { this.connectionState = 'closed'; });
+    }
+    vi.stubGlobal('RTCPeerConnection', FakePeerConnection);
+    const mesh = new CloudMesh(() => {});
+    mesh.isHost = true;
+    mesh.peerId = 'host';
+    const peer = mesh.createPeerConnection('guest');
+    peer.connectionState = 'disconnected';
+    peer.onconnectionstatechange();
+    mesh.initiateWebRTCOffer = vi.fn();
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'host';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ peers: [{ id: 'host', role: 'host' }, { id: 'guest', role: 'speaker' }] })
+    }));
+
+    mesh.localPeersMap.set('guest', { id: 'guest', role: 'speaker' });
+    await mesh.pollLoop();
+
+    expect(mesh.initiateWebRTCOffer).not.toHaveBeenCalled();
+    expect(mesh.peerConnections.get('guest')).toBe(peer);
+  });
+
   it('bounds a stalled next-track preview instead of waiting forever', async () => {
     vi.useFakeTimers();
     const mesh = new CloudMesh(() => {});

@@ -100,6 +100,7 @@ export class CloudMesh {
 
     // WebRTC P2P Connections
     this.peerConnections = new Map();
+    this.peerDisconnectTimers = new Map();
     this.dataChannels = new Map();
     this.pendingIceCandidates = new Map();
     this.lastSentBufferPerPeer = new Map();
@@ -769,7 +770,7 @@ export class CloudMesh {
 
           if (this.isHost && p.id !== this.peerId) {
             const pc = this.peerConnections.get(p.id);
-            if (!pc || pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
+            if (!pc) {
               this.initiateWebRTCOffer(p.id);
             }
           }
@@ -779,12 +780,7 @@ export class CloudMesh {
         for (const pId of Array.from(this.localPeersMap.keys())) {
           if (!incomingIds.has(pId) && pId !== this.peerId) {
             this.localPeersMap.delete(pId);
-            const pc = this.peerConnections.get(pId);
-            if (pc) {
-              try { pc.close(); } catch (e) { }
-              this.peerConnections.delete(pId);
-            }
-            this.dataChannels.delete(pId);
+            this.cleanupPeerConnection(pId);
             peersChanged = true;
           }
         }
@@ -1925,11 +1921,27 @@ export class CloudMesh {
     };
 
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
-        try { pc.close(); } catch (e) { }
-        this.peerConnections.delete(targetPeerId);
-        this.dataChannels.delete(targetPeerId);
-        this.pendingIceCandidates.delete(targetPeerId);
+      const state = pc.connectionState;
+      const disconnectTimer = this.peerDisconnectTimers.get(targetPeerId);
+      if (state === 'connected' || state === 'connecting') {
+        if (disconnectTimer) clearTimeout(disconnectTimer);
+        this.peerDisconnectTimers.delete(targetPeerId);
+        return;
+      }
+      if (state === 'disconnected') {
+        if (!disconnectTimer) {
+          const timer = setTimeout(() => {
+            this.peerDisconnectTimers.delete(targetPeerId);
+            if (pc.connectionState === 'disconnected' && this.peerConnections.get(targetPeerId) === pc) {
+              this.cleanupPeerConnection(targetPeerId, pc);
+            }
+          }, 8_000);
+          this.peerDisconnectTimers.set(targetPeerId, timer);
+        }
+        return;
+      }
+      if (state === 'failed' || state === 'closed') {
+        this.cleanupPeerConnection(targetPeerId, pc);
       }
     };
 
@@ -1939,6 +1951,20 @@ export class CloudMesh {
 
     this.peerConnections.set(targetPeerId, pc);
     return pc;
+  }
+
+  cleanupPeerConnection(targetPeerId, expectedPeer = null) {
+    const pc = this.peerConnections.get(targetPeerId);
+    if (expectedPeer && pc !== expectedPeer) return;
+    const timer = this.peerDisconnectTimers.get(targetPeerId);
+    if (timer) clearTimeout(timer);
+    this.peerDisconnectTimers.delete(targetPeerId);
+    if (pc) {
+      try { pc.close(); } catch (e) { }
+      this.peerConnections.delete(targetPeerId);
+    }
+    this.dataChannels.delete(targetPeerId);
+    this.pendingIceCandidates.delete(targetPeerId);
   }
 
   setupDataChannel(targetPeerId, channel) {
@@ -2399,11 +2425,7 @@ export class CloudMesh {
     this.dispatchLocalPeers();
 
     const pc = this.peerConnections.get(targetPeerId);
-    if (pc) {
-      try { pc.close(); } catch (e) { }
-      this.peerConnections.delete(targetPeerId);
-    }
-    this.dataChannels.delete(targetPeerId);
+    this.cleanupPeerConnection(targetPeerId, pc);
 
     try {
       fetch('/api/room?action=remove_peer', {
@@ -2436,6 +2458,8 @@ export class CloudMesh {
     this.peerConnections.forEach(peer => {
       try { peer.close(); } catch (e) { }
     });
+    this.peerDisconnectTimers.forEach(timer => clearTimeout(timer));
+    this.peerDisconnectTimers.clear();
     this.dataChannels.forEach(channel => {
       try { channel.close(); } catch (e) { }
     });
