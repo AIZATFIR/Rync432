@@ -872,6 +872,9 @@ canvas#visualizerCanvas {
 }
 
 .yt-search-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 44px;
   min-height: 44px;
   border: 1px solid var(--border-subtle);
@@ -881,6 +884,7 @@ canvas#visualizerCanvas {
   color: var(--text-base);
   font: inherit;
   cursor: pointer;
+  text-decoration: none;
 }
 
 .yt-search-refresh:focus-visible {

@@ -1149,6 +1149,28 @@ describe('YouTube search queue UI', () => {
     expect(ui.elements.ytSearchResults.children).toHaveLength(1);
   });
 
+  it('offers an official YouTube search link when the API key is missing', () => {
+    const makeElement = () => ({
+      children: [], className: '', style: {}, textContent: '', attributes: {},
+      setAttribute(name, value) { this.attributes[name] = value; },
+      appendChild(child) { this.children.push(child); },
+      replaceChildren() { this.children = []; }
+    });
+    vi.stubGlobal('document', { createElement: tagName => ({ ...makeElement(), tagName: tagName.toUpperCase() }) });
+    const ui = new UIManager({});
+    ui.elements = { ytSearchResults: makeElement() };
+
+    ui.renderSearchError('Pencarian YouTube belum diatur di server.', 'ambient focus', false, true);
+
+    const link = ui.elements.ytSearchResults.children[1];
+    expect(link).toBeDefined();
+    expect(link.tagName).toBe('A');
+    expect(link.href).toBe('https://www.youtube.com/results?search_query=ambient%20focus');
+    expect(link.target).toBe('_blank');
+    expect(link.rel).toContain('noopener');
+    expect(link.textContent).toContain('tempel link');
+  });
+
   it('shows YouTube playback retry only for retryable player failures', () => {
     const status = { textContent: '' };
     const retry = { hidden: true, disabled: false, textContent: 'Coba lagi' };

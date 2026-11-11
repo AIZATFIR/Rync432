@@ -767,7 +767,8 @@ export class UIManager {
               : err.code === 'PROVIDER_UNAVAILABLE'
                 ? 'YouTube sedang tidak tersedia. Coba lagi nanti.'
             : 'Pencarian gagal. Periksa koneksi lalu coba lagi.';
-        this.renderSearchError(message, queryOrUrl, err.retryable !== false);
+        this.renderSearchError(message, queryOrUrl, err.retryable !== false,
+          ['PROVIDER_NOT_CONFIGURED', 'RATE_LIMITED'].includes(err.code));
       }
     };
 
@@ -1218,8 +1219,17 @@ export class UIManager {
     list.appendChild(status);
   }
 
-  renderSearchError(message, query, retryable = true) {
+  renderSearchError(message, query, retryable = true, offerExternalSearch = false) {
     this.renderSearchMessage(message, 'error');
+    if (offerExternalSearch && query) {
+      const link = document.createElement('a');
+      link.className = 'yt-search-refresh';
+      link.href = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = 'Cari di YouTube, lalu tempel link di sini';
+      this.elements.ytSearchResults?.appendChild(link);
+    }
     if (!retryable) return;
     const retry = document.createElement('button');
     retry.type = 'button';
