@@ -1329,6 +1329,8 @@ describe('YouTube search queue UI', () => {
     await Promise.resolve();
     expect(button.textContent).toBe('Coba lagi');
     expect(button.disabled).toBe(false);
+    expect(button.style.backgroundColor).toBe('');
+    expect(button.style.color).toBe('');
     expect(ui.showUrlFeedback).toHaveBeenCalledWith('Lagu gagal ditambahkan ke antrean. Coba lagi.', 'error');
   });
 

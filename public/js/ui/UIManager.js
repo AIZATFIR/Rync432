@@ -1346,6 +1346,13 @@ export class UIManager {
           if (queueBtn.disabled) return;
           queueBtn.disabled = true;
           queueBtn.textContent = 'Menambahkan…';
+          const markQueueFailure = () => {
+            queueBtn.disabled = false;
+            queueBtn.textContent = 'Coba lagi';
+            queueBtn.style.backgroundColor = '';
+            queueBtn.style.color = '';
+            this.showUrlFeedback('Lagu gagal ditambahkan ke antrean. Coba lagi.', 'error');
+          };
           try {
             const addedItem = await this.addYoutubeTrackToQueue(itemUrl, itemTitle, itemArtist, item.duration, thumbSrc, queueItemId);
             queueBtn.textContent = '✓ Ditambah';
@@ -1353,19 +1360,12 @@ export class UIManager {
             queueBtn.style.color = '#000';
             const waitForAck = this.app?.socketClient?.cloudMesh?.waitForQueueItemAcknowledgement;
             if (waitForAck && this.app.socketClient.roomId) {
-              const markSyncFailure = () => {
-                queueBtn.disabled = false;
-                queueBtn.textContent = 'Coba lagi';
-                this.showUrlFeedback('Lagu gagal ditambahkan ke antrean. Coba lagi.', 'error');
-              };
               Promise.resolve(waitForAck.call(this.app.socketClient.cloudMesh, addedItem.queueItemId))
-                .then(synced => { if (!synced) markSyncFailure(); })
-                .catch(markSyncFailure);
+                .then(synced => { if (!synced) markQueueFailure(); })
+                .catch(markQueueFailure);
             }
           } catch (error) {
-            queueBtn.disabled = false;
-            queueBtn.textContent = 'Coba lagi';
-            this.showUrlFeedback('Lagu gagal ditambahkan ke antrean. Coba lagi.', 'error');
+            markQueueFailure();
           }
         });
       }
