@@ -103,4 +103,32 @@ describe('YouTube embedded player adapter', () => {
     vi.advanceTimersByTime(1000);
     expect(instances[0].calls.filter(call => call[0] === 'playVideo')).toHaveLength(1);
   });
+
+  it('cancels an old scheduled start when a new track must play immediately', async () => {
+    vi.useFakeTimers();
+    const instances = installFakePlayer();
+    const player = new YouTubeEmbedPlayer('youtubePlayerContainer');
+    await player.cueVideo('dQw4w9WgXcQ');
+    await player.playAt('dQw4w9WgXcQ', Date.now() + 1000, 0);
+    await player.playAt('abcdefghijk', Date.now() - 1, 0);
+
+    vi.advanceTimersByTime(1000);
+
+    expect(instances[0].calls.filter(call => call[0] === 'playVideo')).toHaveLength(1);
+    expect(instances[0].calls).toContainEqual(['cueVideoById', { videoId: 'abcdefghijk', startSeconds: 0 }]);
+  });
+
+  it('ignores stale play requests when a newer track is selected during iframe startup', async () => {
+    const instances = installFakePlayer();
+    const player = new YouTubeEmbedPlayer('youtubePlayerContainer');
+    const oldRequest = player.playAt('dQw4w9WgXcQ', Date.now() - 1, 0);
+    const newRequest = player.playAt('abcdefghijk', Date.now() - 1, 0);
+
+    await Promise.all([oldRequest, newRequest]);
+
+    expect(instances[0].calls.filter(call => call[0] === 'cueVideoById')).toEqual([
+      ['cueVideoById', { videoId: 'abcdefghijk', startSeconds: 0 }]
+    ]);
+    expect(instances[0].calls.filter(call => call[0] === 'playVideo')).toHaveLength(1);
+  });
 });

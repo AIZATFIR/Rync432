@@ -76,6 +76,7 @@ describe('CloudMesh audio transfer', () => {
   it('routes YouTube tracks to the embed player without an audio fetch or P2P request', () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.broadcastReadiness = vi.fn();
     mesh.requestTrackBufferFromPeers = vi.fn();
     vi.stubGlobal('fetch', vi.fn());
     const track = { id: 'yt_dQw4w9WgXcQ', sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ', name: 'Song' };
@@ -83,6 +84,7 @@ describe('CloudMesh audio transfer', () => {
     mesh.loadTrackBuffer(track);
 
     expect(events).toContainEqual({ type: 'YOUTUBE_TRACK_REQUESTED', payload: track });
+    expect(mesh.broadcastReadiness).toHaveBeenLastCalledWith('PREPARING', track.id, 'unknown');
     expect(fetch).not.toHaveBeenCalledWith('/api/yt-stream?id=dQw4w9WgXcQ', expect.anything());
     expect(mesh.requestTrackBufferFromPeers).not.toHaveBeenCalled();
   });

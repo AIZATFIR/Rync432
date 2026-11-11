@@ -42,6 +42,14 @@ export class YouTubeEmbedPlayer {
     this.readyPromise = null;
     this.videoId = null;
     this.scheduledPlay = null;
+    this.playRequestId = 0;
+  }
+
+  cancelScheduledPlay() {
+    this.playRequestId += 1;
+    clearTimeout(this.scheduledPlay);
+    this.scheduledPlay = null;
+    return this.playRequestId;
   }
 
   async ensurePlayer(videoId = '') {
@@ -87,7 +95,9 @@ export class YouTubeEmbedPlayer {
 
   async cueVideo(videoId, startSeconds = 0) {
     if (!/^[A-Za-z0-9_-]{11}$/.test(videoId || '')) throw new Error('INVALID_YOUTUBE_VIDEO_ID');
+    const requestId = this.cancelScheduledPlay();
     const player = await this.ensurePlayer();
+    if (requestId !== this.playRequestId) return;
     player.cueVideoById({ videoId, startSeconds: Math.max(0, Number(startSeconds) || 0) });
     this.videoId = videoId;
   }
@@ -97,11 +107,18 @@ export class YouTubeEmbedPlayer {
   }
 
   async playAt(videoId, targetServerTime, startSeconds = 0) {
-    if (videoId && videoId !== this.videoId) await this.cueVideo(videoId, startSeconds);
+    if (videoId && !/^[A-Za-z0-9_-]{11}$/.test(videoId)) throw new Error('INVALID_YOUTUBE_VIDEO_ID');
+    const requestId = this.cancelScheduledPlay();
     const player = await this.ensurePlayer();
+    if (requestId !== this.playRequestId) return;
+    if (videoId && videoId !== this.videoId) {
+      player.cueVideoById({ videoId, startSeconds: Math.max(0, Number(startSeconds) || 0) });
+      this.videoId = videoId;
+    }
     if (Number.isFinite(targetServerTime) && targetServerTime > Date.now()) {
-      clearTimeout(this.scheduledPlay);
       this.scheduledPlay = setTimeout(() => {
+        if (requestId !== this.playRequestId) return;
+        this.scheduledPlay = null;
         player.seekTo(Math.max(0, Number(startSeconds) || 0), true);
         player.playVideo();
       }, targetServerTime - Date.now());
@@ -112,9 +129,11 @@ export class YouTubeEmbedPlayer {
   }
 
   async pause() {
-    clearTimeout(this.scheduledPlay);
-    this.scheduledPlay = null;
-    if (this.player && this.readyPromise) (await this.readyPromise).pauseVideo();
+    const requestId = this.cancelScheduledPlay();
+    if (this.player && this.readyPromise) {
+      const player = await this.readyPromise;
+      if (requestId === this.playRequestId) player.pauseVideo();
+    }
   }
 
   async seekTo(seconds) {
@@ -136,7 +155,7 @@ export class YouTubeEmbedPlayer {
   }
 
   destroy() {
-    clearTimeout(this.scheduledPlay);
+    this.cancelScheduledPlay();
     try { this.player?.destroy?.(); } catch (error) {}
     this.player = null;
     this.readyPromise = null;
