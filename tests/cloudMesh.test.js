@@ -422,6 +422,7 @@ describe('CloudMesh audio transfer', () => {
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
     const channel = makeChannel();
     mesh.setupDataChannel('peer-2', channel);
+    channel.onopen();
     channel.onmessage({ data: JSON.stringify({
       type: 'AUDIO_HEADER', name: 'Track', id: 'track-1', totalBytes: 1, totalChunks: 1
     }) });
@@ -433,6 +434,7 @@ describe('CloudMesh audio transfer', () => {
     expect(events).toContainEqual(expect.objectContaining({
       type: 'AUDIO_TRANSFER_PROGRESS', payload: expect.objectContaining({ status: 'Paket audio P2P tidak valid.' })
     }));
+    expect(channel.sent.map(message => JSON.parse(message))).toContainEqual({ type: 'AUDIO_TRANSFER_ACK', id: 'track-1', success: false });
   });
 
   it('reassembles sequence and timestamp framed P2P audio chunks', () => {
@@ -447,6 +449,7 @@ describe('CloudMesh audio transfer', () => {
     channel.onmessage({ data: makeAudioChunkFrame(0, 42.5, [4, 5, 6]) });
 
     expect(new Uint8Array(events.find(event => event.type === 'BINARY_AUDIO_RECEIVED').payload.arrayBuffer)).toEqual(new Uint8Array([4, 5, 6]));
+    expect(channel.sent.map(message => JSON.parse(message))).toContainEqual({ type: 'AUDIO_TRANSFER_ACK', id: 'track-1', success: true });
   });
 
   it('rejects an out-of-order framed P2P audio chunk', () => {
@@ -536,7 +539,14 @@ describe('CloudMesh audio transfer', () => {
   it('sends P2P audio frames with increasing sequence and monotonic timestamps', async () => {
     const mesh = new CloudMesh(() => {});
     const channel = makeChannel();
-    const sent = await mesh.streamAudioToPeer(channel, new ArrayBuffer(32 * 1024 + 1), 'Track', 'track-1');
+    mesh.setupDataChannel('peer-2', channel);
+    const transfer = mesh.streamAudioToPeer(channel, new ArrayBuffer(32 * 1024 + 1), 'Track', 'track-1');
+    let settled = false;
+    transfer.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    channel.onmessage({ data: JSON.stringify({ type: 'AUDIO_TRANSFER_ACK', id: 'track-1', success: true }) });
+    const sent = await transfer;
     const header = JSON.parse(channel.sent[0]);
     const first = new DataView(channel.sent[1]);
     const second = new DataView(channel.sent[2]);
@@ -547,6 +557,57 @@ describe('CloudMesh audio transfer', () => {
     expect(second.getUint32(0, true)).toBe(1);
     expect(Number.isFinite(first.getFloat64(4, true))).toBe(true);
     expect(second.getFloat64(4, true)).toBeGreaterThanOrEqual(first.getFloat64(4, true));
+  });
+
+  it('confirms P2P completion only after the receiving mesh reassembles the audio', async () => {
+    const received = [];
+    const sender = new CloudMesh(() => {});
+    const receiver = new CloudMesh((type, payload) => received.push({ type, payload }));
+    receiver.updateLoadingState = vi.fn();
+    const senderChannel = makeChannel();
+    const receiverChannel = makeChannel();
+    sender.setupDataChannel('receiver', senderChannel);
+    receiver.setupDataChannel('sender', receiverChannel);
+    senderChannel.send = value => {
+      senderChannel.sent.push(value);
+      queueMicrotask(() => receiverChannel.onmessage({ data: value }));
+    };
+    receiverChannel.send = value => {
+      receiverChannel.sent.push(value);
+      queueMicrotask(() => senderChannel.onmessage({ data: value }));
+    };
+
+    await expect(sender.streamAudioToPeer(senderChannel, new Uint8Array([7, 8, 9]).buffer, 'Track', 'track-1')).resolves.toBe(true);
+
+    expect(new Uint8Array(received.find(event => event.type === 'BINARY_AUDIO_RECEIVED').payload.arrayBuffer)).toEqual(new Uint8Array([7, 8, 9]));
+  });
+
+  it('falls back when the P2P receiver does not acknowledge a completed send', async () => {
+    vi.useFakeTimers();
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    const channel = makeChannel();
+    const transfer = mesh.streamAudioToPeer(channel, new ArrayBuffer(16), 'Track', 'track-1');
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await expect(transfer).resolves.toBe(false);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'AUDIO_TRANSFER_PROGRESS',
+      payload: expect.objectContaining({ status: expect.stringContaining('Beralih ke relay') })
+    }));
+  });
+
+  it('releases a pending P2P sender immediately when the channel closes', async () => {
+    const mesh = new CloudMesh(() => {});
+    const channel = makeChannel();
+    mesh.setupDataChannel('peer-2', channel);
+    const transfer = mesh.streamAudioToPeer(channel, new ArrayBuffer(16), 'Track', 'track-1');
+
+    channel.onclose();
+
+    await expect(transfer).resolves.toBe(false);
+    expect(mesh.pendingAudioTransferAcks.has(channel)).toBe(false);
   });
 
   it('does not start overlapping P2P sends while a track transfer is in flight', async () => {

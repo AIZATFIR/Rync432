@@ -5,6 +5,7 @@ const P2P_AUDIO_CHUNK_BYTES = 32 * 1024;
 const P2P_AUDIO_FRAME_HEADER_BYTES = 12;
 const MAX_P2P_AUDIO_BYTES = 64 * 1024 * 1024;
 const P2P_AUDIO_TRANSFER_TIMEOUT_MS = 30_000;
+const P2P_AUDIO_ACK_TIMEOUT_MS = 10_000;
 const P2P_AUDIO_BACKPRESSURE_TIMEOUT_MS = 15_000;
 const QUEUE_MUTATION_TIMEOUT_MS = 8_000;
 
@@ -81,6 +82,7 @@ export class CloudMesh {
     this.localAudioBufferCache = new Map();
     this.queueAdditionAcknowledgements = new Map();
     this.activeBufferTransfers = new WeakSet();
+    this.pendingAudioTransferAcks = new Map();
     this.deletedQueueIds = new Set();
 
     // Real-Time Pub/Sub Cloud Bus (EMQX / MQTT over WebSockets)
@@ -1888,6 +1890,13 @@ export class CloudMesh {
             this.incomingAudioChunks.set(targetPeerId, transfer);
             this.updateLoadingState(true, `Menerima ${msg.name}...`);
             this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status: `Menerima ${msg.name} P2P...` });
+          } else if (msg.type === 'AUDIO_TRANSFER_ACK') {
+            const pending = this.pendingAudioTransferAcks.get(channel);
+            if (pending && pending.trackId === (msg.id || '')) {
+              clearTimeout(pending.timeout);
+              this.pendingAudioTransferAcks.delete(channel);
+              pending.resolve(msg.success === true);
+            }
           } else if (msg.type === 'SCHEDULED_PLAY') {
             this.isPaused = false;
             this.onEvent('SCHEDULED_PLAY', {
@@ -2002,6 +2011,9 @@ export class CloudMesh {
               trackName,
               trackId
             });
+            try {
+              channel.send(JSON.stringify({ type: 'AUDIO_TRANSFER_ACK', id: trackId || '', success: true }));
+            } catch (error) { }
           }
         }
       }
@@ -2009,6 +2021,12 @@ export class CloudMesh {
 
     channel.onclose = () => {
       this.dataChannels.delete(targetPeerId);
+      const pendingAck = this.pendingAudioTransferAcks.get(channel);
+      if (pendingAck) {
+        clearTimeout(pendingAck.timeout);
+        this.pendingAudioTransferAcks.delete(channel);
+        pendingAck.resolve(false);
+      }
       const pendingTransfer = this.incomingAudioChunks.get(targetPeerId);
       if (pendingTransfer) {
         this.failIncomingAudioTransfer(targetPeerId, pendingTransfer.id, 'Koneksi P2P terputus. Coba lagi.', pendingTransfer.name);
@@ -2141,6 +2159,15 @@ export class CloudMesh {
     const totalChunks = Math.ceil(totalBytes / P2P_AUDIO_CHUNK_BYTES);
 
     try {
+      const acknowledgement = new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          if (this.pendingAudioTransferAcks.get(channel)?.trackId !== trackId) return;
+          this.pendingAudioTransferAcks.delete(channel);
+          reject(new Error('P2P_ACK_TIMEOUT'));
+        }, P2P_AUDIO_ACK_TIMEOUT_MS);
+        this.pendingAudioTransferAcks.set(channel, { trackId, resolve, timeout });
+      });
+      acknowledgement.catch(() => {});
       channel.send(JSON.stringify({
         type: 'AUDIO_HEADER',
         chunkProtocol: 1,
@@ -2170,11 +2197,18 @@ export class CloudMesh {
         new Uint8Array(frameBuffer, P2P_AUDIO_FRAME_HEADER_BYTES).set(new Uint8Array(chunk));
         channel.send(frameBuffer);
       }
-      return true;
+      return await acknowledgement;
     } catch (e) {
+      const pending = this.pendingAudioTransferAcks.get(channel);
+      if (pending?.trackId === trackId) {
+        clearTimeout(pending.timeout);
+        this.pendingAudioTransferAcks.delete(channel);
+      }
       console.warn('P2P stream notice:', e.message);
       const status = e.message === 'P2P_BACKPRESSURE_TIMEOUT'
         ? 'Koneksi P2P lambat atau macet. Coba lagi.'
+        : e.message === 'P2P_ACK_TIMEOUT'
+          ? 'Penerima tidak mengonfirmasi file P2P. Beralih ke relay.'
         : 'Koneksi P2P terputus. Coba lagi.';
       this.broadcastReadiness('FAILED', trackId);
       this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status });
@@ -2186,6 +2220,10 @@ export class CloudMesh {
     const transfer = this.incomingAudioChunks.get(peerId);
     if (transfer?.timeout) clearTimeout(transfer.timeout);
     this.incomingAudioChunks.delete(peerId);
+    const channel = this.dataChannels.get(peerId);
+    if (channel?.readyState === 'open') {
+      try { channel.send(JSON.stringify({ type: 'AUDIO_TRANSFER_ACK', id: trackId || '', success: false })); } catch (error) { }
+    }
     const trackKey = trackId || trackName;
     if (this.peerBufferRequestInterval && this.peerBufferRequestTrackKey === trackKey) {
       clearInterval(this.peerBufferRequestInterval);
@@ -2242,6 +2280,11 @@ export class CloudMesh {
     this.dataChannels.forEach(channel => {
       try { channel.close(); } catch (e) { }
     });
+    this.pendingAudioTransferAcks.forEach((pending) => {
+      clearTimeout(pending.timeout);
+      pending.resolve(false);
+    });
+    this.pendingAudioTransferAcks.clear();
     this.peerConnections.clear();
     this.dataChannels.clear();
     this.pendingIceCandidates.clear();
