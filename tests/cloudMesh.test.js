@@ -526,7 +526,8 @@ describe('CloudMesh audio transfer', () => {
     })));
 
     const loading = mesh.fetchRemoteAudioUrl('/api/yt-stream?id=slow', 'Slow track', 'slow-track');
-    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(mesh.requestTrackBufferFromPeers).toHaveBeenCalledWith('Slow track', 'slow-track');
     await loading;
 
     expect(mesh.requestTrackBufferFromPeers).toHaveBeenCalledWith('Slow track', 'slow-track');

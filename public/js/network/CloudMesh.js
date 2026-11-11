@@ -9,6 +9,7 @@ const P2P_AUDIO_ACK_TIMEOUT_MS = 5_000;
 const P2P_AUDIO_BACKPRESSURE_TIMEOUT_MS = 10_000;
 const P2P_BACKPRESSURE_POLL_INTERVAL_MS = 100;
 const P2P_BUFFER_REQUEST_MAX_ATTEMPTS = 10;
+const REMOTE_AUDIO_FETCH_TIMEOUT_MS = 5_000;
 const QUEUE_MUTATION_TIMEOUT_MS = 8_000;
 const QUEUE_CONFLICT_RETRY_LIMIT = 5;
 const ROOM_POLL_TIMEOUT_MS = 8_000;
@@ -1773,7 +1774,7 @@ export class CloudMesh {
     const timeout = setTimeout(() => {
       timedOut = true;
       controller.abort();
-    }, 15_000);
+    }, REMOTE_AUDIO_FETCH_TIMEOUT_MS);
 
     if (!this.incomingAudioChunks.size) {
       this.updateLoadingState(true, `Mengunduh ${trackName} (0%)...`);
