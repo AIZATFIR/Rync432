@@ -2309,17 +2309,24 @@ export class CloudMesh {
             const completeBuffer = stream.buffer;
             const trackName = stream.name;
             const trackId = stream.id;
+            const trackKey = trackId || trackName;
+            const wasCached = this.localAudioBufferCache.has(trackKey);
             this.incomingAudioChunks.delete(targetPeerId);
             if (stream.timeout) clearTimeout(stream.timeout);
-            const transferKey = trackId || trackName;
-            if (this.peerBufferRequestInterval && this.peerBufferRequestTrackKey === transferKey) {
+            if (this.peerBufferRequestInterval && this.peerBufferRequestTrackKey === trackKey) {
               clearInterval(this.peerBufferRequestInterval);
               this.peerBufferRequestInterval = null;
               this.peerBufferRequestTrackKey = null;
             }
             this.localAudioBufferCache.set(trackName, completeBuffer.buffer);
             if (trackId) this.localAudioBufferCache.set(trackId, completeBuffer.buffer);
-            this.audioRouteByTrack.set(trackId || trackName, 'p2p');
+            if (wasCached) {
+              try {
+                channel.send(JSON.stringify({ type: 'AUDIO_TRANSFER_ACK', id: trackId || '', success: true }));
+              } catch (error) { }
+              return;
+            }
+            this.audioRouteByTrack.set(trackKey, 'p2p');
             if (this.isCurrentAudioTrack(trackId, trackName)) {
               this.currentAudioArrayBuffer = completeBuffer.buffer;
               this.currentFetchingTrackKey = null;

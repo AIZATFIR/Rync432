@@ -944,6 +944,29 @@ describe('CloudMesh audio transfer', () => {
     expect(channel.sent).toEqual([]);
   });
 
+  it('loads a requested track only once when multiple peers finish duplicate P2P transfers', () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.lastKnownTrack = { id: 'track-1', name: 'Track' };
+    const firstPeer = makeChannel();
+    const secondPeer = makeChannel();
+    mesh.setupDataChannel('peer-1', firstPeer);
+    mesh.setupDataChannel('peer-2', secondPeer);
+
+    for (const channel of [firstPeer, secondPeer]) {
+      channel.onmessage({ data: JSON.stringify({
+        type: 'AUDIO_HEADER', id: 'track-1', name: 'Track', totalBytes: 3,
+        totalChunks: 1, chunkProtocol: 1
+      }) });
+    }
+    firstPeer.onmessage({ data: makeAudioChunkFrame(0, 1, [1, 2, 3]) });
+    secondPeer.onmessage({ data: makeAudioChunkFrame(0, 1, [1, 2, 3]) });
+
+    expect(events.filter(event => event.type === 'BINARY_AUDIO_RECEIVED')).toHaveLength(1);
+    expect(firstPeer.sent.map(message => JSON.parse(message))).toContainEqual(expect.objectContaining({ type: 'AUDIO_TRANSFER_ACK', success: true }));
+    expect(secondPeer.sent.map(message => JSON.parse(message))).toContainEqual(expect.objectContaining({ type: 'AUDIO_TRANSFER_ACK', success: true }));
+  });
+
   it('does not announce stale current audio to a newly connected peer', () => {
     const mesh = new CloudMesh(() => {});
     mesh.isHost = true;
