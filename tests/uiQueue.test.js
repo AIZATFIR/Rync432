@@ -12,6 +12,31 @@ afterEach(() => {
 });
 
 describe('YouTube search queue UI', () => {
+  it('keeps audio UI paused until AudioEngine confirms the scheduled start', () => {
+    const audioEngine = { isPlaying: true, isPlaybackActive: false };
+    const ui = new UIManager({ audioEngine });
+    ui.elements = {};
+    ui.currentTrack = { id: 'local-track', sourceType: 'direct-url' };
+
+    ui.setPlayState(true);
+    expect(ui.isPlayingState).toBe(false);
+
+    audioEngine.isPlaybackActive = true;
+    ui.setPlayState(true);
+    expect(ui.isPlayingState).toBe(true);
+  });
+
+  it('clears stale playback feedback after audio becomes ready', () => {
+    const ui = new UIManager({});
+    const feedback = { hidden: false, style: { display: 'block' } };
+    ui.elements = { roomFeedback: feedback, directUrlFeedback: feedback };
+
+    ui.clearUrlFeedback();
+
+    expect(feedback.hidden).toBe(true);
+    expect(feedback.style.display).toBe('none');
+  });
+
   it('keeps the active track when computing items to clear', () => {
     const queue = [{ id: 'current' }, { id: 'next-a' }, { id: 'next-b' }];
 
@@ -279,7 +304,7 @@ describe('YouTube search queue UI', () => {
     expect(ui.showUrlFeedback).toHaveBeenCalledWith('Room gagal memilih lagu. Refresh antrean lalu coba lagi.', 'error');
   });
 
-  it('starts a selected solo YouTube track in the official player', async () => {
+  it('requests solo YouTube playback without reporting Playing before the player confirms it', async () => {
     const mesh = { lastKnownTrack: null, loadTrackBuffer: vi.fn() };
     const player = { setVolume: vi.fn(), playAt: vi.fn().mockResolvedValue(undefined) };
     const socketClient = { roomId: null, cloudMesh: mesh };
@@ -293,7 +318,7 @@ describe('YouTube search queue UI', () => {
 
     expect(player.setVolume).toHaveBeenCalledWith(0.4);
     expect(player.playAt).toHaveBeenCalledWith('dQw4w9WgXcQ', expect.any(Number), 0);
-    expect(ui.isPlayingState).toBe(true);
+    expect(ui.isPlayingState).toBe(false);
   });
 
   it('routes a YouTube Library selection through room queue sync when already in a room', async () => {

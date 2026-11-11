@@ -243,6 +243,15 @@ export class UIManager {
     this.refreshLibrary();
     this.startPlaybackTicker();
 
+    this.app.audioEngine.onPlaybackStarted = () => {
+      this.clearTrackLoading();
+      this.clearUrlFeedback();
+      this.setPlayState(true);
+    };
+    this.app.audioEngine.onPlaybackBlocked = () => {
+      this.setPlayState(false);
+      this.showUrlFeedback('Audio menunggu izin browser. Tekan Play untuk melanjutkan.', 'info');
+    };
     // Auto next track when current finishes (Only host advances to prevent race condition)
     this.app.audioEngine.onPlaybackEnded = () => {
       this.setPlayState(false);
@@ -1270,7 +1279,6 @@ export class UIManager {
       this.app.youtubePlayer?.setVolume(this.app.audioEngine.volume);
       this.app.youtubePlayer?.playAt(item.sourceId, Date.now() + 50, 0)
         .catch(() => this.setYouTubePlayerStatus('Tekan Play di player YouTube untuk mulai.'));
-      this.setPlayState(true);
       this.updateTrackUI(item.name, item.duration, item.thumbnail);
       return item;
     }
@@ -1903,6 +1911,15 @@ export class UIManager {
     feedback.innerText = msg;
   }
 
+  clearUrlFeedback() {
+    const feedbackElements = new Set([this.elements.roomFeedback, this.elements.directUrlFeedback]);
+    feedbackElements.forEach(feedback => {
+      if (!feedback) return;
+      feedback.hidden = true;
+      feedback.style.display = 'none';
+    });
+  }
+
   setTrackLoading(msg) {
     if (this.elements.trackTitle) {
       this.elements.trackTitle.innerText = msg;
@@ -2348,7 +2365,6 @@ export class UIManager {
           this.app.youtubePlayer?.setVolume(this.app.audioEngine.volume);
           this.app.youtubePlayer?.playAt(track.sourceId, Date.now() + 50, 0)
             .catch(() => this.setYouTubePlayerStatus('Tekan Play di player YouTube untuk mulai.'));
-          this.setPlayState(true);
         }
         this.setView('home');
         return;
@@ -2575,6 +2591,8 @@ export class UIManager {
 
   // Single Play/Pause Toggle View State
   setPlayState(isPlaying) {
+    const audioEngine = this.app?.audioEngine;
+    if (isPlaying && audioEngine?.isPlaying && !audioEngine.isPlaybackActive && this.currentTrack?.sourceType !== 'youtube') return;
     this.isPlayingState = isPlaying;
     if (this.currentTrack?.sourceType === 'youtube') {
       const player = this.app?.youtubePlayer;
@@ -2663,7 +2681,6 @@ export class UIManager {
         const position = audioEngine.pauseOffsetSec || 0;
         this.app.youtubePlayer?.playAt(this.currentTrack.sourceId, Date.now() + 50, position)
           .catch(() => this.setYouTubePlayerStatus('Tekan Play di player YouTube untuk mulai.'));
-        this.setPlayState(true);
       }
       return;
     }

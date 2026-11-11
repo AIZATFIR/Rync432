@@ -18,6 +18,10 @@ export class AudioEngine {
     this.gainNode = null;
     this.analyserNode = null;
     this.isPlaying = false;
+    this.isPlaybackActive = false;
+    this.pendingPlaybackStart = null;
+    this.onPlaybackStarted = null;
+    this.onPlaybackBlocked = null;
     this.volume = 1;
     this.currentTrackName = 'No track loaded';
     this.currentTrackId = null;
@@ -411,9 +415,11 @@ export class AudioEngine {
     }
 
     const activeSource = this.currentSource;
+    this.watchForPlaybackStart(activeSource, scheduledContextTime);
     activeSource.onended = () => {
       if (this.currentSource === activeSource) {
         this.isPlaying = false;
+        this.isPlaybackActive = false;
         const pos = this.getCurrentPlaybackPosition();
         const isTrackFullyFinished = this.currentTrackDuration > 2 && pos >= (this.currentTrackDuration - 1.5);
         
@@ -428,7 +434,61 @@ export class AudioEngine {
     };
   }
 
+  watchForPlaybackStart(source, scheduledContextTime) {
+    this.cancelPlaybackStartWatch();
+    const pending = { source, scheduledContextTime, timer: null, stateListener: null, blocked: false };
+    const check = () => {
+      if (this.pendingPlaybackStart !== pending) return;
+      pending.timer = null;
+      if (this.currentSource !== source || !this.isPlaying) {
+        this.cancelPlaybackStartWatch();
+        return;
+      }
+      if (this.ctx?.state !== 'running') {
+        if (!pending.blocked) {
+          pending.blocked = true;
+          this.onPlaybackBlocked?.();
+        }
+        if (!pending.stateListener && this.ctx?.addEventListener) {
+          pending.stateListener = () => {
+            if (this.ctx?.state !== 'running') return;
+            this.ctx.removeEventListener?.('statechange', pending.stateListener);
+            pending.stateListener = null;
+            check();
+          };
+          this.ctx.addEventListener('statechange', pending.stateListener);
+        }
+        return;
+      }
+      if (pending.stateListener) {
+        this.ctx.removeEventListener?.('statechange', pending.stateListener);
+        pending.stateListener = null;
+      }
+      const remainingMs = (scheduledContextTime - this.ctx.currentTime) * 1000;
+      if (remainingMs > 10) {
+        pending.timer = setTimeout(check, Math.min(remainingMs, 50));
+        return;
+      }
+      this.pendingPlaybackStart = null;
+      this.isPlaybackActive = true;
+      this.onPlaybackStarted?.();
+    };
+    pending.check = check;
+    this.pendingPlaybackStart = pending;
+    const delayMs = Math.max(0, (scheduledContextTime - this.ctx.currentTime) * 1000);
+    pending.timer = setTimeout(check, delayMs);
+  }
+
+  cancelPlaybackStartWatch() {
+    const pending = this.pendingPlaybackStart;
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    if (pending.stateListener) this.ctx?.removeEventListener?.('statechange', pending.stateListener);
+    this.pendingPlaybackStart = null;
+  }
+
   stopLocalPlayback() {
+    this.cancelPlaybackStartWatch();
     if (this.currentSource) {
       try {
         const src = this.currentSource;
@@ -439,6 +499,7 @@ export class AudioEngine {
       } catch (e) {}
     }
     this.isPlaying = false;
+    this.isPlaybackActive = false;
   }
 
   getCurrentPlaybackPosition() {
