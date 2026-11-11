@@ -1027,6 +1027,30 @@ describe('CloudMesh audio transfer', () => {
     expect(JSON.stringify(metrics)).not.toContain('Private title');
   });
 
+  it.each([
+    ['connected', 'success'],
+    ['failed', 'failure']
+  ])('measures WebRTC establishment until %s', (state, outcome) => {
+    vi.useFakeTimers();
+    const store = new Map();
+    vi.stubGlobal('localStorage', { getItem: key => store.get(key) || null, setItem: (key, value) => store.set(key, value) });
+    class FakePeerConnection {
+      connectionState = 'new';
+      close = vi.fn();
+    }
+    vi.stubGlobal('RTCPeerConnection', FakePeerConnection);
+    const mesh = new CloudMesh(() => {});
+    const peer = mesh.createPeerConnection('private-peer');
+
+    vi.advanceTimersByTime(240);
+    peer.connectionState = state;
+    peer.onconnectionstatechange();
+
+    const metrics = JSON.parse(store.get('rync_metrics_v1'));
+    expect(metrics.webrtc_connect_ms).toEqual([{ durationMs: 240, outcome }]);
+    expect(JSON.stringify(metrics)).not.toContain('private-peer');
+  });
+
   it('does not send a stale buffer when a peer requests a track that is not cached', () => {
     const mesh = new CloudMesh(() => {});
     mesh.currentAudioArrayBuffer = new ArrayBuffer(16);

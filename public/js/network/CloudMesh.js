@@ -119,6 +119,7 @@ export class CloudMesh {
 
     // WebRTC P2P Connections
     this.peerConnections = new Map();
+    this.peerConnectionStartedAt = new Map();
     this.peerDisconnectTimers = new Map();
     this.dataChannels = new Map();
     this.pendingIceCandidates = new Map();
@@ -2100,6 +2101,11 @@ export class CloudMesh {
 
     pc.onconnectionstatechange = () => {
       const state = pc.connectionState;
+      const connectionStartedAt = this.peerConnectionStartedAt.get(targetPeerId);
+      if (state === 'connected' && connectionStartedAt !== undefined) {
+        recordLocalMetric('webrtc_connect_ms', (globalThis.performance?.now?.() ?? Date.now()) - connectionStartedAt);
+        this.peerConnectionStartedAt.delete(targetPeerId);
+      }
       const disconnectTimer = this.peerDisconnectTimers.get(targetPeerId);
       if (state === 'connected' || state === 'connecting') {
         if (disconnectTimer) clearTimeout(disconnectTimer);
@@ -2119,6 +2125,9 @@ export class CloudMesh {
         return;
       }
       if (state === 'failed' || state === 'closed') {
+        if (state === 'failed' && connectionStartedAt !== undefined) {
+          recordLocalMetric('webrtc_connect_ms', (globalThis.performance?.now?.() ?? Date.now()) - connectionStartedAt, { outcome: 'failure' });
+        }
         this.cleanupPeerConnection(targetPeerId, pc);
       }
     };
@@ -2128,6 +2137,7 @@ export class CloudMesh {
     };
 
     this.peerConnections.set(targetPeerId, pc);
+    this.peerConnectionStartedAt.set(targetPeerId, globalThis.performance?.now?.() ?? Date.now());
     return pc;
   }
 
@@ -2137,6 +2147,7 @@ export class CloudMesh {
     const timer = this.peerDisconnectTimers.get(targetPeerId);
     if (timer) clearTimeout(timer);
     this.peerDisconnectTimers.delete(targetPeerId);
+    this.peerConnectionStartedAt.delete(targetPeerId);
     if (pc) {
       try { pc.close(); } catch (e) { }
       this.peerConnections.delete(targetPeerId);
