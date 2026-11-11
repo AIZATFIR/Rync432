@@ -91,6 +91,47 @@ describe('YouTube search queue UI', () => {
     expect(original.map(item => item.id)).toEqual(['a', 'b', 'c']);
   });
 
+  it('moves a queue item by its accessible reorder action', () => {
+    const ui = new UIManager({ socketClient: { roomId: null, isHost: false } });
+    ui.cachedQueue = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+    ui.commitQueueReorder = vi.fn();
+
+    expect(ui.moveQueueItemById('b', -1)).toBe(true);
+
+    expect(ui.commitQueueReorder).toHaveBeenCalledWith([{ id: 'b' }, { id: 'a' }, { id: 'c' }]);
+  });
+
+  it('does not let a guest reorder the authoritative room queue', () => {
+    const ui = new UIManager({ socketClient: { roomId: 'ROOM', isHost: false } });
+    ui.cachedQueue = [{ id: 'a' }, { id: 'b' }];
+    ui.commitQueueReorder = vi.fn();
+
+    expect(ui.moveQueueItemById('b', -1)).toBe(false);
+    expect(ui.commitQueueReorder).not.toHaveBeenCalled();
+  });
+
+  it('binds one outside-click handler for queue menus and clears expanded state', () => {
+    const expanded = [];
+    const dropdown = {
+      classList: { remove: vi.fn() },
+      previousElementSibling: { setAttribute: (...args) => expanded.push(args) }
+    };
+    const documentStub = {
+      addEventListener: vi.fn((name, handler) => { documentStub.handler = handler; }),
+      querySelectorAll: vi.fn(() => [dropdown])
+    };
+    vi.stubGlobal('document', documentStub);
+    const ui = new UIManager({});
+
+    ui.bindQueueMenuDismissal();
+    ui.bindQueueMenuDismissal();
+    documentStub.handler();
+
+    expect(documentStub.addEventListener).toHaveBeenCalledOnce();
+    expect(dropdown.classList.remove).toHaveBeenCalledWith('active');
+    expect(expanded).toEqual([['aria-expanded', 'false']]);
+  });
+
   it('leaves queue order intact for an invalid drag destination', () => {
     const original = [{ id: 'a' }, { id: 'b' }];
 

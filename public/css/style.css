@@ -1292,6 +1292,7 @@ input:checked + .slider-round:before {
   font-family: var(--font-spotify);
   font-size: 0.75rem;
   font-weight: 500;
+  min-height: 44px;
   padding: 8px 12px;
   text-align: left;
   cursor: pointer;
@@ -1301,6 +1302,8 @@ input:checked + .slider-round:before {
   width: 100%;
   transition: background var(--transition-fast);
 }
+
+.queue-dropdown-item:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .queue-dropdown-item:hover {
   background: var(--spotify-elevated);

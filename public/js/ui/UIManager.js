@@ -295,6 +295,7 @@ export class UIManager {
 
   bindEvents() {
     const { elements, app } = this;
+    this.bindQueueMenuDismissal();
 
     [
       [elements.navHomeBtn, 'home'],
@@ -1562,6 +1563,28 @@ export class UIManager {
     try { localStorage.setItem('rync_solo_queue', JSON.stringify(queue)); } catch (error) {}
   }
 
+  moveQueueItemById(trackId, direction) {
+    const socketClient = this.app.socketClient;
+    if (socketClient?.roomId && !socketClient.isHost) return false;
+    if (![-1, 1].includes(direction)) return false;
+    const fromIndex = this.cachedQueue.findIndex(item => item.id === trackId);
+    const toIndex = fromIndex + direction;
+    if (fromIndex < 0 || toIndex < 0 || toIndex >= this.cachedQueue.length) return false;
+    this.commitQueueReorder(moveQueueItem(this.cachedQueue, fromIndex, toIndex));
+    return true;
+  }
+
+  bindQueueMenuDismissal() {
+    if (this.queueMenuDismissHandler || typeof document === 'undefined') return;
+    this.queueMenuDismissHandler = () => {
+      document.querySelectorAll('.queue-dropdown-menu.active').forEach(dropdown => {
+        dropdown.classList.remove('active');
+        dropdown.previousElementSibling?.setAttribute('aria-expanded', 'false');
+      });
+    };
+    document.addEventListener('click', this.queueMenuDismissHandler);
+  }
+
   renderQueue(queue = []) {
     this.cachedQueue = queue;
     if (!this.app.socketClient?.roomId) this.soloQueue = queue;
@@ -1624,12 +1647,14 @@ export class UIManager {
         </div>
         
         <div class="queue-item-actions">
-          <button class="queue-menu-btn" title="Menu Opsi Lagu">⋮</button>
+          <button type="button" class="queue-menu-btn" title="Menu Opsi Lagu" aria-label="Opsi ${escapeHtml(item.name || 'lagu')}" aria-haspopup="true" aria-expanded="false">⋮</button>
           <div class="queue-dropdown-menu">
-            <button class="queue-dropdown-item q-action-play">Putar Sekarang</button>
-            <button class="queue-dropdown-item q-action-playnext">Putar Berikutnya</button>
-            <button class="queue-dropdown-item q-action-download">Unduh Audio</button>
-            <button class="queue-dropdown-item danger q-action-delete">Hapus</button>
+            <button type="button" class="queue-dropdown-item q-action-play">Putar Sekarang</button>
+            <button type="button" class="queue-dropdown-item q-action-playnext">Putar Berikutnya</button>
+            <button type="button" class="queue-dropdown-item q-action-move-up" aria-label="Pindah ${escapeHtml(item.name || 'lagu')} ke atas">Pindah ke atas</button>
+            <button type="button" class="queue-dropdown-item q-action-move-down" aria-label="Pindah ${escapeHtml(item.name || 'lagu')} ke bawah">Pindah ke bawah</button>
+            <button type="button" class="queue-dropdown-item q-action-download">Unduh Audio</button>
+            <button type="button" class="queue-dropdown-item danger q-action-delete">Hapus</button>
           </div>
         </div>
       `;
@@ -1650,7 +1675,31 @@ export class UIManager {
           document.querySelectorAll('.queue-dropdown-menu.active').forEach(d => {
             if (d !== dropdown) d.classList.remove('active');
           });
-          dropdown.classList.toggle('active');
+          const isOpen = !dropdown.classList.contains('active');
+          dropdown.classList.toggle('active', isOpen);
+          menuBtn.setAttribute('aria-expanded', String(isOpen));
+        });
+      }
+
+      const moveUpButton = div.querySelector('.q-action-move-up');
+      const moveDownButton = div.querySelector('.q-action-move-down');
+      const canReorder = !isInRoom || !!this.app.socketClient?.isHost;
+      if (moveUpButton) {
+        moveUpButton.disabled = !canReorder || index === 0;
+        moveUpButton.addEventListener('click', event => {
+          event.stopPropagation();
+          dropdown.classList.remove('active');
+          menuBtn?.setAttribute('aria-expanded', 'false');
+          this.moveQueueItemById(item.id, -1);
+        });
+      }
+      if (moveDownButton) {
+        moveDownButton.disabled = !canReorder || index === queue.length - 1;
+        moveDownButton.addEventListener('click', event => {
+          event.stopPropagation();
+          dropdown.classList.remove('active');
+          menuBtn?.setAttribute('aria-expanded', 'false');
+          this.moveQueueItemById(item.id, 1);
         });
       }
 
@@ -1844,10 +1893,6 @@ export class UIManager {
       container.appendChild(div);
     });
 
-    // Close any open queue dropdown when clicking anywhere else
-    document.addEventListener('click', () => {
-      document.querySelectorAll('.queue-dropdown-menu.active').forEach(d => d.classList.remove('active'));
-    }, { once: true });
   }
 
   openDeviceSettingsModal(peer) {
