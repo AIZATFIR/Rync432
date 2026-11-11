@@ -611,6 +611,52 @@ describe('CloudMesh audio transfer', () => {
     expect(events).not.toContainEqual(expect.objectContaining({ type: 'AUDIO_TRANSFER_PROGRESS', payload: expect.objectContaining({ status: 'Menunggu audio...' }) }));
   });
 
+  it('rejects oversized relay responses from Content-Length before reading bytes', async () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.requestTrackBufferFromPeers = vi.fn();
+    mesh.broadcastReadiness = vi.fn();
+    mesh.updateLoadingState = vi.fn();
+    const read = vi.fn(async () => ({ done: true }));
+    const cancel = vi.fn();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: name => name === 'content-length' ? String(64 * 1024 * 1024 + 1) : null },
+      body: { getReader: () => ({ read }), cancel }
+    }));
+
+    await mesh.fetchRemoteAudioUrl('/api/room?action=get_audio', 'Large track', 'large-track');
+
+    expect(read).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(mesh.requestTrackBufferFromPeers).toHaveBeenCalledWith('Large track', 'large-track');
+    expect(mesh.audioRouteByTrack.has('large-track')).toBe(false);
+  });
+
+  it('stops an unknown-length relay stream as soon as it exceeds the audio limit', async () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.requestTrackBufferFromPeers = vi.fn();
+    mesh.broadcastReadiness = vi.fn();
+    mesh.updateLoadingState = vi.fn();
+    const cancel = vi.fn();
+    const read = vi.fn()
+      .mockResolvedValueOnce({ done: false, value: { length: 64 * 1024 * 1024 + 1 } })
+      .mockResolvedValueOnce({ done: true });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => null },
+      body: { getReader: () => ({ read, cancel }) }
+    }));
+
+    await mesh.fetchRemoteAudioUrl('/api/room?action=get_audio', 'Unknown-size track', 'unknown-size');
+
+    expect(read).toHaveBeenCalledOnce();
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(mesh.requestTrackBufferFromPeers).toHaveBeenCalledWith('Unknown-size track', 'unknown-size');
+    expect(mesh.localAudioBufferCache.has('unknown-size')).toBe(false);
+  });
+
   it('does not let an expired old fetch abort the newly selected track', async () => {
     vi.useFakeTimers();
     const mesh = new CloudMesh(() => {});

@@ -5,6 +5,7 @@ import { recordLocalMetric } from '../metrics/localMetrics.js';
 const P2P_AUDIO_CHUNK_BYTES = 32 * 1024;
 const P2P_AUDIO_FRAME_HEADER_BYTES = 12;
 const MAX_P2P_AUDIO_BYTES = 64 * 1024 * 1024;
+const MAX_REMOTE_AUDIO_BYTES = MAX_P2P_AUDIO_BYTES;
 const P2P_AUDIO_TRANSFER_TIMEOUT_MS = 10_000;
 const P2P_AUDIO_ACK_TIMEOUT_MS = 5_000;
 const P2P_AUDIO_BACKPRESSURE_TIMEOUT_MS = 10_000;
@@ -1865,6 +1866,7 @@ export class CloudMesh {
     this.broadcastReadiness('PREPARING', trackId, audioRoute);
     let timedOut = false;
     let timeout;
+    let reader = null;
     const resetTimeout = () => {
       clearTimeout(timeout);
       timeout = setTimeout(() => {
@@ -1902,12 +1904,17 @@ export class CloudMesh {
       if (timedOut) throw new Error('AUDIO_FETCH_TIMEOUT');
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-      const contentLength = response.headers.get('content-length');
-      const totalBytes = contentLength ? parseInt(contentLength, 10) : 0;
+      const contentLength = response.headers?.get('content-length');
+      const declaredBytes = contentLength ? Number.parseInt(contentLength, 10) : 0;
+      const hasDeclaredLength = Number.isSafeInteger(declaredBytes) && declaredBytes > 0;
+      if (hasDeclaredLength && declaredBytes > MAX_REMOTE_AUDIO_BYTES) {
+        try { await response.body?.cancel?.(); } catch (error) { }
+        throw new Error('AUDIO_TOO_LARGE');
+      }
 
       let arrayBuffer;
       if (response.body) {
-        const reader = response.body.getReader();
+        reader = response.body.getReader();
         const chunks = [];
         let receivedBytes = 0;
 
@@ -1917,10 +1924,14 @@ export class CloudMesh {
           const { done, value } = await reader.read();
           if (done) break;
           resetTimeout();
+          const chunkBytes = value?.byteLength ?? value?.length;
+          if (!Number.isSafeInteger(chunkBytes) || chunkBytes <= 0 || receivedBytes + chunkBytes > MAX_REMOTE_AUDIO_BYTES) {
+            throw new Error('AUDIO_TOO_LARGE');
+          }
           chunks.push(value);
-          receivedBytes += value.length;
-          if (totalBytes > 0) {
-            const pct = Math.min(99, Math.round((receivedBytes / totalBytes) * 100));
+          receivedBytes += chunkBytes;
+          if (hasDeclaredLength) {
+            const pct = Math.min(99, Math.round((receivedBytes / declaredBytes) * 100));
             this.updateLoadingState(true, `Mengunduh ${pct}%`);
             this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct, status: `Mengunduh (${pct}%)...` });
           } else {
@@ -1938,7 +1949,9 @@ export class CloudMesh {
         }
         arrayBuffer = complete.buffer;
       } else {
+        if (!hasDeclaredLength) throw new Error('AUDIO_SIZE_UNKNOWN');
         arrayBuffer = await response.arrayBuffer();
+        if (arrayBuffer.byteLength > MAX_REMOTE_AUDIO_BYTES) throw new Error('AUDIO_TOO_LARGE');
       }
 
       this.localAudioBufferCache.set(trackName, arrayBuffer);
@@ -1959,6 +1972,7 @@ export class CloudMesh {
       this.onEvent('BINARY_AUDIO_RECEIVED', { arrayBuffer, trackName, trackId });
     } catch (err) {
       if (signal.aborted && !timedOut) return;
+      try { reader?.cancel?.().catch(() => {}); } catch (error) { }
       this.currentFetchingTrackKey = null;
       this.broadcastReadiness('PREPARING', trackId, 'unknown');
       console.warn('Remote fetch notice, awaiting WebRTC stream:', err.message);
