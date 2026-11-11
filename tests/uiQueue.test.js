@@ -271,6 +271,29 @@ describe('YouTube search queue UI', () => {
     expect(socketClient.playQueueItem).toHaveBeenCalledWith(queuedIds[0], true);
   });
 
+  it('batches room playlist additions into one acknowledgement before playback', async () => {
+    const tracks = [{ id: 'first', name: 'First' }, { id: 'second', name: 'Second' }];
+    const order = [];
+    const socketClient = {
+      roomId: 'ROOM', isHost: true,
+      addQueueItems: vi.fn(async items => { order.push(['add', items.map(item => item.id)]); return true; }),
+      addToQueue: vi.fn(),
+      playQueueItem: vi.fn(async id => { order.push(['play', id]); return tracks[0]; })
+    };
+    const ui = new UIManager({ socketClient });
+    ui.getDeviceName = () => 'Host';
+    ui.setView = vi.fn();
+
+    await ui.playPlaylist({ id: 'mix', tracks });
+
+    const queued = socketClient.addQueueItems.mock.calls[0][0];
+    expect(queued.map(item => item.id)).toEqual(['first', 'second']);
+    expect(queued.every(item => item.queueItemId && item.addedBy === 'Host')).toBe(true);
+    expect(socketClient.addQueueItems).toHaveBeenCalledOnce();
+    expect(socketClient.addToQueue).not.toHaveBeenCalled();
+    expect(order).toEqual([['add', ['first', 'second']], ['play', queued[0].queueItemId]]);
+  });
+
   it('queues a room playlist with local tracks and shares only its first track before playback', async () => {
     const tracks = [
       { id: 'local-a', name: 'Local A', sourceType: 'local-file' },

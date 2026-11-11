@@ -2553,14 +2553,19 @@ export class UIManager {
       return;
     }
     try {
-      for (const track of tracks) {
-        const queuedTrack = { ...track, queueItemId: createQueueItemId(), addedBy: this.getDeviceName() };
-        const added = await socketClient.addToQueue(queuedTrack);
-        track.queueItemId = queuedTrack.queueItemId;
-        if (added === false) throw new Error('Playlist gagal dimasukkan ke antrean room.');
-        const waitForAck = socketClient.cloudMesh?.waitForQueueItemAcknowledgement;
-        if (waitForAck && !await waitForAck.call(socketClient.cloudMesh, queueItemKey(queuedTrack))) {
-          throw new Error('Antrean room gagal disinkronkan. Coba lagi.');
+      if (typeof socketClient.addQueueItems === 'function') {
+        const queuedTracks = tracks.map(track => ({ ...track, addedBy: this.getDeviceName() }));
+        if (!await socketClient.addQueueItems(queuedTracks)) throw new Error('Antrean room gagal disinkronkan. Coba lagi.');
+      } else {
+        for (const track of tracks) {
+          const queuedTrack = { ...track, queueItemId: createQueueItemId(), addedBy: this.getDeviceName() };
+          const added = await socketClient.addToQueue(queuedTrack);
+          track.queueItemId = queuedTrack.queueItemId;
+          if (added === false) throw new Error('Playlist gagal dimasukkan ke antrean room.');
+          const waitForAck = socketClient.cloudMesh?.waitForQueueItemAcknowledgement;
+          if (waitForAck && !await waitForAck.call(socketClient.cloudMesh, queueItemKey(queuedTrack))) {
+            throw new Error('Antrean room gagal disinkronkan. Coba lagi.');
+          }
         }
       }
       if (socketClient.isHost) {

@@ -1853,6 +1853,21 @@ describe('SocketClient room readiness', () => {
     expect(client.cloudMesh.nextTrack).toHaveBeenCalledWith(true, 'local-next');
   });
 
+  it('waits for room creation before submitting a batched queue update', async () => {
+    const client = new SocketClient(() => {});
+    let resolveRoom;
+    client.roomReady = new Promise(resolve => { resolveRoom = resolve; });
+    client.cloudMesh.addQueueItems = vi.fn().mockResolvedValue(true);
+    const tracks = [{ id: 'one' }, { id: 'two' }];
+
+    const result = client.addQueueItems(tracks);
+    expect(client.cloudMesh.addQueueItems).not.toHaveBeenCalled();
+    resolveRoom();
+    await expect(result).resolves.toBe(true);
+
+    expect(client.cloudMesh.addQueueItems).toHaveBeenCalledWith(tracks);
+  });
+
   it('preserves the autoplay request when playing a queued item', () => {
     const client = new SocketClient(() => {});
     const play = vi.fn();
