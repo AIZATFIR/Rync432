@@ -619,6 +619,18 @@ describe('CloudMesh audio transfer', () => {
     expect(channel.sent.some(message => JSON.parse(message).type === 'AUDIO_HEADER')).toBe(false);
   });
 
+  it('blocks guest playback controls while the room host is disconnected', () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.isHost = false;
+    mesh.hostDisconnected = true;
+    mesh.publishMqtt = vi.fn();
+    mesh.broadcastDataChannelMessage = vi.fn();
+
+    expect(mesh.requestControl('next')).toBe(false);
+    expect(mesh.publishMqtt).not.toHaveBeenCalled();
+    expect(mesh.broadcastDataChannelMessage).not.toHaveBeenCalled();
+  });
+
   it('rejects oversized P2P audio headers before allocating transfer state', () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));

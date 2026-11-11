@@ -1079,7 +1079,7 @@ export class CloudMesh {
   }
 
   requestControl(action, details = {}) {
-    if (this.isHost) return false;
+    if (this.isHost || this.hostDisconnected) return false;
     const request = {
       type: 'CONTROL_REQUEST',
       requestId: `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
