@@ -1276,12 +1276,60 @@ describe('YouTube search queue UI', () => {
     await button.onclick({ stopPropagation() {} });
     expect(button.textContent).toBe('Coba lagi');
     expect(button.disabled).toBe(false);
+    expect(ui.addYoutubeTrackToQueue).toHaveBeenCalledOnce();
     const firstQueueItemId = ui.addYoutubeTrackToQueue.mock.calls[0][5];
 
     await button.onclick({ stopPropagation() {} });
     expect(ui.addYoutubeTrackToQueue.mock.calls[1][5]).toBe(firstQueueItemId);
     expect(button.textContent).toBe('✓ Ditambah');
     expect(button.disabled).toBe(true);
+  });
+
+  it('confirms a room queue addition optimistically and restores retry when sync fails', async () => {
+    const makeElement = () => ({
+      children: [], className: '', style: {}, textContent: '', disabled: false,
+      setAttribute() {}, addEventListener(name, handler) { this[`on${name}`] = handler; },
+      appendChild(child) { this.children.push(child); },
+      set innerHTML(value) { this._html = value; this.children = []; },
+      get innerHTML() { return this._html || ''; },
+      querySelector(selector) {
+        for (const child of this.children) {
+          if (child.className?.includes(selector.slice(1))) return child;
+          const nested = child.querySelector?.(selector);
+          if (nested) return nested;
+        }
+        return null;
+      }
+    });
+    vi.stubGlobal('document', { createElement: makeElement });
+    let rejectAcknowledgement;
+    const acknowledgement = new Promise(resolve => { rejectAcknowledgement = resolve; });
+    const socketClient = {
+      roomId: 'ROOM',
+      addToQueue: vi.fn().mockResolvedValue(true),
+      cloudMesh: { waitForQueueItemAcknowledgement: vi.fn(() => acknowledgement) }
+    };
+    const ui = new UIManager({ socketClient, youtubePlayer: { preload: vi.fn().mockResolvedValue(true) } });
+    ui.elements = { ytSearchResults: makeElement() };
+    ui.showUrlFeedback = vi.fn();
+    ui.renderSearchResults([{
+      id: 'yt_abcdefghijk', sourceId: 'abcdefghijk', sourceType: 'youtube',
+      sourceUrl: 'https://youtu.be/abcdefghijk', name: 'Song', artist: 'Artist', duration: 180
+    }]);
+    const button = ui.elements.ytSearchResults.children[1].children[2].children[1];
+
+    const click = button.onclick({ stopPropagation() {} });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(button.textContent).toBe('✓ Ditambah');
+    expect(button.disabled).toBe(true);
+
+    rejectAcknowledgement(false);
+    await click;
+    await Promise.resolve();
+    expect(button.textContent).toBe('Coba lagi');
+    expect(button.disabled).toBe(false);
+    expect(ui.showUrlFeedback).toHaveBeenCalledWith('Lagu gagal ditambahkan ke antrean. Coba lagi.', 'error');
   });
 
   it('renders an actionable retry that reuses the failed search query', () => {

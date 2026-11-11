@@ -1347,10 +1347,21 @@ export class UIManager {
           queueBtn.disabled = true;
           queueBtn.textContent = 'Menambahkan…';
           try {
-            await this.addYoutubeTrackToQueue(itemUrl, itemTitle, itemArtist, item.duration, thumbSrc, queueItemId);
+            const addedItem = await this.addYoutubeTrackToQueue(itemUrl, itemTitle, itemArtist, item.duration, thumbSrc, queueItemId);
             queueBtn.textContent = '✓ Ditambah';
             queueBtn.style.backgroundColor = 'var(--spotify-green)';
             queueBtn.style.color = '#000';
+            const waitForAck = this.app?.socketClient?.cloudMesh?.waitForQueueItemAcknowledgement;
+            if (waitForAck && this.app.socketClient.roomId) {
+              const markSyncFailure = () => {
+                queueBtn.disabled = false;
+                queueBtn.textContent = 'Coba lagi';
+                this.showUrlFeedback('Lagu gagal ditambahkan ke antrean. Coba lagi.', 'error');
+              };
+              Promise.resolve(waitForAck.call(this.app.socketClient.cloudMesh, addedItem.queueItemId))
+                .then(synced => { if (!synced) markSyncFailure(); })
+                .catch(markSyncFailure);
+            }
           } catch (error) {
             queueBtn.disabled = false;
             queueBtn.textContent = 'Coba lagi';
@@ -1544,10 +1555,6 @@ export class UIManager {
       const socketClient = this.app.socketClient;
       const added = await socketClient.addToQueue(item);
       if (added === false) throw new Error('Queue item rejected');
-      const waitForAck = socketClient.cloudMesh?.waitForQueueItemAcknowledgement;
-      if (waitForAck && await waitForAck.call(socketClient.cloudMesh, queueItemId) === false) {
-        throw new Error('Queue item was not acknowledged');
-      }
     }
     else this.addToSoloQueue(item);
     return item;
