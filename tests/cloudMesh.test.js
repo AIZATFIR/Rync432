@@ -158,6 +158,89 @@ describe('CloudMesh audio transfer', () => {
     expect(mesh.peerConnections.size).toBe(0);
   });
 
+  it('negotiates a peer channel and transfers a requested audio buffer end to end', async () => {
+    const hostEvents = [];
+    const guestEvents = [];
+    class FakeDataChannel {
+      readyState = 'connecting';
+      bufferedAmount = 0;
+      sent = [];
+      pair = null;
+      send(value) {
+        this.sent.push(value);
+        this.pair?.onmessage?.({ data: value });
+      }
+      open() {
+        this.readyState = 'open';
+        this.onopen?.();
+      }
+      close() {
+        this.readyState = 'closed';
+        this.onclose?.();
+      }
+    }
+    class FakePeerConnection {
+      static offeredChannel;
+      signalingState = 'stable';
+      connectionState = 'new';
+      createDataChannel() {
+        this.channel = new FakeDataChannel();
+        FakePeerConnection.offeredChannel = this.channel;
+        return this.channel;
+      }
+      async createOffer() { return { type: 'offer', sdp: 'fake-offer' }; }
+      async createAnswer() { return { type: 'answer', sdp: 'fake-answer' }; }
+      async setLocalDescription(description) {
+        this.localDescription = { ...description, toJSON: () => ({ type: description.type, sdp: description.sdp }) };
+        this.signalingState = description.type === 'offer' ? 'have-local-offer' : 'stable';
+      }
+      async setRemoteDescription(description) {
+        this.remoteDescription = description;
+        if (description.type === 'offer') {
+          this.signalingState = 'have-remote-offer';
+          const remoteChannel = new FakeDataChannel();
+          const offeredChannel = FakePeerConnection.offeredChannel;
+          offeredChannel.pair = remoteChannel;
+          remoteChannel.pair = offeredChannel;
+          this.ondatachannel({ channel: remoteChannel });
+          offeredChannel.open();
+          remoteChannel.open();
+        } else {
+          this.signalingState = 'stable';
+        }
+      }
+      async addIceCandidate() {}
+      close() { this.connectionState = 'closed'; this.channel?.close(); }
+    }
+    vi.stubGlobal('RTCPeerConnection', FakePeerConnection);
+    vi.stubGlobal('RTCSessionDescription', class { constructor(value) { Object.assign(this, value); } });
+    const host = new CloudMesh((type, payload) => hostEvents.push({ type, payload }));
+    const guest = new CloudMesh((type, payload) => guestEvents.push({ type, payload }));
+    host.roomId = guest.roomId = 'ROOM';
+    host.peerId = 'host';
+    guest.peerId = 'guest';
+    host.isHost = true;
+    host.lastKnownTrack = { id: 'track-1', name: 'Song' };
+    guest.lastKnownTrack = host.lastKnownTrack;
+    host.localAudioBufferCache.set('track-1', new Uint8Array([4, 8, 15, 16, 23, 42]).buffer);
+    host.updateLoadingState = vi.fn();
+    guest.updateLoadingState = vi.fn();
+    host.broadcastReadiness = vi.fn();
+    guest.broadcastReadiness = vi.fn();
+    host.sendSignal = async (_target, signal) => guest.handleIncomingSignal('host', signal);
+    guest.sendSignal = async (_target, signal) => host.handleIncomingSignal('guest', signal);
+
+    await host.initiateWebRTCOffer('guest');
+    guest.requestTrackBufferFromPeers('Song', 'track-1');
+
+    const received = guestEvents.find(event => event.type === 'BINARY_AUDIO_RECEIVED')?.payload?.arrayBuffer;
+    expect(host.peerConnections.get('guest').channel.readyState).toBe('open');
+    expect(guest.dataChannels.get('host').readyState).toBe('open');
+    expect(Array.from(new Uint8Array(received))).toEqual([4, 8, 15, 16, 23, 42]);
+    expect(host.pendingAudioTransferAcks.size).toBe(0);
+    expect(guest.incomingAudioChunks.size).toBe(0);
+  });
+
   it('bounds a stalled next-track preview instead of waiting forever', async () => {
     vi.useFakeTimers();
     const mesh = new CloudMesh(() => {});
