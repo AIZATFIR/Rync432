@@ -598,6 +598,21 @@ describe('CloudMesh audio transfer', () => {
     }));
   });
 
+  it('does not count transfer time against the receiver acknowledgement deadline', async () => {
+    vi.useFakeTimers();
+    const mesh = new CloudMesh(() => {});
+    const channel = makeChannel();
+    channel.bufferedAmount = 1024 * 1024;
+    mesh.setupDataChannel('peer-2', channel);
+    const transfer = mesh.streamAudioToPeer(channel, new ArrayBuffer(16), 'Track', 'track-1');
+    await vi.advanceTimersByTimeAsync(11_000);
+    channel.bufferedAmount = 0;
+    await vi.advanceTimersByTimeAsync(20);
+    channel.onmessage({ data: JSON.stringify({ type: 'AUDIO_TRANSFER_ACK', id: 'track-1', success: true }) });
+
+    await expect(transfer).resolves.toBe(true);
+  });
+
   it('releases a pending P2P sender immediately when the channel closes', async () => {
     const mesh = new CloudMesh(() => {});
     const channel = makeChannel();

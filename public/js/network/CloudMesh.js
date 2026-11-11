@@ -2160,12 +2160,7 @@ export class CloudMesh {
 
     try {
       const acknowledgement = new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          if (this.pendingAudioTransferAcks.get(channel)?.trackId !== trackId) return;
-          this.pendingAudioTransferAcks.delete(channel);
-          reject(new Error('P2P_ACK_TIMEOUT'));
-        }, P2P_AUDIO_ACK_TIMEOUT_MS);
-        this.pendingAudioTransferAcks.set(channel, { trackId, resolve, timeout });
+        this.pendingAudioTransferAcks.set(channel, { trackId, resolve, reject, timeout: null });
       });
       acknowledgement.catch(() => {});
       channel.send(JSON.stringify({
@@ -2196,6 +2191,14 @@ export class CloudMesh {
         frame.setFloat64(4, globalThis.performance?.now?.() ?? Date.now(), true);
         new Uint8Array(frameBuffer, P2P_AUDIO_FRAME_HEADER_BYTES).set(new Uint8Array(chunk));
         channel.send(frameBuffer);
+      }
+      const pending = this.pendingAudioTransferAcks.get(channel);
+      if (pending?.trackId === trackId) {
+        pending.timeout = setTimeout(() => {
+          if (this.pendingAudioTransferAcks.get(channel) !== pending) return;
+          this.pendingAudioTransferAcks.delete(channel);
+          pending.reject(new Error('P2P_ACK_TIMEOUT'));
+        }, P2P_AUDIO_ACK_TIMEOUT_MS);
       }
       return await acknowledgement;
     } catch (e) {
