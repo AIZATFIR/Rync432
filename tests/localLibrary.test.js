@@ -74,6 +74,16 @@ describe('LocalLibrary Local Storage Fallback', () => {
     await expect(lib.createPlaylist('   ')).rejects.toThrow('Playlist name is required');
   });
 
+  it('reorders playlist tracks and leaves the stored order intact for invalid moves', async () => {
+    const playlist = await lib.createPlaylist('Road trip');
+    for (const id of ['a', 'b', 'c']) await lib.addTrackToPlaylist(playlist.id, { id, name: id });
+
+    expect(await lib.reorderPlaylist(playlist.id, 2, 0)).toBe(true);
+    expect((await lib.getPlaylists())[0].tracks.map(track => track.id)).toEqual(['c', 'a', 'b']);
+    expect(await lib.reorderPlaylist(playlist.id, 8, 0)).toBe(false);
+    expect((await lib.getPlaylists())[0].tracks.map(track => track.id)).toEqual(['c', 'a', 'b']);
+  });
+
   it('falls back to localStorage when IndexedDB is unavailable', async () => {
     delete global.indexedDB;
     const fallbackLibrary = new LocalLibrary();

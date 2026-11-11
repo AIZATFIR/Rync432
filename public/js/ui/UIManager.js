@@ -2111,6 +2111,28 @@ export class UIManager {
       const count = document.createElement('span');
       count.className = 'library-row-meta';
       count.textContent = `${playlist.tracks?.length || 0} lagu`;
+      const playAll = document.createElement('button');
+      playAll.type = 'button';
+      playAll.className = 'library-action';
+      playAll.textContent = 'Putar semua';
+      playAll.disabled = !playlist.tracks?.length;
+      playAll.setAttribute('aria-label', `Putar semua dari ${playlist.name}`);
+      playAll.addEventListener('click', async () => {
+        playAll.disabled = true;
+        try { await this.playPlaylist(playlist); }
+        finally { playAll.disabled = !playlist.tracks?.length; }
+      });
+      const shuffleAll = document.createElement('button');
+      shuffleAll.type = 'button';
+      shuffleAll.className = 'library-action';
+      shuffleAll.textContent = 'Acak';
+      shuffleAll.disabled = !playlist.tracks?.length;
+      shuffleAll.setAttribute('aria-label', `Acak dan putar ${playlist.name}`);
+      shuffleAll.addEventListener('click', async () => {
+        shuffleAll.disabled = true;
+        try { await this.playPlaylist(playlist, { shuffle: true }); }
+        finally { shuffleAll.disabled = !playlist.tracks?.length; }
+      });
       const addCurrent = document.createElement('button');
       addCurrent.type = 'button';
       addCurrent.className = 'library-action';
@@ -2137,10 +2159,59 @@ export class UIManager {
         await this.localLibrary.deletePlaylist(playlist.id);
         this.refreshLibrary();
       });
-      row.append(title, count, addCurrent, rename, remove);
+      row.append(title, count, playAll, shuffleAll, addCurrent, rename, remove);
       this.renderLibraryTracks(row, playlist.tracks || [], 'Playlist ini kosong.', playlist.id);
       container.append(row);
     });
+  }
+
+  async playPlaylist(playlist, { shuffle = false } = {}) {
+    const tracks = Array.isArray(playlist?.tracks) ? [...playlist.tracks] : [];
+    if (!tracks.length) {
+      this.showUrlFeedback('Playlist ini masih kosong.', 'info');
+      return;
+    }
+    if (shuffle) {
+      for (let index = tracks.length - 1; index > 0; index--) {
+        const target = Math.floor(Math.random() * (index + 1));
+        [tracks[index], tracks[target]] = [tracks[target], tracks[index]];
+      }
+    }
+
+    const socketClient = this.app.socketClient;
+    if (!socketClient?.roomId) {
+      this.soloQueue = tracks;
+      try { localStorage.setItem('rync_solo_queue', JSON.stringify(tracks)); } catch (error) {}
+      this.renderQueue(tracks);
+      await this.playLibraryTrack(tracks[0]);
+      return;
+    }
+
+    if (tracks.some(track => track.sourceType === 'local-file')) {
+      this.showUrlFeedback('Playlist berisi file lokal. Di room, bagikan file satu per satu dari perangkat host.', 'error');
+      return;
+    }
+    try {
+      for (const track of tracks) {
+        const alreadyQueued = (socketClient.cloudMesh?.lastKnownQueue || []).some(item => item.id === track.id);
+        if (alreadyQueued) continue;
+        const added = await socketClient.addToQueue({ ...track, addedBy: this.getDeviceName() });
+        if (added === false) throw new Error('Playlist gagal dimasukkan ke antrean room.');
+        const waitForAck = socketClient.cloudMesh?.waitForQueueItemAcknowledgement;
+        if (waitForAck && !await waitForAck.call(socketClient.cloudMesh, track.id)) {
+          throw new Error('Antrean room gagal disinkronkan. Coba lagi.');
+        }
+      }
+      if (socketClient.isHost) {
+        const selected = await socketClient.playQueueItem(tracks[0].id, true);
+        if (!selected) throw new Error('Room gagal memulai playlist. Refresh antrean lalu coba lagi.');
+      } else if (!socketClient.requestControl('play_queue_item', { queueId: tracks[0].id, name: tracks[0].name })) {
+        throw new Error('Permintaan putar playlist tidak terkirim. Coba lagi.');
+      }
+      this.setView('home');
+    } catch (error) {
+      this.showUrlFeedback(error.message || 'Playlist gagal diputar.', 'error');
+    }
   }
 
   renderLibraryTracks(container, tracks = [], emptyMessage, playlistId = null) {
@@ -2150,7 +2221,7 @@ export class UIManager {
       container.append(this.createLibraryEmpty(emptyMessage));
       return;
     }
-    tracks.forEach(track => {
+    tracks.forEach((track, index) => {
       const row = document.createElement('div');
       row.className = 'library-track-row';
       const play = document.createElement('button');
@@ -2177,6 +2248,20 @@ export class UIManager {
       });
       row.append(like);
       if (playlistId) {
+        const reorder = (direction) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'library-action library-track-order';
+          button.textContent = direction < 0 ? '↑' : '↓';
+          button.disabled = direction < 0 ? index === 0 : index === tracks.length - 1;
+          button.setAttribute('aria-label', `${direction < 0 ? 'Naikkan' : 'Turunkan'} ${track.name || 'lagu'} dalam playlist`);
+          button.addEventListener('click', async () => {
+            await this.localLibrary.reorderPlaylist(playlistId, index, index + direction);
+            this.refreshLibrary();
+          });
+          return button;
+        };
+        row.append(reorder(-1), reorder(1));
         const remove = document.createElement('button');
         remove.type = 'button';
         remove.className = 'library-action';

@@ -283,6 +283,18 @@ export class LocalLibrary {
     });
   }
 
+  async reorderPlaylist(playlistId, fromIndex, toIndex) {
+    if (!Number.isInteger(fromIndex) || !Number.isInteger(toIndex)) return false;
+    const playlists = await this.getPlaylists();
+    const playlist = playlists.find(item => item.id === playlistId);
+    const tracks = [...(playlist?.tracks || [])];
+    if (!playlist || fromIndex < 0 || toIndex < 0 || fromIndex >= tracks.length || toIndex >= tracks.length) return false;
+    if (fromIndex === toIndex) return true;
+    const [track] = tracks.splice(fromIndex, 1);
+    tracks.splice(toIndex, 0, track);
+    return this.updatePlaylist(playlistId, { tracks });
+  }
+
   async deletePlaylist(playlistId) {
     const db = await this.open();
     if (db) {

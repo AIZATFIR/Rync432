@@ -34,6 +34,50 @@ describe('YouTube search queue UI', () => {
     expect(moveQueueItem(original, -1, 1)).toEqual(original);
   });
 
+  it('plays a playlist in its saved order from the personal queue', async () => {
+    const tracks = [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }];
+    const ui = new UIManager({ socketClient: { roomId: null } });
+    ui.renderQueue = vi.fn();
+    ui.playLibraryTrack = vi.fn().mockResolvedValue(undefined);
+
+    await ui.playPlaylist({ id: 'playlist-1', tracks });
+
+    expect(ui.soloQueue.map(track => track.id)).toEqual(['a', 'b']);
+    expect(ui.playLibraryTrack).toHaveBeenCalledWith(tracks[0]);
+  });
+
+  it('shuffles a playlist before saving and starting its personal queue', async () => {
+    const tracks = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+    const ui = new UIManager({ socketClient: { roomId: null } });
+    ui.renderQueue = vi.fn();
+    ui.playLibraryTrack = vi.fn().mockResolvedValue(undefined);
+
+    await ui.playPlaylist({ id: 'playlist-1', tracks }, { shuffle: true });
+
+    expect(ui.soloQueue.map(track => track.id)).toEqual(['b', 'c', 'a']);
+    expect(ui.playLibraryTrack).toHaveBeenCalledWith(ui.soloQueue[0]);
+    random.mockRestore();
+  });
+
+  it('syncs the full online playlist before a room host starts its first track', async () => {
+    const tracks = [{ id: 'yt_first', name: 'First', sourceType: 'youtube' }, { id: 'yt_second', name: 'Second', sourceType: 'youtube' }];
+    const socketClient = {
+      roomId: 'ROOM', isHost: true,
+      cloudMesh: { lastKnownQueue: [], waitForQueueItemAcknowledgement: vi.fn().mockResolvedValue(true) },
+      addToQueue: vi.fn().mockResolvedValue(true), playQueueItem: vi.fn().mockResolvedValue(tracks[0])
+    };
+    const ui = new UIManager({ socketClient });
+    ui.getDeviceName = () => 'Host';
+    ui.setView = vi.fn();
+
+    await ui.playPlaylist({ id: 'mix', tracks });
+
+    expect(socketClient.addToQueue.mock.calls.map(([track]) => track.id)).toEqual(['yt_first', 'yt_second']);
+    expect(socketClient.cloudMesh.waitForQueueItemAcknowledgement.mock.calls.map(([id]) => id)).toEqual(['yt_first', 'yt_second']);
+    expect(socketClient.playQueueItem).toHaveBeenCalledWith('yt_first', true);
+  });
+
   it('keeps solo YouTube selections in the local queue without creating a room', async () => {
     const mesh = { lastKnownTrack: null, loadTrackBuffer: vi.fn() };
     const socketClient = { roomId: null, cloudMesh: mesh };

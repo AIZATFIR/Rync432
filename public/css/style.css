@@ -1823,7 +1823,8 @@ body:not(.in-room) #activeRoomSection .btn-sync-mini { display: none !important;
 .library-row-meta { color: var(--text-subdued); font-size: 0.8rem; }
 .library-track-row { padding: 7px 10px; background: #11140f; }
 .library-track-play { flex: 1; min-width: 0; padding: 8px 4px; overflow: hidden; color: var(--text-base); background: transparent; border: 0; text-align: left; text-overflow: ellipsis; white-space: nowrap; font: inherit; cursor: pointer; }
-.library-action { min-height: 36px; padding: 0 10px; color: var(--text-muted); background: transparent; border: 1px solid var(--border-subtle); border-radius: 9px; font: inherit; font-size: 0.78rem; cursor: pointer; }
+.library-action { min-height: 44px; padding: 0 10px; color: var(--text-muted); background: transparent; border: 1px solid var(--border-subtle); border-radius: 9px; font: inherit; font-size: 0.78rem; cursor: pointer; }
+.library-track-order { min-width: 44px; padding: 0; font-size: 1rem; }
 .library-action:hover { color: var(--text-base); border-color: var(--border-light); }
 .library-action:disabled { opacity: 0.45; cursor: not-allowed; }
 .library-action.danger { color: #f09585; }
@@ -1864,7 +1865,7 @@ body.is-youtube-track .visualizer-container { display: none; }
   .devices-stage { display: none; }
   .library-heading-row { align-items: start; }
   .playlist-row { gap: 7px; }
-  .library-action { min-height: 40px; }
+  .library-action { min-height: 44px; }
 }
 
 @media (max-width: 480px) {
