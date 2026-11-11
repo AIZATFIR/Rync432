@@ -4,6 +4,8 @@ import { YouTubeEmbedPlayer } from '../public/js/music/YouTubeEmbedPlayer.js';
 afterEach(() => {
   delete globalThis.YT;
   delete globalThis.location;
+  delete globalThis.document;
+  delete globalThis.onYouTubeIframeAPIReady;
   vi.useRealTimers();
 });
 
@@ -30,6 +32,31 @@ function installFakePlayer() {
 }
 
 describe('YouTube embedded player adapter', () => {
+  it('creates one iframe player when concurrent requests arrive before the API loads', async () => {
+    const instances = [];
+    globalThis.YT = undefined;
+    globalThis.document = {
+      querySelector: () => null,
+      createElement: () => ({ set src(value) { this._src = value; }, async: false }),
+      head: { appendChild() {} }
+    };
+    const player = new YouTubeEmbedPlayer('youtubePlayerContainer');
+    const first = player.ensurePlayer();
+    const second = player.ensurePlayer();
+    class FakePlayer {
+      constructor(elementId, options) {
+        instances.push(this);
+        queueMicrotask(() => options.events.onReady({ target: this }));
+      }
+    }
+
+    globalThis.YT = { Player: FakePlayer };
+    globalThis.onYouTubeIframeAPIReady();
+    await Promise.all([first, second]);
+
+    expect(instances).toHaveLength(1);
+  });
+
   it('uses the official visible player with API origin, cues tracks, and schedules playback', async () => {
     const instances = installFakePlayer();
     const player = new YouTubeEmbedPlayer('youtubePlayerContainer');

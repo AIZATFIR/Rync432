@@ -45,44 +45,44 @@ export class YouTubeEmbedPlayer {
   }
 
   async ensurePlayer(videoId = '') {
-    if (this.player && this.readyPromise) {
-      await this.readyPromise;
-      if (videoId && videoId !== this.videoId) {
-        this.player.cueVideoById({ videoId });
-        this.videoId = videoId;
-      }
-      return this.player;
-    }
-    const YT = await loadIframeApi();
-    this.readyPromise = new Promise((resolve, reject) => {
-      this.player = new YT.Player(this.elementId, {
-        width: '480',
-        height: '270',
-        videoId: videoId || undefined,
-        playerVars: {
-          autoplay: 0,
-          controls: 1,
-          enablejsapi: 1,
-          playsinline: 1,
-          origin: globalThis.location?.origin || ''
-        },
-        events: {
-          onReady: event => resolve(event.target),
-          onStateChange: event => {
-            this.onStateChange(event.data, event.target);
+    if (!this.readyPromise) {
+      const initialVideoId = videoId;
+      this.readyPromise = loadIframeApi().then(YT => new Promise((resolve, reject) => {
+        this.player = new YT.Player(this.elementId, {
+          width: '480',
+          height: '270',
+          videoId: initialVideoId || undefined,
+          playerVars: {
+            autoplay: 0,
+            controls: 1,
+            enablejsapi: 1,
+            playsinline: 1,
+            origin: globalThis.location?.origin || ''
           },
-          onError: event => this.onError(event.data),
-          onAutoplayBlocked: () => this.onAutoplayBlocked()
-        }
+          events: {
+            onReady: event => {
+              this.videoId = initialVideoId || null;
+              resolve(event.target);
+            },
+            onStateChange: event => {
+              this.onStateChange(event.data, event.target);
+            },
+            onError: event => this.onError(event.data),
+            onAutoplayBlocked: () => this.onAutoplayBlocked()
+          }
+        });
+      })).catch(error => {
+        this.player = null;
+        this.readyPromise = null;
+        throw error;
       });
-    }).catch(error => {
-      this.player = null;
-      this.readyPromise = null;
-      throw error;
-    });
-    await this.readyPromise;
-    this.videoId = videoId || null;
-    return this.player;
+    }
+    const player = await this.readyPromise;
+    if (videoId && videoId !== this.videoId) {
+      player.cueVideoById({ videoId });
+      this.videoId = videoId;
+    }
+    return player;
   }
 
   async cueVideo(videoId, startSeconds = 0) {
