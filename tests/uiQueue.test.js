@@ -114,8 +114,13 @@ describe('YouTube search queue UI', () => {
     const next = { id: 'local-next', name: 'Local next', sourceType: 'local-file' };
     const order = [];
     const room = {
-      roomId: 'ROOM', isHost: true, nextTrack: vi.fn(async automatic => { order.push(['next', automatic]); }),
-      cloudMesh: { lastKnownTrack: current, lastKnownQueue: [current, next], localAudioBufferCache: new Map() }
+      roomId: 'ROOM', isHost: true, nextTrack: vi.fn(async (automatic, preparedId) => { order.push(['next', automatic, preparedId]); }),
+      cloudMesh: {
+        lastKnownTrack: current,
+        lastKnownQueue: [current, next],
+        localAudioBufferCache: new Map(),
+        previewNextTrack: vi.fn().mockResolvedValue(next)
+      }
     };
     const ui = new UIManager({ socketClient: room });
     const bytes = new ArrayBuffer(8);
@@ -127,7 +132,25 @@ describe('YouTube search queue UI', () => {
 
     await ui.advanceRoomTrack({ automatic: true });
 
-    expect(order).toEqual([['upload', 'local-next', bytes], ['next', true]]);
+    expect(order).toEqual([['upload', 'local-next', bytes], ['next', true, 'local-next']]);
+  });
+
+  it('uses the server preview for a shuffled local track and does not skip if that file is missing', async () => {
+    const picked = { id: 'server-picked-local', name: 'Picked', sourceType: 'local-file' };
+    const room = {
+      isHost: true,
+      nextTrack: vi.fn(),
+      cloudMesh: { previewNextTrack: vi.fn().mockResolvedValue(picked), localAudioBufferCache: new Map() }
+    };
+    const ui = new UIManager({ socketClient: room });
+    ui.showUrlFeedback = vi.fn();
+    ui.localLibrary.getLocalAudio = vi.fn().mockResolvedValue(null);
+
+    await ui.advanceRoomTrack({ automatic: true });
+
+    expect(room.cloudMesh.previewNextTrack).toHaveBeenCalledWith(true);
+    expect(room.nextTrack).not.toHaveBeenCalled();
+    expect(ui.showUrlFeedback).toHaveBeenCalledWith(expect.stringContaining('tidak tersedia'), 'error');
   });
 
   it('keeps solo YouTube selections in the local queue without creating a room', async () => {

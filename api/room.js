@@ -45,6 +45,45 @@ const freezeForStaleHost = (room, now) => {
   return true;
 };
 
+function chooseNextTrack(room, automatic, preparedTrackId) {
+  const queue = room.queue || [];
+  let nextTrack = null;
+  let playedIds = [...(room.shufflePlayedIds || [])];
+  if (automatic && room.repeatMode === 'one' && room.track) {
+    nextTrack = room.track;
+  } else if (queue.length > 0) {
+    const currentIndex = room.track ? queue.findIndex(item => item.id === room.track.id) : -1;
+    if (room.shuffle) {
+      const played = new Set(playedIds);
+      if (room.track?.id) played.add(room.track.id);
+      let candidates = queue.filter(item => !played.has(item.id));
+      if (!candidates.length && room.repeatMode === 'all') {
+        if (queue.length === 1) candidates = queue;
+        else candidates = queue.filter(item => item.id !== room.track?.id);
+        played.clear();
+        if (room.track?.id) played.add(room.track.id);
+      }
+      nextTrack = preparedTrackId
+        ? candidates.find(item => item.id === preparedTrackId) || null
+        : (candidates.length ? candidates[Math.floor(Math.random() * candidates.length)] : null);
+      if (nextTrack) played.add(nextTrack.id);
+      playedIds = [...played];
+    } else if (currentIndex < 0) {
+      nextTrack = queue[0];
+    } else if (currentIndex + 1 < queue.length) {
+      nextTrack = queue[currentIndex + 1];
+    } else if (room.repeatMode === 'all') {
+      nextTrack = queue[0];
+    }
+  }
+
+  return {
+    nextTrack,
+    playedIds,
+    preparedTrackChanged: !!preparedTrackId && nextTrack?.id !== preparedTrackId
+  };
+}
+
 const roomStorePath = !process.env.VERCEL && process.env.NODE_ENV !== 'test'
   ? (process.env.RYNC_ROOM_STORE_PATH || path.join(process.cwd(), 'data', 'rooms.json'))
   : null;
@@ -761,37 +800,32 @@ export default async function handler(req, res) {
     const room = rooms.get(roomId);
     if (!requireHost(room, body.hostToken)) return;
     if (room) {
-      const queue = room.queue || [];
-      let nextTrack = null;
-      if (body.automatic === true && room.repeatMode === 'one' && room.track) {
-        nextTrack = room.track;
-      } else if (queue.length > 0) {
-        const currentIndex = room.track ? queue.findIndex(q => q.id === room.track.id) : -1;
-        if (room.shuffle) {
-          const playedIds = new Set(room.shufflePlayedIds || (room.track?.id ? [room.track.id] : []));
-          if (room.track?.id) playedIds.add(room.track.id);
-          let candidates = queue.filter(item => !playedIds.has(item.id));
-          if (candidates.length === 0 && room.repeatMode === 'all') {
-            if (queue.length === 1) nextTrack = queue[0];
-            else {
-              playedIds.clear();
-              if (room.track?.id) playedIds.add(room.track.id);
-              candidates = queue.filter(item => !playedIds.has(item.id));
-            }
-          }
-          if (candidates.length > 0) {
-            nextTrack = candidates[Math.floor(Math.random() * candidates.length)];
-            playedIds.add(nextTrack.id);
-          }
-          room.shufflePlayedIds = [...playedIds];
-        } else if (currentIndex < 0) {
-          nextTrack = queue[0];
-        } else if (currentIndex + 1 < queue.length) {
-          nextTrack = queue[currentIndex + 1];
-        } else if (room.repeatMode === 'all') {
-          nextTrack = queue[0];
-        }
+      if (body.preparedTrackId !== undefined
+        && (typeof body.preparedTrackId !== 'string' || body.preparedTrackId.length > 160)) {
+        return res.status(400).json({ success: false, error: 'INVALID_PREPARED_TRACK' });
       }
+      const selection = chooseNextTrack(room, body.automatic === true, body.preparedTrackId);
+      if (body.previewOnly === true) {
+        return res.status(200).json({
+          success: true,
+          nextTrack: selection.nextTrack,
+          currentTrack: room.track,
+          queue: room.queue || [],
+          queueRevision: queueRevisionOf(room),
+          state: room.state
+        });
+      }
+      if (selection.preparedTrackChanged) {
+        return res.status(409).json({
+          success: false,
+          error: 'NEXT_TRACK_CHANGED',
+          track: room.track,
+          queue: room.queue || [],
+          queueRevision: queueRevisionOf(room)
+        });
+      }
+      const nextTrack = selection.nextTrack;
+      if (room.shuffle) room.shufflePlayedIds = selection.playedIds;
 
       if (nextTrack) {
         room.track = nextTrack;

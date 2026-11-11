@@ -24,6 +24,55 @@ function makeAudioChunkFrame(sequence, timestamp, bytes) {
 }
 
 describe('CloudMesh audio transfer', () => {
+  it('bounds a stalled next-track preview instead of waiting forever', async () => {
+    vi.useFakeTimers();
+    const mesh = new CloudMesh(() => {});
+    mesh.isHost = true;
+    vi.stubGlobal('fetch', () => new Promise(() => {}));
+    const preview = mesh.previewNextTrack();
+    const rejected = expect(preview).rejects.toThrow('QUEUE_MUTATION_TIMEOUT');
+
+    await vi.advanceTimersByTimeAsync(8_000);
+
+    await rejected;
+  });
+
+  it('returns the server-picked room candidate without mutating playback', async () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.isHost = true;
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'host';
+    mesh.hostToken = 'token';
+    const candidate = { id: 'shuffle-pick', sourceType: 'local-file' };
+    const request = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, nextTrack: candidate }) });
+    vi.stubGlobal('fetch', request);
+
+    await expect(mesh.previewNextTrack(true)).resolves.toEqual(candidate);
+
+    expect(JSON.parse(request.mock.calls[0][1].body)).toMatchObject({ automatic: true, previewOnly: true });
+    expect(mesh.lastKnownTrack).toBeNull();
+  });
+
+  it('does not broadcast a room advance after the prepared candidate becomes stale', async () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.isHost = true;
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'host';
+    mesh.hostToken = 'token';
+    mesh.applyCanonicalQueue = vi.fn();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false, status: 409,
+      json: async () => ({ error: 'NEXT_TRACK_CHANGED', queue: [{ id: 'new-next' }] })
+    }));
+
+    await expect(mesh.nextTrack(false, 'stale-next')).resolves.toBe(false);
+
+    expect(mesh.applyCanonicalQueue).toHaveBeenCalledWith([{ id: 'new-next' }]);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'QUEUE_SYNC_ERROR' }));
+    expect(events.some(event => event.type === 'SCHEDULED_PLAY')).toBe(false);
+  });
+
   it('routes YouTube tracks to the embed player without an audio fetch or P2P request', () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
@@ -866,6 +915,15 @@ describe('SocketClient room readiness', () => {
     client.nextTrack(true);
 
     expect(client.cloudMesh.nextTrack).toHaveBeenCalledWith(true);
+  });
+
+  it('forwards a prepared queue item when advancing the room', () => {
+    const client = new SocketClient(() => {});
+    client.cloudMesh.nextTrack = vi.fn();
+
+    client.nextTrack(true, 'local-next');
+
+    expect(client.cloudMesh.nextTrack).toHaveBeenCalledWith(true, 'local-next');
   });
 
   it('preserves the autoplay request when playing a queued item', () => {

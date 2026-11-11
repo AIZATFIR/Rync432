@@ -2454,21 +2454,12 @@ export class UIManager {
     const room = this.app.socketClient;
     if (!room?.isHost) return false;
     const mesh = room.cloudMesh;
-    const queue = mesh?.lastKnownQueue || this.cachedQueue || [];
-    const current = mesh?.lastKnownTrack || this.currentTrack;
-    let next = null;
-    if (automatic && this.repeatMode === 'one') next = current;
-    else if (mesh?.shuffle || this.shuffle) {
-      const played = new Set(mesh?.shufflePlayedIds || [current?.id]);
-      const candidates = queue.filter(item => !played.has(item.id));
-      if (candidates.length === 1) next = candidates[0];
-      else if (candidates.some(item => item.sourceType === 'local-file')) {
-        this.showUrlFeedback('Matikan Acak sebentar agar host bisa menyiapkan file lokal berikutnya.', 'error');
-        return false;
-      }
-    } else {
-      const index = queue.findIndex(item => item.id === current?.id);
-      next = queue[index < 0 ? 0 : index + 1] || ((this.repeatMode === 'all' || mesh?.repeatMode === 'all') ? queue[0] : null);
+    let next;
+    try {
+      next = await mesh.previewNextTrack(automatic);
+    } catch (error) {
+      this.showUrlFeedback(error.message || 'Lagu berikutnya gagal disiapkan.', 'error');
+      return false;
     }
     if (next?.sourceType === 'local-file' && !mesh?.localAudioBufferCache?.has(next.id)) {
       try {
@@ -2480,7 +2471,7 @@ export class UIManager {
         return false;
       }
     }
-    return room.nextTrack(automatic);
+    return room.nextTrack(automatic, next?.id || null);
   }
 
   async syncLocalQueueToRoom() {

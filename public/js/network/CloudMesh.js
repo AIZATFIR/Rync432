@@ -1323,15 +1323,42 @@ export class CloudMesh {
     }
   }
 
-  async nextTrack(automatic = false) {
+  async previewNextTrack(automatic = false) {
+    if (!this.isHost) return null;
+    const response = await fetchQueueMutation('/api/room?action=next_track', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomId: this.roomId,
+        peerId: this.peerId,
+        hostToken: this.hostToken,
+        automatic,
+        previewOnly: true
+      })
+    });
+    const data = await response.json();
+    if (!response.ok || data.success !== true) throw new Error('Kandidat lagu berikutnya gagal dimuat.');
+    return data.nextTrack || null;
+  }
+
+  async nextTrack(automatic = false, preparedTrackId = null) {
     if (!this.isHost) return;
     try {
-      const res = await fetch('/api/room?action=next_track', {
+      const res = await fetchQueueMutation('/api/room?action=next_track', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, automatic })
+        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, automatic, preparedTrackId: preparedTrackId || undefined })
       });
       const data = await res.json();
+      if (res.status === 409) {
+        this.applyCanonicalQueue(data.queue);
+        this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Antrean berubah saat menyiapkan lagu. Tekan Next lagi.' });
+        return false;
+      }
+      if (!res.ok || data.success === false) {
+        this.onEvent('QUEUE_SYNC_ERROR', { message: 'Lagu berikutnya gagal diputar. Coba lagi.' });
+        return false;
+      }
       if (data.track) {
         this.lastKnownTrack = data.track;
         this.isPaused = (data.state === 'PAUSED');
@@ -1368,7 +1395,14 @@ export class CloudMesh {
         this.broadcastDataChannelMessage({ type: 'PAUSED', ...payload });
         this.broadcastChannel?.postMessage({ type: 'PAUSED', payload });
       }
-    } catch (e) { }
+    } catch (error) {
+      this.onEvent('QUEUE_SYNC_ERROR', {
+        message: error.name === 'TimeoutError'
+          ? 'Room lambat merespons. Status antrean sedang diperbarui.'
+          : 'Lagu berikutnya gagal diputar. Coba lagi.'
+      });
+      return false;
+    }
   }
 
   async prevTrack() {

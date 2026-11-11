@@ -176,8 +176,9 @@ export class SocketClient {
     return this.cloudMesh.restoreQueue(removed);
   }
 
-  nextTrack(automatic = false) {
-    this.cloudMesh.nextTrack(automatic);
+  nextTrack(automatic = false, preparedTrackId = null) {
+    if (preparedTrackId) return this.cloudMesh.nextTrack(automatic, preparedTrackId);
+    return this.cloudMesh.nextTrack(automatic);
   }
 
   updatePlaybackOptions(options) {

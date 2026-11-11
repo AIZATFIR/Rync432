@@ -703,6 +703,53 @@ describe('room authority', () => {
     expect(shuffled.body.track.id).not.toBe('current');
   });
 
+  it('previews the server-selected shuffled item and commits that same prepared item', async () => {
+    const roomId = `P${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
+      { id: 'current', name: 'Current' }, { id: 'local-next', name: 'Local', sourceType: 'local-file' }, { id: 'online-next', name: 'Online' }
+    ] });
+    await callRoom('track', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, track: { id: 'current', name: 'Current' } });
+    await callRoom('playback_options', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, repeatMode: 'off', shuffle: true });
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+    try {
+      const preview = await callRoom('next_track', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, previewOnly: true });
+      expect(preview.body.nextTrack.id).toBe('local-next');
+      expect(preview.body.currentTrack.id).toBe('current');
+      expect(preview.body.state).toBe('IDLE');
+
+      const committed = await callRoom('next_track', {
+        roomId, peerId: 'host-peer', hostToken: created.body.hostToken, preparedTrackId: 'local-next'
+      });
+      expect(committed.body.track.id).toBe('local-next');
+      expect(committed.body.state).toBe('PLAYING');
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  it('rejects a prepared track when the ordered queue changes before commit', async () => {
+    const roomId = `Q${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
+      { id: 'current', name: 'Current' }, { id: 'first-next', name: 'First next' }, { id: 'other', name: 'Other' }
+    ] });
+    await callRoom('track', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, track: { id: 'current', name: 'Current' } });
+    await callRoom('reorder_queue', {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken,
+      queue: [{ id: 'current' }, { id: 'other' }, { id: 'first-next' }]
+    });
+
+    const staleCommit = await callRoom('next_track', {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken, preparedTrackId: 'first-next'
+    });
+
+    expect(staleCommit.statusCode).toBe(409);
+    expect(staleCommit.body.error).toBe('NEXT_TRACK_CHANGED');
+    const snapshot = await callRoom('poll', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken });
+    expect(snapshot.body.track.id).toBe('current');
+  });
+
   it('plays each queued track once before stopping when shuffle is on and repeat is off', async () => {
     const roomId = `H${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
