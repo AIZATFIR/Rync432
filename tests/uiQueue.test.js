@@ -184,6 +184,113 @@ describe('YouTube search queue UI', () => {
     expect(mesh.streamAudioToRoom).toHaveBeenCalledTimes(1);
   });
 
+  it('pauses a solo local track locally instead of sending a room control request', () => {
+    const track = { id: 'local-pause', sourceType: 'local-file' };
+    const socketClient = { roomId: null, isHost: false, requestControl: vi.fn() };
+    const audioEngine = {
+      ensureContext: vi.fn(),
+      getCurrentPlaybackPosition: vi.fn().mockReturnValue(7.5),
+      stopLocalPlayback: vi.fn(),
+      pauseOffsetSec: 0
+    };
+    const ui = new UIManager({ socketClient, audioEngine });
+    ui.currentTrack = track;
+    ui.isPlayingState = true;
+    ui.setPlayState = vi.fn();
+
+    ui.togglePlayback();
+
+    expect(audioEngine.stopLocalPlayback).toHaveBeenCalled();
+    expect(audioEngine.pauseOffsetSec).toBe(7.5);
+    expect(socketClient.requestControl).not.toHaveBeenCalled();
+    expect(ui.setPlayState).toHaveBeenCalledWith(false);
+  });
+
+  it('changes solo repeat and shuffle locally without a room request', () => {
+    const socketClient = { roomId: null, isHost: false, requestControl: vi.fn() };
+    const ui = new UIManager({ socketClient });
+    ui.setPlaybackOptions = vi.fn();
+
+    ui.requestPlaybackOptions({ shuffle: true, repeatMode: 'all' });
+
+    expect(ui.setPlaybackOptions).toHaveBeenCalledWith({ shuffle: true, repeatMode: 'all' });
+    expect(socketClient.requestControl).not.toHaveBeenCalled();
+  });
+
+  it('resumes a paused solo local track at its saved position', () => {
+    const socketClient = { roomId: null, isHost: false, clockSync: { getServerTime: () => 2000 }, requestControl: vi.fn() };
+    const audioEngine = {
+      ensureContext: vi.fn(),
+      audioBuffer: {},
+      pauseOffsetSec: 7.5,
+      schedulePlayAtServerTime: vi.fn()
+    };
+    const ui = new UIManager({ socketClient, audioEngine });
+    ui.currentTrack = { id: 'local-resume', sourceType: 'local-file' };
+    ui.setPlayState = vi.fn();
+
+    ui.togglePlayback();
+
+    expect(audioEngine.schedulePlayAtServerTime).toHaveBeenCalledWith(2050, 7.5);
+    expect(socketClient.requestControl).not.toHaveBeenCalled();
+    expect(ui.setPlayState).toHaveBeenCalledWith(true);
+  });
+
+  it('seeks a playing solo local track by rescheduling locally', () => {
+    const socketClient = { roomId: null, clockSync: { getServerTime: () => 3000 }, requestControl: vi.fn() };
+    const audioEngine = { currentTrackDuration: 120, pauseOffsetSec: 0, schedulePlayAtServerTime: vi.fn() };
+    const ui = new UIManager({ socketClient, audioEngine });
+    ui.currentTrack = { id: 'local-seek', sourceType: 'local-file' };
+    ui.isPlayingState = true;
+
+    ui.seekPlaybackTo(42);
+
+    expect(audioEngine.pauseOffsetSec).toBe(42);
+    expect(audioEngine.schedulePlayAtServerTime).toHaveBeenCalledWith(3050, 42);
+    expect(socketClient.requestControl).not.toHaveBeenCalled();
+  });
+
+  it('reorders a solo queue locally without calling room APIs', () => {
+    const storage = { setItem: vi.fn() };
+    vi.stubGlobal('localStorage', storage);
+    const socketClient = { roomId: null, isHost: false, reorderQueue: vi.fn() };
+    const ui = new UIManager({ socketClient });
+    ui.renderQueue = vi.fn();
+    const reordered = [{ id: 'b' }, { id: 'a' }];
+
+    ui.commitQueueReorder(reordered);
+
+    expect(ui.soloQueue).toEqual(reordered);
+    expect(storage.setItem).toHaveBeenCalledWith('rync_solo_queue', JSON.stringify(reordered));
+    expect(socketClient.reorderQueue).not.toHaveBeenCalled();
+  });
+
+  it('clears and restores upcoming solo tracks in their original order', async () => {
+    const values = {};
+    vi.stubGlobal('localStorage', { setItem: (key, value) => { values[key] = value; } });
+    const current = { id: 'current', name: 'Current' };
+    const first = { id: 'first', name: 'First' };
+    const last = { id: 'last', name: 'Last' };
+    const socketClient = { roomId: null, isHost: false, cloudMesh: {} };
+    const ui = new UIManager({ socketClient });
+    ui.currentTrack = current;
+    ui.soloQueue = [first, current, last];
+    ui.cachedQueue = [...ui.soloQueue];
+    ui.elements.queueUndoBar = { hidden: true };
+    ui.renderQueue = queue => { ui.cachedQueue = queue; };
+
+    await ui.clearUpcomingQueue();
+
+    expect(ui.soloQueue).toEqual([current]);
+    expect(ui.pendingQueueUndo).toEqual([{ item: first, index: 0 }, { item: last, index: 2 }]);
+    await ui.restoreQueueUndo();
+    clearTimeout(ui.pendingQueueUndoTimer);
+
+    expect(ui.soloQueue).toEqual([first, current, last]);
+    expect(JSON.parse(values.rync_solo_queue)).toEqual([first, current, last]);
+    expect(socketClient.clearQueue).toBeUndefined();
+  });
+
   it('waits for room track selection before scheduling an already playing solo track', async () => {
     const track = { id: 'yt_dQw4w9WgXcQ', name: 'Song', sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ' };
     const selected = vi.fn().mockResolvedValue(track);
@@ -464,7 +571,7 @@ describe('YouTube search queue UI', () => {
 
   it('sends a playback mode request from a guest to the host', () => {
     const requestControl = vi.fn();
-    const ui = new UIManager({ socketClient: { isHost: false, requestControl } });
+    const ui = new UIManager({ socketClient: { roomId: 'ROOM', isHost: false, requestControl } });
 
     ui.requestPlaybackOptions({ repeatMode: 'all' });
 

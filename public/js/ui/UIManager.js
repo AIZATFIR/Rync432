@@ -267,14 +267,7 @@ export class UIManager {
 
     elements.miniPlayerOpenBtn?.addEventListener('click', () => this.setView('home'));
     elements.clearUpcomingBtn?.addEventListener('click', () => this.clearUpcomingQueue());
-    elements.queueUndoBtn?.addEventListener('click', async () => {
-      if (!this.pendingQueueUndo) return;
-      const removed = this.pendingQueueUndo;
-      this.pendingQueueUndo = null;
-      clearTimeout(this.pendingQueueUndoTimer);
-      if (elements.queueUndoBar) elements.queueUndoBar.hidden = true;
-      await app.socketClient.restoreQueue(removed);
-    });
+    elements.queueUndoBtn?.addEventListener('click', () => this.restoreQueueUndo());
     elements.miniPlayerPlayBtn?.addEventListener('click', () => this.togglePlayback());
     elements.miniPlayerSeek?.addEventListener('input', () => { this.isMiniSeeking = true; });
     elements.miniPlayerSeek?.addEventListener('change', event => {
@@ -282,13 +275,7 @@ export class UIManager {
       const duration = this.app.audioEngine?.currentTrackDuration || 0;
       const target = (Number(event.target.value) / 1000) * duration;
       if (!duration) return;
-      if (this.currentTrack?.sourceType === 'youtube' && !this.app.socketClient.roomId) {
-        this.app.youtubePlayer?.seekTo(target);
-        return;
-      }
-      if (!this.app.socketClient.isHost) this.app.socketClient.requestControl('seek', { position: target });
-      else if (this.currentTrack?.sourceType === 'youtube') this.app.socketClient.seekPlayback(target);
-      else this.app.socketClient.schedulePlay(800, target);
+      this.seekPlaybackTo(target);
     });
 
     elements.favoriteTrackBtn?.addEventListener('click', async () => {
@@ -552,16 +539,7 @@ export class UIManager {
         const clickX = e.clientX - rect.left;
         const pct = Math.max(0, Math.min(1, clickX / rect.width));
         const targetSec = pct * app.audioEngine.currentTrackDuration;
-        if (this.currentTrack?.sourceType === 'youtube' && !app.socketClient.roomId) {
-          app.youtubePlayer?.seekTo(targetSec);
-          return;
-        }
-        if (!app.socketClient.isHost) {
-          app.socketClient.requestControl('seek', { position: targetSec });
-          return;
-        }
-        if (this.currentTrack?.sourceType === 'youtube') app.socketClient.seekPlayback(targetSec);
-        else app.socketClient.schedulePlay(800, targetSec);
+        this.seekPlaybackTo(targetSec);
       });
     }
 
@@ -1321,20 +1299,63 @@ export class UIManager {
   }
 
   async clearUpcomingQueue() {
-    if (!this.app.socketClient?.isHost) return;
-    const currentTrack = this.app.socketClient.cloudMesh?.lastKnownTrack;
+    const socketClient = this.app.socketClient;
+    const inRoom = Boolean(socketClient?.roomId);
+    if (inRoom && !socketClient.isHost) return;
+    const currentTrack = inRoom ? socketClient.cloudMesh?.lastKnownTrack : this.currentTrack;
     const upcoming = upcomingQueueItems(this.cachedQueue, currentTrack?.id, currentTrack?.name);
     if (!upcoming.length) return;
-    const result = await this.app.socketClient.clearQueue(upcoming.map(item => item.id));
-    if (!result?.removed?.length) return;
+    let removed;
+    if (inRoom) {
+      const result = await socketClient.clearQueue(upcoming.map(item => item.id));
+      removed = result?.removed;
+    } else {
+      const upcomingIds = new Set(upcoming.map(item => item.id));
+      removed = this.cachedQueue
+        .map((item, index) => ({ item, index }))
+        .filter(entry => upcomingIds.has(entry.item.id));
+      this.soloQueue = this.soloQueue.filter(item => !upcomingIds.has(item.id));
+      try { localStorage.setItem('rync_solo_queue', JSON.stringify(this.soloQueue)); } catch (error) {}
+      this.renderQueue(this.soloQueue);
+    }
+    if (!removed?.length) return;
 
     clearTimeout(this.pendingQueueUndoTimer);
-    this.pendingQueueUndo = result.removed;
+    this.pendingQueueUndo = removed;
     if (this.elements.queueUndoBar) this.elements.queueUndoBar.hidden = false;
     this.pendingQueueUndoTimer = setTimeout(() => {
       this.pendingQueueUndo = null;
       if (this.elements.queueUndoBar) this.elements.queueUndoBar.hidden = true;
     }, 8000);
+  }
+
+  async restoreQueueUndo() {
+    if (!this.pendingQueueUndo) return;
+    const removed = this.pendingQueueUndo;
+    this.pendingQueueUndo = null;
+    clearTimeout(this.pendingQueueUndoTimer);
+    if (this.elements.queueUndoBar) this.elements.queueUndoBar.hidden = true;
+    if (!this.app.socketClient.roomId) {
+      const restoredQueue = [...this.soloQueue];
+      [...removed].sort((a, b) => a.index - b.index).forEach(entry => {
+        restoredQueue.splice(Math.min(entry.index, restoredQueue.length), 0, entry.item);
+      });
+      this.soloQueue = restoredQueue;
+      try { localStorage.setItem('rync_solo_queue', JSON.stringify(restoredQueue)); } catch (error) {}
+      this.renderQueue(restoredQueue);
+    } else {
+      await this.app.socketClient.restoreQueue(removed);
+    }
+  }
+
+  commitQueueReorder(queue) {
+    this.renderQueue(queue);
+    if (this.app.socketClient.roomId) {
+      this.app.socketClient.reorderQueue(queue);
+      return;
+    }
+    this.soloQueue = queue;
+    try { localStorage.setItem('rync_solo_queue', JSON.stringify(queue)); } catch (error) {}
   }
 
   renderQueue(queue = []) {
@@ -1347,9 +1368,11 @@ export class UIManager {
       this.elements.queueCountBadge.innerText = `${queue.length} lagu`;
     }
     const currentTrack = this.app.socketClient?.cloudMesh?.lastKnownTrack;
-    const upcoming = upcomingQueueItems(queue, currentTrack?.id, currentTrack?.name);
+    const isInRoom = Boolean(this.app.socketClient?.roomId);
+    const activeTrack = isInRoom ? currentTrack : this.currentTrack;
+    const upcoming = upcomingQueueItems(queue, activeTrack?.id, activeTrack?.name);
     if (this.elements.clearUpcomingBtn) {
-      this.elements.clearUpcomingBtn.hidden = !this.app.socketClient?.isHost || upcoming.length === 0;
+      this.elements.clearUpcomingBtn.hidden = (isInRoom && !this.app.socketClient?.isHost) || upcoming.length === 0;
     }
 
     if (queue.length === 0) {
@@ -1359,13 +1382,13 @@ export class UIManager {
 
     container.innerHTML = '';
     const currentTrackName = this.app.audioEngine?.currentTrackName || '';
-    const currentTrackId = this.app.socketClient?.cloudMesh?.lastKnownTrack?.id || '';
+    const currentTrackId = activeTrack?.id || '';
 
     queue.forEach((item, index) => {
       const isCurrent = currentTrackId ? (item.id === currentTrackId) : (currentTrackName && item.name === currentTrackName);
       const div = document.createElement('div');
       div.className = `queue-item ${isCurrent ? 'active-track' : ''}`;
-      div.setAttribute('draggable', String(!!this.app.socketClient?.isHost));
+      div.setAttribute('draggable', String(!isInRoom || !!this.app.socketClient?.isHost));
       div.dataset.index = index;
       div.dataset.id = item.id;
 
@@ -1539,15 +1562,11 @@ export class UIManager {
 
       div.addEventListener('drop', (e) => {
         e.preventDefault();
-        if (!this.app.socketClient.isHost) return;
+        if (this.app.socketClient.roomId && !this.app.socketClient.isHost) return;
         const fromIdx = this.draggedIndex;
         const toIdx = index;
         if (fromIdx !== null && fromIdx !== undefined && fromIdx !== toIdx) {
-          const newQueue = [...this.cachedQueue];
-          const [movedItem] = newQueue.splice(fromIdx, 1);
-          newQueue.splice(toIdx, 0, movedItem);
-          this.renderQueue(newQueue);
-          this.app.socketClient.reorderQueue(newQueue);
+          this.commitQueueReorder(moveQueueItem(this.cachedQueue, fromIdx, toIdx));
         }
       });
 
@@ -1566,7 +1585,7 @@ export class UIManager {
       };
 
       div.addEventListener('touchstart', (e) => {
-        if (!this.app.socketClient.isHost || !e.target.closest('.drag-handle')) return;
+        if ((this.app.socketClient.roomId && !this.app.socketClient.isHost) || !e.target.closest('.drag-handle')) return;
         startY = e.touches[0].clientY;
         touchTargetIndex = index;
         touchTimer = setTimeout(() => {
@@ -1600,8 +1619,7 @@ export class UIManager {
         clearTouchDrag();
         if (fromIndex === toIndex) return;
         const newQueue = moveQueueItem(this.cachedQueue, fromIndex, toIndex);
-        this.renderQueue(newQueue);
-        this.app.socketClient.reorderQueue(newQueue);
+        this.commitQueueReorder(newQueue);
       });
 
       div.addEventListener('touchcancel', clearTouchDrag);
@@ -2360,6 +2378,10 @@ export class UIManager {
   }
 
   requestPlaybackOptions(options) {
+    if (!this.app.socketClient?.roomId) {
+      this.setPlaybackOptions(options);
+      return;
+    }
     if (!this.app.socketClient?.isHost) {
       this.app.socketClient?.requestControl('playback_options', options);
       return;
@@ -2404,6 +2426,28 @@ export class UIManager {
       }
       return;
     }
+    if (!socketClient.roomId) {
+      audioEngine.ensureContext();
+      if (this.isPlayingState) {
+        const position = audioEngine.getCurrentPlaybackPosition();
+        audioEngine.stopLocalPlayback();
+        audioEngine.pauseOffsetSec = position;
+        this.setPlayState(false);
+        return;
+      }
+      if (!audioEngine.audioBuffer) {
+        if (this.currentTrack?.id) {
+          this.playLibraryTrack(this.currentTrack);
+          return;
+        }
+        this.showUrlFeedback('Pilih lagu dari Search untuk mulai memutar.', 'info');
+        return;
+      }
+      const targetTime = (socketClient.clockSync?.getServerTime?.() || Date.now()) + 50;
+      audioEngine.schedulePlayAtServerTime(targetTime, audioEngine.pauseOffsetSec || 0);
+      this.setPlayState(true);
+      return;
+    }
     if (!socketClient.isHost) {
       socketClient.requestControl(this.isPlayingState ? 'pause' : 'play');
       return;
@@ -2429,6 +2473,31 @@ export class UIManager {
       ? this.app.youtubePlayer?.getCurrentTime() || audioEngine.pauseOffsetSec || 0
       : audioEngine.pauseOffsetSec || 0;
     socketClient.schedulePlay(800, offset);
+  }
+
+  seekPlaybackTo(position) {
+    const { audioEngine, socketClient } = this.app;
+    const duration = Number(audioEngine.currentTrackDuration) || 0;
+    const target = Math.max(0, Math.min(duration || Number(position) || 0, Number(position) || 0));
+    if (!socketClient.roomId) {
+      if (this.currentTrack?.sourceType === 'youtube') {
+        this.app.youtubePlayer?.seekTo(target);
+      } else {
+        audioEngine.pauseOffsetSec = target;
+        if (this.isPlayingState) {
+          const targetTime = (socketClient.clockSync?.getServerTime?.() || Date.now()) + 50;
+          audioEngine.schedulePlayAtServerTime(targetTime, target);
+        }
+      }
+      return true;
+    }
+    if (!socketClient.isHost) {
+      socketClient.requestControl('seek', { position: target });
+      return true;
+    }
+    if (this.currentTrack?.sourceType === 'youtube') socketClient.seekPlayback(target);
+    else socketClient.schedulePlay(800, target);
+    return true;
   }
 
   renderPeerList(peers = []) {
