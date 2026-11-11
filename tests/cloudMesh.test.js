@@ -232,6 +232,94 @@ describe('CloudMesh audio transfer', () => {
     expect(channel.sent.some(message => JSON.parse(message).type === 'AUDIO_HEADER')).toBe(false);
   });
 
+  it('rejects oversized P2P audio headers before allocating transfer state', () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    const channel = makeChannel();
+    mesh.setupDataChannel('peer-2', channel);
+
+    channel.onmessage({ data: JSON.stringify({
+      type: 'AUDIO_HEADER', name: 'Too large', id: 'huge', totalBytes: 64 * 1024 * 1024 + 1, totalChunks: 2049
+    }) });
+
+    expect(mesh.incomingAudioChunks.has('peer-2')).toBe(false);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'AUDIO_TRANSFER_PROGRESS',
+      payload: expect.objectContaining({ status: expect.stringContaining('terlalu besar') })
+    }));
+  });
+
+  it('rejects P2P chunks that exceed their declared transfer size', () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    const channel = makeChannel();
+    mesh.setupDataChannel('peer-2', channel);
+    channel.onmessage({ data: JSON.stringify({
+      type: 'AUDIO_HEADER', name: 'Track', id: 'track-1', totalBytes: 1, totalChunks: 1
+    }) });
+
+    channel.onmessage({ data: new ArrayBuffer(2) });
+
+    expect(mesh.incomingAudioChunks.has('peer-2')).toBe(false);
+    expect(events.some(event => event.type === 'BINARY_AUDIO_RECEIVED')).toBe(false);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'AUDIO_TRANSFER_PROGRESS', payload: expect.objectContaining({ status: 'Paket audio P2P tidak valid.' })
+    }));
+  });
+
+  it('clears a partial audio transfer and reports failure when the peer disconnects', () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.updateLoadingState = vi.fn();
+    const channel = makeChannel();
+    mesh.setupDataChannel('peer-2', channel);
+    channel.onmessage({ data: JSON.stringify({
+      type: 'AUDIO_HEADER', name: 'Track', id: 'track-1', totalBytes: 8, totalChunks: 1
+    }) });
+
+    channel.onclose();
+
+    expect(mesh.incomingAudioChunks.has('peer-2')).toBe(false);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'AUDIO_TRANSFER_PROGRESS',
+      payload: expect.objectContaining({ status: 'Koneksi P2P terputus. Coba lagi.' })
+    }));
+  });
+
+  it('does not send a P2P buffer above the configured size limit', async () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    const channel = makeChannel();
+
+    await mesh.streamAudioToPeer(channel, { byteLength: 64 * 1024 * 1024 + 1 }, 'Huge', 'huge');
+
+    expect(channel.sent).toEqual([]);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'AUDIO_TRANSFER_PROGRESS', payload: expect.objectContaining({ status: expect.stringContaining('terlalu besar') })
+    }));
+  });
+
+  it('does not start overlapping P2P sends while a track transfer is in flight', async () => {
+    vi.useFakeTimers();
+    const mesh = new CloudMesh(() => {});
+    const channel = makeChannel();
+    let finishTransfer;
+    const transfer = vi.fn(() => new Promise(resolve => { finishTransfer = resolve; }));
+    mesh.streamAudioToPeer = transfer;
+    mesh.localAudioBufferCache.set('track-1', new ArrayBuffer(16));
+    mesh.localAudioBufferCache.set('track-2', new ArrayBuffer(16));
+    mesh.setupDataChannel('peer-2', channel);
+
+    channel.onmessage({ data: JSON.stringify({ type: 'REQUEST_AUDIO_BUFFER', trackId: 'track-1', trackName: 'Track 1' }) });
+    await vi.advanceTimersByTimeAsync(1600);
+    channel.onmessage({ data: JSON.stringify({ type: 'REQUEST_AUDIO_BUFFER', trackId: 'track-2', trackName: 'Track 2' }) });
+
+    expect(transfer).toHaveBeenCalledOnce();
+    expect(transfer).toHaveBeenCalledWith(channel, expect.any(ArrayBuffer), 'Track 1', 'track-1');
+    finishTransfer();
+    await Promise.resolve();
+  });
+
   it('does not serve a same-title buffer for a different requested track id', () => {
     const mesh = new CloudMesh(() => {});
     mesh.isHost = true;

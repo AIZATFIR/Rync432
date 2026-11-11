@@ -1,6 +1,9 @@
 // CloudMesh: High-Precision WebRTC Local Mesh + Serverless Edge Relay
 // Connects Laptop & Mobile Phones with Sub-Millisecond Clock Alignment
 
+const P2P_AUDIO_CHUNK_BYTES = 32 * 1024;
+const MAX_P2P_AUDIO_BYTES = 64 * 1024 * 1024;
+
 export class CloudMesh {
   constructor(onEvent) {
     this.onEvent = onEvent;
@@ -28,6 +31,7 @@ export class CloudMesh {
     this.incomingAudioChunks = new Map();
     this.currentAudioArrayBuffer = null;
     this.localAudioBufferCache = new Map();
+    this.activeBufferTransfers = new WeakSet();
     this.deletedQueueIds = new Set();
 
     // Real-Time Pub/Sub Cloud Bus (EMQX / MQTT over WebSockets)
@@ -1536,7 +1540,7 @@ export class CloudMesh {
         }));
         const activeBuffer = targetTrack && (this.localAudioBufferCache.get(targetTrack.id) || (!targetTrack.id && this.localAudioBufferCache.get(targetTrack.name)) || (targetTrack.audioUrl && this.localAudioBufferCache.get(targetTrack.audioUrl)));
         if (activeBuffer && (activeBuffer instanceof ArrayBuffer || activeBuffer.byteLength)) {
-          this.streamAudioToPeer(channel, activeBuffer, targetTrack?.name || 'Uploaded Track', targetTrack?.id || '');
+          this.sendAudioTransferToPeer(channel, activeBuffer, targetTrack?.name || 'Uploaded Track', targetTrack?.id || '');
         }
       } else {
         const reqTrack = this.pendingTrackBufferRequest || this.lastKnownTrack;
@@ -1564,6 +1568,20 @@ export class CloudMesh {
           } else if (msg.type === 'CONTROL_REQUEST') {
             this.receiveControlRequest(msg);
           } else if (msg.type === 'AUDIO_HEADER') {
+            const validHeader = Number.isSafeInteger(msg.totalBytes)
+              && msg.totalBytes > 0
+              && msg.totalBytes <= MAX_P2P_AUDIO_BYTES
+              && Number.isSafeInteger(msg.totalChunks)
+              && msg.totalChunks === Math.ceil(msg.totalBytes / P2P_AUDIO_CHUNK_BYTES)
+              && typeof msg.name === 'string'
+              && msg.name.length <= 200
+              && (msg.id === undefined || (typeof msg.id === 'string' && msg.id.length <= 160));
+            if (!validHeader) {
+              this.failIncomingAudioTransfer(targetPeerId, msg.id || '', msg.totalBytes > MAX_P2P_AUDIO_BYTES
+                ? 'Audio terlalu besar untuk transfer P2P (maks. 64 MiB).'
+                : 'Header transfer P2P tidak valid.', msg.name || '');
+              return;
+            }
             this.incomingAudioChunks.set(targetPeerId, {
               name: msg.name,
               id: msg.id,
@@ -1616,7 +1634,7 @@ export class CloudMesh {
               || (msg.audioUrl && this.localAudioBufferCache.get(msg.audioUrl));
             if (cached && (cached instanceof ArrayBuffer || cached.byteLength)) {
               this.lastSentBufferPerPeer.set(peerKey, now);
-              this.streamAudioToPeer(channel, cached, msg.trackName || this.lastKnownTrack?.name || 'Uploaded Track', msg.trackId || this.lastKnownTrack?.id || '');
+              this.sendAudioTransferToPeer(channel, cached, msg.trackName || this.lastKnownTrack?.name || 'Uploaded Track', msg.trackId || this.lastKnownTrack?.id || '');
             }
           }
         } catch (e) { }
@@ -1626,12 +1644,23 @@ export class CloudMesh {
       if (event.data instanceof ArrayBuffer) {
         const stream = this.incomingAudioChunks.get(targetPeerId);
         if (stream) {
+          if (event.data.byteLength === 0
+            || event.data.byteLength > P2P_AUDIO_CHUNK_BYTES
+            || stream.receivedBytes + event.data.byteLength > stream.totalBytes
+            || stream.chunks.length >= stream.totalChunks) {
+            this.failIncomingAudioTransfer(targetPeerId, stream.id, 'Paket audio P2P tidak valid.', stream.name);
+            return;
+          }
           stream.chunks.push(event.data);
           stream.receivedBytes += event.data.byteLength;
           const pct = Math.min(99, Math.round((stream.receivedBytes / stream.totalBytes) * 100));
           this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct, status: `Menerima P2P (${pct}%)...` });
 
-          if (stream.chunks.length >= stream.totalChunks || stream.receivedBytes >= stream.totalBytes) {
+          if (stream.chunks.length === stream.totalChunks) {
+            if (stream.receivedBytes !== stream.totalBytes) {
+              this.failIncomingAudioTransfer(targetPeerId, stream.id, 'Transfer audio P2P terpotong.', stream.name);
+              return;
+            }
             const completeBuffer = new Uint8Array(stream.receivedBytes);
             let offset = 0;
             for (const c of stream.chunks) {
@@ -1663,6 +1692,10 @@ export class CloudMesh {
 
     channel.onclose = () => {
       this.dataChannels.delete(targetPeerId);
+      const pendingTransfer = this.incomingAudioChunks.get(targetPeerId);
+      if (pendingTransfer) {
+        this.failIncomingAudioTransfer(targetPeerId, pendingTransfer.id, 'Koneksi P2P terputus. Coba lagi.', pendingTransfer.name);
+      }
     };
   }
 
@@ -1758,16 +1791,30 @@ export class CloudMesh {
     this.currentAudioArrayBuffer = arrayBuffer;
     this.dataChannels.forEach((channel) => {
       if (channel.readyState === 'open') {
-        this.streamAudioToPeer(channel, arrayBuffer, trackName, trackId);
+        this.sendAudioTransferToPeer(channel, arrayBuffer, trackName, trackId);
       }
     });
   }
 
+  sendAudioTransferToPeer(channel, arrayBuffer, trackName = 'Uploaded Track', trackId = '') {
+    if (!channel || channel.readyState !== 'open') return Promise.resolve(false);
+    if (this.activeBufferTransfers.has(channel)) return Promise.resolve(false);
+    this.activeBufferTransfers.add(channel);
+    return Promise.resolve(this.streamAudioToPeer(channel, arrayBuffer, trackName, trackId))
+      .finally(() => {
+        this.activeBufferTransfers.delete(channel);
+      });
+  }
+
   async streamAudioToPeer(channel, arrayBuffer, trackName = 'Uploaded Track', trackId = '') {
     if (!channel || channel.readyState !== 'open' || !arrayBuffer) return;
-    const chunkSize = 32 * 1024;
     const totalBytes = arrayBuffer.byteLength;
-    const totalChunks = Math.ceil(totalBytes / chunkSize);
+    if (!Number.isSafeInteger(totalBytes) || totalBytes <= 0 || totalBytes > MAX_P2P_AUDIO_BYTES) {
+      this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status: 'Audio terlalu besar untuk transfer P2P (maks. 64 MiB).' });
+      this.broadcastReadiness('FAILED', trackId);
+      return;
+    }
+    const totalChunks = Math.ceil(totalBytes / P2P_AUDIO_CHUNK_BYTES);
 
     try {
       channel.send(JSON.stringify({
@@ -1778,19 +1825,32 @@ export class CloudMesh {
         totalChunks
       }));
 
-      for (let offset = 0; offset < totalBytes; offset += chunkSize) {
+      for (let offset = 0; offset < totalBytes; offset += P2P_AUDIO_CHUNK_BYTES) {
         if (channel.readyState !== 'open') break;
 
         while (channel.bufferedAmount > 512 * 1024 && channel.readyState === 'open') {
           await new Promise(r => setTimeout(r, 15));
         }
 
-        const chunk = arrayBuffer.slice(offset, offset + chunkSize);
+        const chunk = arrayBuffer.slice(offset, offset + P2P_AUDIO_CHUNK_BYTES);
         channel.send(chunk);
       }
     } catch (e) {
       console.warn('P2P stream notice:', e.message);
     }
+  }
+
+  failIncomingAudioTransfer(peerId, trackId, status, trackName = '') {
+    this.incomingAudioChunks.delete(peerId);
+    const trackKey = trackId || trackName;
+    if (this.peerBufferRequestInterval && this.peerBufferRequestTrackKey === trackKey) {
+      clearInterval(this.peerBufferRequestInterval);
+      this.peerBufferRequestInterval = null;
+      this.peerBufferRequestTrackKey = null;
+    }
+    this.updateLoadingState(false, status);
+    this.broadcastReadiness('FAILED', trackId);
+    this.onEvent('AUDIO_TRANSFER_PROGRESS', { pct: 0, status });
   }
 
   async removeRemotePeer(targetPeerId) {
