@@ -998,6 +998,8 @@ export class CloudMesh {
     };
     this.deletedQueueIds.delete(item.id);
 
+    if (this.queueAdditionAcknowledgements.has(item.id)) return true;
+
     if (!currentQ.some(q => q.id === item.id)) {
       this.lastKnownQueue = [...currentQ, item];
       this.lastKnownQueueStr = JSON.stringify(this.lastKnownQueue);
@@ -1006,7 +1008,6 @@ export class CloudMesh {
       this.publishMqtt(this.roomTopic, { type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
       this.broadcastDataChannelMessage({ type: 'QUEUE_UPDATED', queue: this.lastKnownQueue });
     }
-    else return true;
     if (!this.roomId || !this.peerId) return true;
 
     const submitAddition = async (expectedQueueRevision, retryConflict) => {
@@ -1063,11 +1064,6 @@ export class CloudMesh {
       this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Antrean tersimpan di perangkat ini, sinkronisasi room gagal.' });
       return false;
     });
-    const previousAcknowledgement = this.queueAdditionAcknowledgements.get(item.id);
-    if (previousAcknowledgement) {
-      acknowledgement.catch(() => {});
-      return true;
-    }
     this.queueAdditionAcknowledgements.set(item.id, acknowledgement);
     acknowledgement.finally(() => {
       if (this.queueAdditionAcknowledgements.get(item.id) === acknowledgement) {

@@ -984,6 +984,26 @@ describe('CloudMesh audio transfer', () => {
     expect(mesh.lastKnownQueue.map(track => track.id)).toEqual(['demo_synthwave']);
   });
 
+  it('retries a failed queue addition with the same stable id', async () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'peer-1';
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({
+        success: true, queue: [{ id: 'retry-track', name: 'Retry track' }], queueRevision: 1
+      }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await mesh.addToQueue({ id: 'retry-track', name: 'Retry track' });
+    await expect(mesh.waitForQueueItemAcknowledgement('retry-track')).resolves.toBe(false);
+    await mesh.addToQueue({ id: 'retry-track', name: 'Retry track' });
+
+    await expect(mesh.waitForQueueItemAcknowledgement('retry-track')).resolves.toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(mesh.lastKnownQueue.map(track => track.id)).toEqual(['retry-track']);
+  });
+
   it('keeps a queued item visible and reports a server rejection', async () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
