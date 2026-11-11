@@ -9,7 +9,7 @@ export class PublicAudioSource {
         title: 'Acoustic Master WAV',
         artist: 'Studio Session',
         duration: 3.0,
-        playableUrl: '/sample.wav',
+        playableUrl: '/test_music_sample.wav',
         mimeType: 'audio/wav',
         thumbnailUrl: ''
       },
@@ -27,7 +27,7 @@ export class PublicAudioSource {
 
   canHandle(input) {
     if (typeof input !== 'string') return false;
-    return input.startsWith('public_') || input === '/sample.wav';
+    return input.startsWith('public_') || input === '/test_music_sample.wav';
   }
 
   async resolve(idOrUrl) {

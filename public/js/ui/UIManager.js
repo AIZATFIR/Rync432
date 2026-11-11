@@ -706,7 +706,7 @@ export class UIManager {
 
     if (elements.sampleUrlWav) {
       elements.sampleUrlWav.addEventListener('click', () => {
-        handleDirectUrlIngest(window.location.origin + '/sample.wav');
+        handleDirectUrlIngest('/test_music_sample.wav');
       });
     }
 

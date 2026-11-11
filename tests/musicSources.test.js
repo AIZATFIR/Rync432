@@ -1,4 +1,5 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
+import { access } from 'node:fs/promises';
 import { MusicSourceManager } from '../public/js/music/MusicSourceManager.js';
 import { DirectUrlSource } from '../public/js/music/sources/DirectUrlSource.js';
 import { YouTubeSource } from '../public/js/music/sources/YouTubeSource.js';
@@ -104,7 +105,9 @@ describe('Music Sources & Resolver Layer', () => {
       expect(publicSource.canHandle('public_acoustic_wav')).toBe(true);
       const resolved = await publicSource.resolve('public_acoustic_wav');
       expect(resolved.title).toBe('Acoustic Master WAV');
-      expect(resolved.playableUrl).toBe('/sample.wav');
+      expect(resolved.playableUrl).toBe('/test_music_sample.wav');
+      expect(publicSource.canHandle(resolved.playableUrl)).toBe(true);
+      await expect(access(new URL(`../public${resolved.playableUrl}`, import.meta.url))).resolves.toBeUndefined();
     });
   });
 
@@ -121,12 +124,12 @@ describe('Music Sources & Resolver Layer', () => {
       const resolver = new AudioResolver();
       const resolvedMock = {
         trackId: 'direct_test',
-        playableUrl: '/sample.wav',
+        playableUrl: '/test_music_sample.wav',
         sourceType: MusicSourceType.PUBLIC_AUDIO
       };
 
       const endpoint = await resolver.resolvePlayableEndpoint(resolvedMock);
-      expect(endpoint.playableUrl).toBe('/sample.wav');
+      expect(endpoint.playableUrl).toBe('/test_music_sample.wav');
       expect(endpoint.usedProxy).toBe(false);
     });
 

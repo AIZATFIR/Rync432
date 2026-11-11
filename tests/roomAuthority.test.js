@@ -727,7 +727,7 @@ describe('room authority', () => {
       peerId: 'host-peer',
       items: [
         { id: 'direct-track', name: 'Direct Track', sourceType: 'direct-url', audioUrl: 'https://audio.example/song.mp3' },
-        { id: 'public-track', name: 'Public Track', sourceType: 'public-audio', audioUrl: '/sample.wav' }
+        { id: 'public-track', name: 'Public Track', sourceType: 'public-audio', audioUrl: '/test_music_sample.wav' }
       ]
     });
 
