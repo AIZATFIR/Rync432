@@ -786,6 +786,9 @@ canvas#visualizerCanvas {
   text-align: center;
   padding: 10px;
 }
+.queue-empty-state { display: grid; justify-items: center; gap: 8px; padding: 8px; }
+.queue-empty-search { min-height: 44px; padding: 0 16px; color: #15180f; background: var(--spotify-green); border: 0; border-radius: 999px; font: inherit; font-size: 0.8rem; font-weight: 700; cursor: pointer; }
+.queue-empty-search:focus-visible { outline: 2px solid var(--text-base); outline-offset: 3px; }
 
 /* Multi-Source Hub */
 .source-tabs-header {

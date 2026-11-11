@@ -1215,9 +1215,14 @@ describe('YouTube search queue UI', () => {
 
   it('renders queue updates into the local queue list', () => {
     vi.useFakeTimers();
-    const queueList = { innerHTML: 'initial' };
+    const queueList = {
+      innerHTML: 'initial', children: [],
+      replaceChildren(...children) { this.children = children; },
+      appendChild(child) { this.children.push(child); }
+    };
     const queueBadge = { innerText: 'initial' };
     const documentStub = {
+      createElement: () => ({ children: [], addEventListener() {}, appendChild(child) { this.children.push(child); } }),
       getElementById(id) {
         if (id === 'queueListContainer') return queueList;
         if (id === 'queueCountBadge') return queueBadge;
@@ -1230,9 +1235,32 @@ describe('YouTube search queue UI', () => {
 
     const ui = new UIManager({ audioEngine: { onPlaybackEnded: null } });
     ui.init();
+
+    expect(queueList.children[0].children[0].textContent).toContain('Antrean kosong');
+    expect(queueList.children[0].children[1].textContent).toBe('Cari lagu');
+    expect(queueBadge.innerText).toBe('0 lagu');
+  });
+
+  it('offers a search action when the queue is empty', () => {
+    const createElement = () => ({
+      children: [], className: '', textContent: '',
+      addEventListener(name, handler) { this[`on${name}`] = handler; },
+      appendChild(child) { this.children.push(child); },
+      replaceChildren(...children) { this.children = children; }
+    });
+    const queue = createElement();
+    vi.stubGlobal('document', { createElement });
+    const ui = new UIManager({ socketClient: { roomId: null } });
+    ui.elements = { queueListContainer: queue };
+    ui.setView = vi.fn();
+
     ui.renderQueue([]);
 
-    expect(queueList.innerHTML).toContain('Antrean kosong');
-    expect(queueBadge.innerText).toBe('0 lagu');
+    const emptyState = queue.children[0];
+    const searchButton = emptyState.children[1];
+    expect(emptyState.children[0].textContent).toContain('Antrean kosong');
+    expect(searchButton.textContent).toBe('Cari lagu');
+    searchButton.onclick();
+    expect(ui.setView).toHaveBeenCalledWith('search');
   });
 });

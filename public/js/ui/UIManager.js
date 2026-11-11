@@ -260,6 +260,7 @@ export class UIManager {
     this.bindEvents();
     this.setPlaybackOptions();
     this.setView('home');
+    this.renderQueue(this.soloQueue);
     this.refreshLibrary();
     this.startPlaybackTicker();
 
@@ -1574,7 +1575,20 @@ export class UIManager {
     }
 
     if (queue.length === 0) {
-      container.innerHTML = `<div class="queue-empty-msg">Antrean kosong. Tambah lagu dari YouTube, upload file, atau demo.</div>`;
+      container.replaceChildren();
+      const emptyState = document.createElement('div');
+      emptyState.className = 'queue-empty-state';
+      const message = document.createElement('div');
+      message.className = 'queue-empty-msg';
+      message.textContent = 'Antrean kosong. Cari lagu untuk ditambahkan.';
+      const searchButton = document.createElement('button');
+      searchButton.type = 'button';
+      searchButton.className = 'queue-empty-search';
+      searchButton.textContent = 'Cari lagu';
+      searchButton.addEventListener('click', () => this.setView('search'));
+      emptyState.appendChild(message);
+      emptyState.appendChild(searchButton);
+      container.appendChild(emptyState);
       return;
     }
 
