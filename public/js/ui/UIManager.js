@@ -418,8 +418,9 @@ export class UIManager {
         try {
           await app.audioEngine.ensureContext();
           await app.socketClient.createRoom(this.getDeviceName());
-          await this.syncLocalQueueToRoom();
-          await this.seedCurrentTrackIntoRoom();
+          this.syncLocalQueueToRoom()
+            .then(() => this.seedCurrentTrackIntoRoom())
+            .catch(() => this.showUrlFeedback('Room siap, tetapi antrean gagal disinkronkan. Coba lagi dari perangkat host.', 'error'));
         } catch (error) {
           this.showUrlFeedback('Room gagal dibuat. Periksa koneksi lalu coba lagi.', 'error');
         }
@@ -430,10 +431,18 @@ export class UIManager {
       try {
         if (!app.socketClient.roomId) {
           await app.socketClient.createRoom(this.getDeviceName());
-          await this.syncLocalQueueToRoom();
-          await this.seedCurrentTrackIntoRoom();
-        } else if (app.socketClient.isHost && this.currentTrack?.id) {
-          await this.seedCurrentTrackIntoRoom();
+          const url = `${window.location.origin}/?room=${app.socketClient.roomId}`;
+          try {
+            await navigator.clipboard.writeText(url);
+            this.showUrlFeedback('Room dibuat dan link undangan disalin.', 'success');
+          } catch (error) {
+            this.showUrlFeedback(`Room dibuat. Salin link ini: ${url}`, 'info');
+          }
+          this.setView('room');
+          this.syncLocalQueueToRoom()
+            .then(() => this.seedCurrentTrackIntoRoom())
+            .catch(() => this.showUrlFeedback('Room siap, tetapi antrean gagal disinkronkan. Coba lagi dari perangkat host.', 'error'));
+          return;
         }
         const url = `${window.location.origin}/?room=${app.socketClient.roomId}`;
         try {

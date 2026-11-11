@@ -46,6 +46,71 @@ describe('Rync page structure', () => {
 });
 
 describe('YouTube search queue UI', () => {
+  it('shares the new room before waiting for its local playlist to sync', async () => {
+    const order = [];
+    const socketClient = { roomId: null, createRoom: vi.fn(async () => { order.push('create'); socketClient.roomId = 'AB12'; }), isHost: true };
+    const ui = new UIManager({
+      socketClient,
+      audioEngine: { ensureContext: vi.fn().mockResolvedValue(undefined) }
+    });
+    ui.seedCurrentTrackIntoRoom = vi.fn().mockResolvedValue(undefined);
+    ui.showUrlFeedback = vi.fn();
+    let finishSync;
+    ui.syncLocalQueueToRoom = vi.fn(() => {
+      order.push('sync');
+      return new Promise(resolve => { finishSync = resolve; });
+    });
+    ui.getDeviceName = () => 'Host';
+    ui.setView = vi.fn();
+    const shareButton = { addEventListener: (_event, handler) => { ui.shareHandler = handler; } };
+    ui.elements = {
+      createRoomBtn: { addEventListener: (_event, handler) => { ui.createRoomHandler = handler; } },
+      roomCodeDisplay: null, userRoleBadge: null, queueListContainer: null, activeRoomSection: null,
+      navRoomBtn: null, navHomeBtn: null, navSearchBtn: null, navLibraryBtn: null, miniPlayerBar: null,
+      roomHeroSection: null, sourceHubSection: null, sourceSearchSection: null, librarySection: null, audioTuningSection: null, audioPlayerSheet: null,
+      sharePlayerRoomBtn: shareButton
+    };
+    vi.stubGlobal('window', { location: { origin: 'https://rync.example' }, addEventListener: vi.fn() });
+    vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
+
+    ui.bindEvents();
+    const creating = ui.shareHandler();
+    let creationSettled = false;
+    creating.finally(() => { creationSettled = true; });
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(order).toEqual(['create', 'sync']);
+    expect(ui.showUrlFeedback).toHaveBeenCalledWith('Room dibuat dan link undangan disalin.', 'success');
+    expect(ui.setView).toHaveBeenCalledWith('room');
+    expect(creationSettled).toBe(true);
+    finishSync();
+  });
+
+  it('reports queue seeding failures after the room link is already available', async () => {
+    const socketClient = { roomId: null, createRoom: vi.fn(async () => { socketClient.roomId = 'AB12'; }), isHost: true };
+    const ui = new UIManager({ socketClient, audioEngine: { ensureContext: vi.fn().mockResolvedValue(undefined) } });
+    ui.getDeviceName = () => 'Host';
+    ui.showUrlFeedback = vi.fn();
+    ui.setView = vi.fn();
+    ui.syncLocalQueueToRoom = vi.fn().mockRejectedValue(new Error('upload failed'));
+    ui.elements = {
+      sharePlayerRoomBtn: { addEventListener: (_event, handler) => { ui.shareHandler = handler; } },
+      roomCodeDisplay: null, userRoleBadge: null, queueListContainer: null, activeRoomSection: null,
+      navRoomBtn: null, navHomeBtn: null, navSearchBtn: null, navLibraryBtn: null, miniPlayerBar: null,
+      roomHeroSection: null, sourceHubSection: null, sourceSearchSection: null, librarySection: null, audioTuningSection: null
+    };
+    vi.stubGlobal('window', { location: { origin: 'https://rync.example' }, addEventListener: vi.fn() });
+    vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
+
+    ui.bindEvents();
+    await ui.shareHandler();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(ui.showUrlFeedback).toHaveBeenNthCalledWith(1, 'Room dibuat dan link undangan disalin.', 'success');
+    expect(ui.showUrlFeedback).toHaveBeenLastCalledWith('Room siap, tetapi antrean gagal disinkronkan. Coba lagi dari perangkat host.', 'error');
+  });
+
   it('waits for the audio context before toggling the audible metronome', async () => {
     let makeMetronomeReady;
     const metronome = { start: vi.fn(), stop: vi.fn() };
