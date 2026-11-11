@@ -1274,15 +1274,21 @@ describe('YouTube search queue UI', () => {
     const ui = new UIManager({ audioEngine: {}, socketClient: {} });
     ui.elements = {
       activeRoomSection: node(), roomHeroSection: node(), librarySection: node(),
+      homeEmptyState: node(),
       sourceHubSection: node(), sourceSearchSection: node(), queueCardSection: node(), audioTuningSection: node(),
       navHomeBtn: node(), navSearchBtn: node(), navLibraryBtn: node(), navRoomBtn: node()
     };
 
     ui.setView('home');
+    expect(ui.elements.homeEmptyState.hidden).toBe(false);
     expect(ui.elements.sourceHubSection.style.display).toBe('');
     expect(ui.elements.sourceSearchSection.style.display).toBe('none');
     expect(ui.elements.queueCardSection.style.display).toBe('');
     expect(ui.elements.audioTuningSection.style.display).toBe('');
+
+    ui.currentTrack = { name: 'Song' };
+    ui.setView('home');
+    expect(ui.elements.homeEmptyState.hidden).toBe(true);
 
     ui.setView('search');
     expect(ui.elements.sourceHubSection.style.display).toBe('none');

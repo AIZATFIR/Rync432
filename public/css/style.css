@@ -1936,3 +1936,36 @@ body:not(.is-playing) .visualizer-container { display: none; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* Keep the empty player focused on choosing a source, not inactive controls. */
+#sourceHubSection:not(.has-current-track) .track-artwork-row,
+#sourceHubSection:not(.has-current-track) .visualizer-container,
+#sourceHubSection:not(.has-current-track) .audio-timeline-wrap,
+#sourceHubSection:not(.has-current-track) .player-controls-row,
+#sourceHubSection:not(.has-current-track) .volume-control-wrap,
+#sourceHubSection:not(.has-current-track) .segmented-channel-chips,
+#sourceHubSection:not(.has-current-track) .player-local-output-controls { display: none !important; }
+
+.home-empty-state[hidden] { display: none; }
+.home-empty-state:not([hidden]) {
+  display: grid;
+  min-height: 244px;
+  align-content: center;
+  justify-items: center;
+  gap: 12px;
+  padding: 28px 16px;
+  text-align: center;
+}
+.home-empty-state h2 {
+  font-size: clamp(1.65rem, 4vw, 2.25rem);
+  font-weight: 650;
+  letter-spacing: -0.045em;
+  line-height: 1.05;
+}
+.home-empty-state p {
+  max-width: 38ch;
+  color: var(--text-muted);
+  font-size: 0.94rem;
+  line-height: 1.55;
+}
+.home-empty-state button { min-height: 46px; margin-top: 5px; padding-inline: 22px; }

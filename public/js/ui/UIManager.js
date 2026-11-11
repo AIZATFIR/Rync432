@@ -86,6 +86,8 @@ export class UIManager {
       navSearchBtn: document.getElementById('navSearchBtn'),
       navLibraryBtn: document.getElementById('navLibraryBtn'),
       navRoomBtn: document.getElementById('navRoomBtn'),
+      homeEmptyState: document.getElementById('homeEmptyState'),
+      homeFindMusicBtn: document.getElementById('homeFindMusicBtn'),
       miniPlayerBar: document.getElementById('miniPlayerBar'),
       miniPlayerOpenBtn: document.getElementById('miniPlayerOpenBtn'),
       miniPlayerTitle: document.getElementById('miniPlayerTitle'),
@@ -304,6 +306,7 @@ export class UIManager {
       [elements.navRoomBtn, 'room']
     ].forEach(([button, view]) => button?.addEventListener('click', () => this.setView(view)));
 
+    elements.homeFindMusicBtn?.addEventListener('click', () => this.setView('search'));
     elements.miniPlayerOpenBtn?.addEventListener('click', () => this.setView('home'));
     elements.clearUpcomingBtn?.addEventListener('click', () => this.clearUpcomingQueue());
     elements.queueUndoBtn?.addEventListener('click', () => this.restoreQueueUndo());
@@ -2129,6 +2132,7 @@ export class UIManager {
       thumbnail: thumbnail || sourceTrack.thumbnail || ''
     };
     this.currentTrack = currentTrack;
+    this.syncHomeEmptyState();
     this.updateMiniPlayer();
     if (currentTrack.sourceType === 'youtube') {
       this.app.audioEngine.currentTrackName = currentTrack.name;
@@ -2299,6 +2303,7 @@ export class UIManager {
   setView(view) {
     if (!['home', 'search', 'library', 'room'].includes(view)) return;
     this.currentView = view;
+    this.syncHomeEmptyState();
     const hasRoom = !!this.app.socketClient?.roomId;
     const showRoomSetup = view === 'room' && !hasRoom;
     const showLibrary = view === 'library';
@@ -2342,6 +2347,12 @@ export class UIManager {
       this.elements.ytUrlInput?.focus();
     }
     if (showLibrary) this.refreshLibrary();
+  }
+
+  syncHomeEmptyState() {
+    const hasTrack = !!this.currentTrack?.name && this.currentTrack.name !== 'Pilih trek lagu';
+    if (this.elements.homeEmptyState) this.elements.homeEmptyState.hidden = hasTrack || this.currentView !== 'home';
+    this.elements.sourceHubSection?.classList.toggle('has-current-track', hasTrack);
   }
 
   updateFavoriteButton(isFavorite) {

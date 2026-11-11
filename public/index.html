@@ -181,6 +181,12 @@
               </button>
             </div>
 
+            <div class="home-empty-state" id="homeEmptyState" hidden>
+              <h2>Mulai dengarkan</h2>
+              <p>Cari lagu dari YouTube, pilih audio di perangkat ini, atau tempel tautan audio.</p>
+              <button type="button" class="btn-spotify btn-spotify-primary" id="homeFindMusicBtn">Cari musik</button>
+            </div>
+
             <div class="youtube-player-shell" id="youtubePlayerShell" hidden>
               <div id="youtubePlayerContainer"></div>
               <p class="youtube-player-status" id="youtubePlayerStatus" role="status" aria-live="polite"></p>
@@ -245,7 +251,7 @@
             </div>
 
             <!-- Volume & Spatial Channel Control (This Device) -->
-            <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 12px;">
+            <div class="player-local-output-controls" style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 12px;">
               <div class="volume-control-wrap">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
