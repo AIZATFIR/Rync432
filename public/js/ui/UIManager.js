@@ -68,6 +68,8 @@ export class UIManager {
     this.demoTrackIndex = 0;
     this.isPlayingState = false;
     this.currentView = 'home';
+    this.nowPlayingOpen = false;
+    this.nowPlayingPreviousView = 'home';
     this.currentTrack = null;
     this.repeatMode = 'off';
     this.shuffle = false;
@@ -108,6 +110,9 @@ export class UIManager {
       homeFindMusicBtn: document.getElementById('homeFindMusicBtn'),
       miniPlayerBar: document.getElementById('miniPlayerBar'),
       miniPlayerOpenBtn: document.getElementById('miniPlayerOpenBtn'),
+      nowPlayingCloseBtn: document.getElementById('nowPlayingCloseBtn'),
+      nowPlayingQueueBtn: document.getElementById('nowPlayingQueueBtn'),
+      nowPlayingHeading: document.getElementById('nowPlayingHeading'),
       miniPlayerTitle: document.getElementById('miniPlayerTitle'),
       miniPlayerArtist: document.getElementById('miniPlayerArtist'),
       miniPlayerArtwork: document.getElementById('miniPlayerArtwork'),
@@ -326,7 +331,33 @@ export class UIManager {
 
     elements.homeFindMusicBtn?.addEventListener('click', () => this.setView('search'));
     elements.listenTogetherBtn?.addEventListener('click', () => this.setView('room'));
-    elements.miniPlayerOpenBtn?.addEventListener('click', () => this.setView('home'));
+    elements.miniPlayerOpenBtn?.addEventListener('click', () => this.openNowPlaying());
+    elements.nowPlayingCloseBtn?.addEventListener('click', () => this.closeNowPlaying());
+    elements.nowPlayingQueueBtn?.addEventListener('click', () => {
+      const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      elements.queueCardSection?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+    });
+    globalThis.document?.addEventListener('keydown', event => {
+      if (!this.nowPlayingOpen) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        this.closeNowPlaying();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = [...(this.elements.activeRoomSection?.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') || [])]
+        .filter(element => element.getAttribute('aria-hidden') !== 'true' && element.getClientRects().length);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    });
     elements.clearUpcomingBtn?.addEventListener('click', () => this.clearUpcomingQueue());
     elements.queueUndoBtn?.addEventListener('click', () => this.restoreQueueUndo());
     elements.miniPlayerPlayBtn?.addEventListener('click', () => this.togglePlayback());
@@ -2450,6 +2481,47 @@ export class UIManager {
       this.elements.ytUrlInput?.focus();
     }
     if (showLibrary) this.refreshLibrary();
+  }
+
+  openNowPlaying() {
+    const isMobile = typeof window !== 'undefined' && window.matchMedia?.('(max-width: 760px)').matches;
+    if (!isMobile || !this.currentTrack?.name || this.nowPlayingOpen) {
+      if (!isMobile) this.setView('home');
+      return false;
+    }
+    this.nowPlayingPreviousView = this.currentView;
+    this.nowPlayingViewStyles = {
+      sourceHub: this.elements.sourceHubSection?.style.display,
+      sourceSearch: this.elements.sourceSearchSection?.style.display,
+      queue: this.elements.queueCardSection?.style.display
+    };
+    this.nowPlayingOpen = true;
+    document.body.classList.add('now-playing-open');
+    this.elements.activeRoomSection?.setAttribute('role', 'dialog');
+    this.elements.activeRoomSection?.setAttribute('aria-modal', 'true');
+    this.elements.activeRoomSection?.setAttribute('aria-labelledby', 'nowPlayingHeading');
+    this.elements.miniPlayerOpenBtn?.setAttribute('aria-expanded', 'true');
+    this.elements.nowPlayingCloseBtn?.focus();
+    return true;
+  }
+
+  closeNowPlaying() {
+    if (!this.nowPlayingOpen) return false;
+    this.nowPlayingOpen = false;
+    document.body.classList.remove('now-playing-open');
+    this.elements.activeRoomSection?.removeAttribute('role');
+    this.elements.activeRoomSection?.removeAttribute('aria-modal');
+    this.elements.activeRoomSection?.removeAttribute('aria-labelledby');
+    this.elements.miniPlayerOpenBtn?.setAttribute('aria-expanded', 'false');
+    if (this.nowPlayingViewStyles) {
+      if (this.elements.sourceHubSection) this.elements.sourceHubSection.style.display = this.nowPlayingViewStyles.sourceHub;
+      if (this.elements.sourceSearchSection) this.elements.sourceSearchSection.style.display = this.nowPlayingViewStyles.sourceSearch;
+      if (this.elements.queueCardSection) this.elements.queueCardSection.style.display = this.nowPlayingViewStyles.queue;
+      this.nowPlayingViewStyles = null;
+    }
+    this.currentView = this.nowPlayingPreviousView;
+    this.elements.miniPlayerOpenBtn?.focus();
+    return true;
   }
 
   syncHomeEmptyState() {

@@ -75,7 +75,7 @@
     </nav>
 
     <section class="mini-player" id="miniPlayerBar" aria-label="Pemutar mini" hidden>
-      <button type="button" class="mini-player-track" id="miniPlayerOpenBtn" aria-label="Buka pemutar penuh">
+      <button type="button" class="mini-player-track" id="miniPlayerOpenBtn" aria-label="Buka pemutar penuh" aria-controls="activeRoomSection" aria-expanded="false">
         <span class="mini-player-art" id="miniPlayerArtwork" aria-hidden="true">♫</span>
         <span class="mini-player-copy"><strong id="miniPlayerTitle">Belum ada lagu</strong><small id="miniPlayerArtist">Pilih lagu untuk mulai</small></span>
       </button>
@@ -126,6 +126,11 @@
 
     <!-- Active Room Interface -->
     <div id="activeRoomSection" style="display: flex; flex-direction: column; gap: 16px;">
+      <div class="now-playing-toolbar">
+        <button type="button" class="now-playing-close" id="nowPlayingCloseBtn" aria-label="Tutup pemutar penuh">↓</button>
+        <span id="nowPlayingHeading">Sedang diputar</span>
+        <button type="button" class="now-playing-queue" id="nowPlayingQueueBtn" aria-controls="queueCardSection">Antrean ↓</button>
+      </div>
       
       <!-- Room Bar -->
       <div class="active-room-bar">

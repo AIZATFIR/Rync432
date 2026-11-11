@@ -2089,6 +2089,96 @@ body:not(.is-playing) .visualizer-container { display: none; }
   .app-container { display: flex; min-height: 100dvh; }
 }
 
+.now-playing-toolbar { display: none; }
+
+@media (max-width: 760px) {
+  body.now-playing-open { overflow: hidden; }
+  body.now-playing-open .app-header,
+  body.now-playing-open .primary-nav,
+  body.now-playing-open #miniPlayerBar,
+  body.now-playing-open #roomHeroSection,
+  body.now-playing-open #librarySection { display: none !important; }
+  body.now-playing-open #activeRoomSection {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    display: flex !important;
+    gap: 12px !important;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: max(10px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom));
+    color: var(--text-base);
+    background: var(--background-base, #10120e);
+    animation: now-playing-enter 220ms cubic-bezier(.2,.75,.25,1) both;
+  }
+  body.now-playing-open #activeRoomSection #sourceHubSection,
+  body.now-playing-open #activeRoomSection #queueCardSection { display: block !important; }
+  body.now-playing-open #activeRoomSection #sourceSearchSection { display: none !important; }
+  .now-playing-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: 44px 1fr 76px;
+    align-items: center;
+    min-height: 48px;
+    color: var(--text-muted);
+    text-align: center;
+    font-size: 0.78rem;
+    font-weight: 650;
+    background: #10120e;
+  }
+  .now-playing-toolbar button {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 8px;
+    color: var(--text-base);
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    font: inherit;
+    cursor: pointer;
+  }
+  .now-playing-close { font-size: 1.25rem !important; }
+  #activeRoomSection .active-room-bar,
+  #activeRoomSection .room-host-notice,
+  #activeRoomSection #peerLoadingNotice,
+  #activeRoomSection .devices-stage { display: none !important; }
+  #activeRoomSection .main-grid,
+  #activeRoomSection .player-stage { width: 100%; min-width: 0; }
+  #activeRoomSection .track-artwork-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 44px;
+    align-items: center;
+    gap: 10px;
+  }
+  #activeRoomSection .album-art-box {
+    grid-column: 1 / -1;
+    width: min(68vw, 320px);
+    height: auto;
+    min-width: 0;
+    aspect-ratio: 1;
+    justify-self: center;
+    border-radius: 16px;
+  }
+  #activeRoomSection .album-art-box svg { width: 48px; height: 48px; }
+  #activeRoomSection .track-info-texts { grid-column: 1; }
+  #activeRoomSection .favorite-track-btn { grid-column: 2; grid-row: 2; width: 44px; height: 44px; }
+  #activeRoomSection .readiness-indicator { grid-column: 1 / -1; }
+  #activeRoomSection #sourceHubSection,
+  #activeRoomSection #queueCardSection { scroll-margin-top: 56px; }
+}
+
+@keyframes now-playing-enter {
+  from { opacity: 0.7; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.now-playing-open #activeRoomSection { animation: none; }
+}
+
 .listen-together-button {
   display: inline-flex;
   min-height: 44px;

@@ -1803,6 +1803,52 @@ describe('YouTube search queue UI', () => {
     expect(toggle).toHaveBeenLastCalledWith('is-playing', false);
   });
 
+  it('opens Now Playing over the current view and restores that view on close', () => {
+    const classes = new Set();
+    const classList = {
+      add: value => classes.add(value),
+      remove: value => classes.delete(value),
+      contains: value => classes.has(value)
+    };
+    vi.stubGlobal('document', { body: { classList } });
+    vi.stubGlobal('window', { matchMedia: vi.fn(() => ({ matches: true })) });
+    const section = { attributes: {}, classList, setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name) { delete this.attributes[name]; } };
+    const trigger = { attributes: {}, setAttribute(name, value) { this.attributes[name] = value; }, focus: vi.fn() };
+    const close = { focus: vi.fn() };
+    const ui = new UIManager({});
+    ui.currentView = 'library';
+    ui.currentTrack = { name: 'Track A' };
+    ui.elements = { activeRoomSection: section, miniPlayerOpenBtn: trigger, nowPlayingCloseBtn: close };
+
+    ui.openNowPlaying();
+
+    expect(classList.contains('now-playing-open')).toBe(true);
+    expect(section.attributes.role).toBe('dialog');
+    expect(section.attributes['aria-modal']).toBe('true');
+    expect(section.attributes['aria-labelledby']).toBe('nowPlayingHeading');
+    expect(trigger.attributes['aria-expanded']).toBe('true');
+    expect(ui.currentView).toBe('library');
+
+    ui.closeNowPlaying();
+
+    expect(classList.contains('now-playing-open')).toBe(false);
+    expect(section.attributes.role).toBeUndefined();
+    expect(section.attributes['aria-labelledby']).toBeUndefined();
+    expect(trigger.attributes['aria-expanded']).toBe('false');
+    expect(trigger.focus).toHaveBeenCalledOnce();
+    expect(ui.currentView).toBe('library');
+  });
+
+  it('does not open a mobile Now Playing sheet before a track is selected', () => {
+    vi.stubGlobal('document', { body: { classList: { add: vi.fn() } } });
+    vi.stubGlobal('window', { matchMedia: () => ({ matches: true }) });
+    const ui = new UIManager({});
+    ui.elements = {};
+
+    expect(ui.openNowPlaying()).toBe(false);
+    expect(document.body.classList.add).not.toHaveBeenCalled();
+  });
+
   it('exposes shared repeat and shuffle modes through accessible control state', () => {
     const control = () => ({ attributes: {}, dataset: {}, setAttribute(name, value) { this.attributes[name] = value; } });
     const ui = new UIManager({});
