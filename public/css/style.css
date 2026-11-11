@@ -2070,3 +2070,30 @@ body:not(.is-playing) .visualizer-container { display: none; }
 @media (max-width: 760px) {
   .app-container { display: flex; min-height: 100dvh; }
 }
+
+.listen-together-button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 14px;
+  color: var(--text-base);
+  background: var(--spotify-mid-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.listen-together-button svg { width: 18px; height: 18px; flex: 0 0 auto; }
+.listen-together-button:hover { border-color: var(--border-light); }
+.listen-together-button:active { transform: scale(0.97); }
+.listen-together-button:focus-visible { outline: 2px solid var(--spotify-green); outline-offset: 2px; }
+
+@media (max-width: 760px) {
+  .listen-together-button { width: 44px; padding: 0; }
+  .listen-together-button span { display: none; }
+}

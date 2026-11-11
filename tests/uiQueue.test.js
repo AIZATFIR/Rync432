@@ -1410,6 +1410,26 @@ describe('YouTube search queue UI', () => {
     expect(ui.elements.librarySection.hidden).toBe(true);
   });
 
+  it('shows the Room tab only while connected and keeps room setup reachable', () => {
+    const node = () => ({ hidden: false, style: {}, attributes: {}, classList: { toggle() {} }, setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name) { delete this.attributes[name]; } });
+    const socketClient = { roomId: null };
+    const ui = new UIManager({ audioEngine: {}, socketClient });
+    ui.elements = {
+      activeRoomSection: node(), roomHeroSection: node(), librarySection: node(),
+      navHomeBtn: node(), navSearchBtn: node(), navLibraryBtn: node(), navRoomBtn: node()
+    };
+
+    ui.setView('home');
+    expect(ui.elements.navRoomBtn.hidden).toBe(true);
+    ui.setView('room');
+    expect(ui.elements.roomHeroSection.hidden).toBe(false);
+    expect(ui.elements.navRoomBtn.hidden).toBe(true);
+
+    socketClient.roomId = 'ABCD';
+    ui.setView('room');
+    expect(ui.elements.navRoomBtn.hidden).toBe(false);
+  });
+
   it('shows the player on Home and reserves Search for source discovery', () => {
     const node = () => ({ hidden: false, style: {}, attributes: {}, classList: { toggle() {} }, setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name) { delete this.attributes[name]; } });
     const ui = new UIManager({ audioEngine: {}, socketClient: {} });

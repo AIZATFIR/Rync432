@@ -100,6 +100,8 @@ export class UIManager {
       navSearchBtn: document.getElementById('navSearchBtn'),
       navLibraryBtn: document.getElementById('navLibraryBtn'),
       navRoomBtn: document.getElementById('navRoomBtn'),
+      listenTogetherBtn: document.getElementById('listenTogetherBtn'),
+      listenTogetherLabel: document.getElementById('listenTogetherLabel'),
       homeEmptyState: document.getElementById('homeEmptyState'),
       homeFindMusicBtn: document.getElementById('homeFindMusicBtn'),
       miniPlayerBar: document.getElementById('miniPlayerBar'),
@@ -321,6 +323,7 @@ export class UIManager {
     ].forEach(([button, view]) => button?.addEventListener('click', () => this.setView(view)));
 
     elements.homeFindMusicBtn?.addEventListener('click', () => this.setView('search'));
+    elements.listenTogetherBtn?.addEventListener('click', () => this.setView('room'));
     elements.miniPlayerOpenBtn?.addEventListener('click', () => this.setView('home'));
     elements.clearUpcomingBtn?.addEventListener('click', () => this.clearUpcomingQueue());
     elements.queueUndoBtn?.addEventListener('click', () => this.restoreQueueUndo());
@@ -2392,10 +2395,15 @@ export class UIManager {
     ];
     navButtons.forEach(([button, name]) => {
       if (!button) return;
+      if (name === 'room') button.hidden = !hasRoom;
       button.classList.toggle('active', name === view);
       if (name === view) button.setAttribute('aria-current', 'page');
       else button.removeAttribute('aria-current');
     });
+    if (this.elements.listenTogetherLabel) {
+      this.elements.listenTogetherLabel.textContent = hasRoom ? 'Room' : 'Dengar bareng';
+    }
+    this.elements.listenTogetherBtn?.setAttribute('aria-label', hasRoom ? 'Buka room' : 'Dengar bareng');
 
     if (view === 'search') {
       this.elements.tabBtnYoutube?.click();
