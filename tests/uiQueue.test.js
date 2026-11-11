@@ -65,6 +65,10 @@ describe('Rync page structure', () => {
     expect(html).toContain('aria-label="Aktifkan tema terang"');
     expect(css).toContain('[data-theme="light"]');
     expect(css).toContain('var(--surface-nav)');
+    expect(css).toContain('--surface-card:');
+    expect(css).toContain('--surface-raised:');
+    expect(css).toContain('background: var(--surface-card);');
+    expect(css).not.toContain('background: linear-gradient(155deg, #191d15, #12150f 72%);');
   });
 });
 
