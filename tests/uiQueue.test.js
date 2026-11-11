@@ -1168,6 +1168,8 @@ describe('YouTube search queue UI', () => {
 
     expect(youtubePlayer.destroy).toHaveBeenCalledOnce();
     expect(playAt).toHaveBeenCalledWith('dQw4w9WgXcQ', expect.any(Number), 18);
+    expect(status.textContent).toBe('');
+    expect(retry.hidden).toBe(true);
     expect(retry.disabled).toBe(false);
   });
 

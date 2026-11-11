@@ -2270,6 +2270,7 @@ export class UIManager {
     try {
       player.destroy();
       await player.playAt(track.sourceId, this.getYouTubeTargetServerTime(), startOffset);
+      this.setYouTubePlayerStatus('');
       return true;
     } catch (error) {
       this.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.', { retryable: true });
