@@ -1,5 +1,6 @@
 // CloudMesh: High-Precision WebRTC Local Mesh + Serverless Edge Relay
 // Connects Laptop & Mobile Phones with Sub-Millisecond Clock Alignment
+import { recordLocalMetric } from '../metrics/localMetrics.js';
 
 const P2P_AUDIO_CHUNK_BYTES = 32 * 1024;
 const P2P_AUDIO_FRAME_HEADER_BYTES = 12;
@@ -236,6 +237,7 @@ export class CloudMesh {
   }
 
   async joinRoom(roomId, peerId, deviceName) {
+    const joinStartedAt = globalThis.performance?.now?.() ?? Date.now();
     this.roomId = roomId;
     this.peerId = peerId;
     this.deviceName = deviceName;
@@ -258,8 +260,10 @@ export class CloudMesh {
       this.applyRoomSnapshot(data.room);
       if (!data.room.track) this.broadcastReadiness('READY', '');
       this.startPolling();
+      recordLocalMetric('room_join_ms', (globalThis.performance?.now?.() ?? Date.now()) - joinStartedAt);
       return data.room;
     } catch (error) {
+      recordLocalMetric('room_join_ms', (globalThis.performance?.now?.() ?? Date.now()) - joinStartedAt, { outcome: 'failure' });
       this.unsubscribe();
       this.roomId = null;
       this.peerId = null;
@@ -1128,6 +1132,7 @@ export class CloudMesh {
     };
     track.queueItemId = item.queueItemId;
     const itemKey = queueItemKey(item);
+    const queueMutationStartedAt = globalThis.performance?.now?.() ?? Date.now();
     this.deletedQueueIds.delete(itemKey);
     this.deletedQueueIds.delete(item.id);
 
@@ -1165,6 +1170,7 @@ export class CloudMesh {
         return submitAddition(data.queueRevision, conflictRetries + 1);
       }
       if (!res.ok || !data.success) {
+        recordLocalMetric('queue_ack_ms', (globalThis.performance?.now?.() ?? Date.now()) - queueMutationStartedAt, { outcome: 'failure' });
         if (res.status === 409) {
           this.applyCanonicalQueue(data.queue);
           this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Antrean berubah di perangkat lain. Pilih lagi untuk menambahkan lagu.' });
@@ -1193,9 +1199,11 @@ export class CloudMesh {
           });
         }
       }
+      recordLocalMetric('queue_ack_ms', (globalThis.performance?.now?.() ?? Date.now()) - queueMutationStartedAt);
       return true;
     };
     const acknowledgement = submitAddition(this.queueRevision).catch(() => {
+      recordLocalMetric('queue_ack_ms', (globalThis.performance?.now?.() ?? Date.now()) - queueMutationStartedAt, { outcome: 'failure' });
       this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Antrean tersimpan di perangkat ini, sinkronisasi room gagal.' });
       return false;
     });

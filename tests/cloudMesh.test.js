@@ -971,6 +971,40 @@ describe('CloudMesh audio transfer', () => {
     expect(events).toContainEqual(expect.objectContaining({ type: 'ROOM_ERROR' }));
   });
 
+  it('records local room join duration and failure without room identifiers', async () => {
+    const store = new Map();
+    vi.stubGlobal('localStorage', { getItem: key => store.get(key) || null, setItem: (key, value) => store.set(key, value) });
+    const mesh = new CloudMesh(() => {});
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 404 }));
+
+    await expect(mesh.joinRoom('PRIVATE', 'peer', 'Guest')).rejects.toThrow();
+
+    const metrics = JSON.parse(store.get('rync_metrics_v1'));
+    expect(metrics.room_join_ms).toHaveLength(1);
+    expect(metrics.room_join_ms[0]).toMatchObject({ outcome: 'failure' });
+    expect(JSON.stringify(metrics)).not.toContain('PRIVATE');
+  });
+
+  it('records a successful queue server acknowledgement locally', async () => {
+    const store = new Map();
+    vi.stubGlobal('localStorage', { getItem: key => store.get(key) || null, setItem: (key, value) => store.set(key, value) });
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'peer';
+    mesh.lastKnownQueue = [];
+    mesh.publishMqtt = vi.fn();
+    mesh.broadcastDataChannelMessage = vi.fn();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, queue: [{ id: 'track' }] }) }));
+
+    await mesh.addToQueue({ id: 'track', name: 'Private title' });
+    await mesh.waitForQueueItemAcknowledgement(mesh.lastKnownQueue[0].queueItemId);
+
+    const metrics = JSON.parse(store.get('rync_metrics_v1'));
+    expect(metrics.queue_ack_ms).toHaveLength(1);
+    expect(metrics.queue_ack_ms[0].outcome).toBe('success');
+    expect(JSON.stringify(metrics)).not.toContain('Private title');
+  });
+
   it('does not send a stale buffer when a peer requests a track that is not cached', () => {
     const mesh = new CloudMesh(() => {});
     mesh.currentAudioArrayBuffer = new ArrayBuffer(16);

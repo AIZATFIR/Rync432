@@ -33,6 +33,8 @@ Jangan masukkan API key ke kode frontend atau commit ke Git. Pemutaran YouTube m
 
 Jumlah perangkat tersebut adalah batas konfigurasi, bukan hasil uji kapasitas. Ukuran sinkronisasi dan keberhasilan P2P perlu diukur pada perangkat serta jaringan yang akan digunakan; Bluetooth dan tab browser di latar belakang dapat menambah latensi.
 
+Pengukuran lokal waktu masuk room dan pengakuan antrean tersimpan pada browser di `localStorage` dengan key `rync_metrics_v1`. Isinya hanya durasi dan status berhasil/gagal, dibatasi 100 sampel per metrik dan tidak memuat judul lagu atau kode room. Hapus dengan `localStorage.removeItem('rync_metrics_v1')` dari console browser.
+
 ## Pemeriksaan lokal
 
 ```bash
