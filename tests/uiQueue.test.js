@@ -43,6 +43,17 @@ describe('Rync page structure', () => {
     expect(css).toContain('.action-tile > .spotify-input-wrap { width: 100%; min-width: 0; }');
     expect(css).toContain('.room-code-input { min-width: 0; }');
   });
+
+  it('gives source, room, output and file controls accessible names and keyboard activation', () => {
+    const htmlPath = fileURLToPath(new URL('../public/index.html', import.meta.url));
+    const html = readFileSync(htmlPath, 'utf8');
+    const inputFor = id => html.match(new RegExp(`<input\\b(?=[^>]*\\bid="${id}")[^>]*>`))?.[0] || '';
+
+    for (const id of ['ytUrlInput', 'directUrlInput', 'roomCodeInput', 'volumeSlider', 'modalDeviceVolume']) {
+      expect(inputFor(id), `${id} should expose its purpose to assistive technology`).toContain('aria-label=');
+    }
+    expect(html).toMatch(/<button\b[^>]*id="audioDropzone"[^>]*aria-label="Pilih file audio untuk ditambahkan"/);
+  });
 });
 
 describe('YouTube search queue UI', () => {

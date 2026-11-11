@@ -835,7 +835,11 @@ canvas#visualizerCanvas {
   flex-direction: column;
   align-items: center;
   gap: 6px;
+  width: 100%;
+  color: var(--text-base);
+  font: inherit;
 }
+.dropzone-box:focus-visible { outline: 2px solid var(--spotify-green); outline-offset: 3px; }
 
 .dropzone-icon {
   width: 32px;
