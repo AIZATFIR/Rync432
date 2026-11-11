@@ -159,6 +159,30 @@ describe('YouTube search queue UI', () => {
     expect(ui.isPlayingState).toBe(true);
   });
 
+  it('routes a YouTube Library selection through room queue sync when already in a room', async () => {
+    const track = { id: 'yt_dQw4w9WgXcQ', sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ', sourceUrl: 'https://youtu.be/dQw4w9WgXcQ', name: 'Song' };
+    const socketClient = {
+      roomId: 'ROOM', isHost: false,
+      cloudMesh: { lastKnownQueue: [], waitForQueueItemAcknowledgement: vi.fn().mockResolvedValue(true) },
+      addToQueue: vi.fn().mockResolvedValue(true), requestControl: vi.fn()
+    };
+    const player = { setVolume: vi.fn(), playAt: vi.fn() };
+    const audioEngine = { ensureContext: vi.fn(), volume: 0.5 };
+    const ui = new UIManager({ socketClient, audioEngine, youtubePlayer: player });
+    ui.updateTrackUI = vi.fn();
+    ui.setYouTubePlayerVisible = vi.fn();
+    ui.setYouTubePlayerStatus = vi.fn();
+    ui.setView = vi.fn();
+
+    await ui.playLibraryTrack(track);
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(audioEngine.ensureContext).not.toHaveBeenCalled();
+    expect(socketClient.addToQueue).toHaveBeenCalledOnce();
+    expect(socketClient.requestControl).toHaveBeenCalledWith('play_queue_item', { queueId: track.id, name: track.name });
+    expect(player.playAt).not.toHaveBeenCalled();
+  });
+
   it('plays a stored local file solo without creating a room', async () => {
     const track = { id: 'local-1', name: 'Local song', sourceType: 'local-file', duration: 12 };
     const bytes = new ArrayBuffer(16);
@@ -185,6 +209,32 @@ describe('YouTube search queue UI', () => {
     expect(ui.setPlayState).toHaveBeenCalledWith(true);
   });
 
+  it('uploads and selects a local Library file when the room host chooses it', async () => {
+    const track = { id: 'local-room-track', name: 'Local room track', sourceType: 'local-file' };
+    const bytes = new ArrayBuffer(8);
+    const socketClient = { roomId: 'ROOM', isHost: true, playQueueItem: vi.fn().mockResolvedValue(track) };
+    const ui = new UIManager({ socketClient, audioEngine: { ensureContext: vi.fn().mockResolvedValue(undefined) } });
+    ui.localLibrary.getLocalAudio = vi.fn().mockResolvedValue({ ...track, audioData: bytes });
+    ui.uploadLocalTrackToRoom = vi.fn().mockResolvedValue(track);
+    ui.setView = vi.fn();
+
+    await ui.playLibraryTrack(track);
+
+    expect(ui.uploadLocalTrackToRoom).toHaveBeenCalledWith(track, bytes);
+    expect(socketClient.playQueueItem).toHaveBeenCalledWith(track.id, true);
+  });
+
+  it('explains why a guest cannot share a device local Library file to the room', async () => {
+    const track = { id: 'local-room-track', name: 'Local room track', sourceType: 'local-file' };
+    const socketClient = { roomId: 'ROOM', isHost: false };
+    const ui = new UIManager({ socketClient, audioEngine: { ensureContext: vi.fn().mockResolvedValue(undefined) } });
+    ui.showUrlFeedback = vi.fn();
+
+    await ui.playLibraryTrack(track);
+
+    expect(ui.showUrlFeedback).toHaveBeenCalledWith('File lokal hanya bisa dibagikan dari perangkat host.', 'error');
+  });
+
   it('plays a direct audio library track solo without creating a room', async () => {
     const track = { id: 'direct-1', name: 'Direct song', sourceType: 'direct-url', audioUrl: '/api/stream?id=direct-1', duration: 15 };
     const socketClient = { roomId: null, cloudMesh: { lastKnownTrack: null }, clockSync: { getServerTime: () => 1000 } };
@@ -208,6 +258,28 @@ describe('YouTube search queue UI', () => {
     expect(audioEngine.schedulePlayAtServerTime).toHaveBeenCalledWith(1050, 0);
     expect(ui.soloQueue).toContainEqual(track);
     expect(ui.setPlayState).toHaveBeenCalledWith(true);
+  });
+
+  it('selects a direct audio Library track through acknowledged room queue insertion', async () => {
+    const track = { id: 'direct-room-1', name: 'Room song', sourceType: 'direct-url', audioUrl: '/audio/room.mp3' };
+    const socketClient = {
+      roomId: 'ROOM', isHost: true,
+      cloudMesh: { lastKnownQueue: [], lastKnownTrack: null, waitForQueueItemAcknowledgement: vi.fn().mockResolvedValue(true) },
+      addToQueue: vi.fn().mockResolvedValue(true), playQueueItem: vi.fn().mockResolvedValue(track)
+    };
+    const ui = new UIManager({ socketClient, audioEngine: { ensureContext: vi.fn().mockResolvedValue(undefined) } });
+    ui.updateTrackUI = vi.fn();
+    ui.setTrackLoading = vi.fn();
+    ui.showUrlFeedback = vi.fn();
+    ui.setView = vi.fn();
+    ui.getDeviceName = () => 'Listener';
+
+    await ui.playLibraryTrack(track);
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(socketClient.addToQueue).toHaveBeenCalledOnce();
+    expect(socketClient.cloudMesh.waitForQueueItemAcknowledgement).toHaveBeenCalledWith(track.id);
+    expect(socketClient.playQueueItem).toHaveBeenCalledWith(track.id, true);
   });
 
   it('loads a newly selected direct URL in solo mode even when another buffer is already loaded', async () => {

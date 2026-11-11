@@ -2205,42 +2205,60 @@ export class UIManager {
       return;
     }
     try {
-      await this.app.audioEngine.ensureContext();
-      if (track.sourceType === 'youtube' && track.sourceId && !this.app.socketClient.roomId) {
-        this.addToSoloQueue(track);
-        this.currentTrack = track;
-        this.updateTrackUI(track.name, track.duration || 0, track.thumbnail || '');
-        this.app.socketClient.cloudMesh.lastKnownTrack = track;
-        this.app.socketClient.cloudMesh.loadTrackBuffer(track);
-        this.app.youtubePlayer?.setVolume(this.app.audioEngine.volume);
-        this.app.youtubePlayer?.playAt(track.sourceId, Date.now() + 50, 0)
-          .catch(() => this.setYouTubePlayerStatus('Tekan Play di player YouTube untuk mulai.'));
-        this.setPlayState(true);
+      const socketClient = this.app.socketClient;
+      if (track.sourceType === 'youtube' && track.sourceId) {
+        if (socketClient.roomId) {
+          await this.streamAudioFromUrl(track.sourceUrl || `https://www.youtube.com/watch?v=${track.sourceId}`, track.name, track.artist, track.duration, track.thumbnail);
+        } else {
+          this.addToSoloQueue(track);
+          this.currentTrack = track;
+          this.updateTrackUI(track.name, track.duration || 0, track.thumbnail || '');
+          socketClient.cloudMesh.lastKnownTrack = track;
+          socketClient.cloudMesh.loadTrackBuffer(track);
+          this.app.youtubePlayer?.setVolume(this.app.audioEngine.volume);
+          this.app.youtubePlayer?.playAt(track.sourceId, Date.now() + 50, 0)
+            .catch(() => this.setYouTubePlayerStatus('Tekan Play di player YouTube untuk mulai.'));
+          this.setPlayState(true);
+        }
         this.setView('home');
         return;
       }
-      if (track.sourceType === 'local-file' && !this.app.socketClient.roomId) {
+      await this.app.audioEngine.ensureContext();
+      if (track.sourceType === 'local-file' && !socketClient.roomId) {
         const localTrack = await this.localLibrary.getLocalAudio(track.id);
         if (!localTrack?.audioData) throw new Error('File lokal sudah tidak tersedia');
         this.addToSoloQueue(track);
         await this.app.audioEngine.loadAudioFromArrayBuffer(localTrack.audioData, track.name, track.id);
-        this.app.socketClient.cloudMesh.lastKnownTrack = track;
+        socketClient.cloudMesh.lastKnownTrack = track;
         this.currentTrack = track;
         this.updateTrackUI(track.name, track.duration || this.app.audioEngine.currentTrackDuration, track.thumbnail || '');
-        this.app.audioEngine.schedulePlayAtServerTime(this.app.socketClient.clockSync?.getServerTime?.() + 50 || Date.now() + 50, 0);
+        this.app.audioEngine.schedulePlayAtServerTime(socketClient.clockSync?.getServerTime?.() + 50 || Date.now() + 50, 0);
         this.setPlayState(true);
         this.setView('home');
         return;
       }
-      if (track.audioUrl && !this.app.socketClient.roomId) {
+      if (track.sourceType === 'local-file' && socketClient.roomId) {
+        if (!socketClient.isHost) {
+          this.showUrlFeedback('File lokal hanya bisa dibagikan dari perangkat host.', 'error');
+          return;
+        }
+        const localTrack = await this.localLibrary.getLocalAudio(track.id);
+        if (!localTrack?.audioData) throw new Error('File lokal sudah tidak tersedia');
+        await this.uploadLocalTrackToRoom(track, localTrack.audioData);
+        const selected = await socketClient.playQueueItem(track.id, true);
+        if (!selected) this.showUrlFeedback('Room gagal memilih file. Refresh antrean lalu coba lagi.', 'error');
+        this.setView('home');
+        return;
+      }
+      if (track.audioUrl && !socketClient.roomId) {
         this.addToSoloQueue(track);
-        this.app.socketClient.cloudMesh.lastKnownTrack = track;
+        socketClient.cloudMesh.lastKnownTrack = track;
         this.currentTrack = track;
         this.updateTrackUI(track.name, track.duration || 0, track.thumbnail || '');
         this.setTrackLoading(`Memuat ${track.name}…`);
         const buffer = await this.app.audioEngine.loadAudioFromUrl(track.audioUrl, track.name);
         this.app.audioEngine.schedulePlayAtServerTime(
-          this.app.socketClient.clockSync?.getServerTime?.() + 50 || Date.now() + 50,
+          socketClient.clockSync?.getServerTime?.() + 50 || Date.now() + 50,
           0
         );
         this.updateTrackUI(track.name, buffer.duration || track.duration || 0, track.thumbnail || '');
@@ -2249,11 +2267,12 @@ export class UIManager {
         this.setView('home');
         return;
       }
-      if (!this.app.socketClient.roomId) await this.app.socketClient.createRoom(this.getDeviceName());
-      const item = { ...track, id: track.id, addedBy: this.getDeviceName() };
-      await this.app.socketClient.addToQueue(item);
-      this.app.socketClient.playQueueItem(item.id, true);
-      this.setView('home');
+      if (track.audioUrl && socketClient.roomId) {
+        await this.playResolvedAudio({ ...track, addedBy: this.getDeviceName() });
+        this.setView('home');
+        return;
+      }
+      this.showUrlFeedback('Sumber audio ini belum bisa diputar dari room.', 'error');
     } catch (error) {
       this.showUrlFeedback('Lagu gagal dimuat. Coba cari ulang sumber audio.', 'error');
     }
