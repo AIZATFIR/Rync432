@@ -1,5 +1,6 @@
 const IFRAME_API_URL = 'https://www.youtube.com/iframe_api';
 const PLAYER_STARTUP_TIMEOUT_MS = 12_000;
+const VIDEO_POLICY_TTL_MS = 5 * 60 * 1000;
 let apiPromise;
 
 function loadIframeApi(deadline = Date.now() + PLAYER_STARTUP_TIMEOUT_MS) {
@@ -45,6 +46,8 @@ export class YouTubeEmbedPlayer {
     this.videoId = null;
     this.scheduledPlay = null;
     this.playRequestId = 0;
+    this.videoPolicyCache = new Map();
+    this.videoPolicyRequests = new Map();
   }
 
   cancelScheduledPlay() {
@@ -58,7 +61,60 @@ export class YouTubeEmbedPlayer {
     return loadIframeApi().then(() => true);
   }
 
+  async getVideoPolicy(videoId) {
+    const cached = this.videoPolicyCache.get(videoId);
+    if (cached && Date.now() - cached.checkedAt < VIDEO_POLICY_TTL_MS) {
+      if (!cached.embeddable) throw new Error('VIDEO_NOT_EMBEDDABLE');
+      return cached;
+    }
+
+    let request = this.videoPolicyRequests.get(videoId);
+    if (!request) {
+      request = fetch(`/api/yt-video-policy?id=${encodeURIComponent(videoId)}`, { cache: 'no-store' })
+        .then(async response => {
+          const policy = await response.json().catch(() => ({}));
+          if (!response.ok || policy.videoId !== videoId
+            || typeof policy.madeForKids !== 'boolean' || typeof policy.embeddable !== 'boolean') {
+            throw new Error(policy.error || 'VIDEO_POLICY_UNAVAILABLE');
+          }
+          const validated = { ...policy, checkedAt: Date.now() };
+          this.videoPolicyCache.set(videoId, validated);
+          return validated;
+        })
+        .finally(() => {
+          if (this.videoPolicyRequests.get(videoId) === request) this.videoPolicyRequests.delete(videoId);
+        });
+      this.videoPolicyRequests.set(videoId, request);
+    }
+    const policy = await request;
+    if (!policy.embeddable) throw new Error('VIDEO_NOT_EMBEDDABLE');
+    return policy;
+  }
+
+  createPrivacyEnhancedIframe(videoId) {
+    const container = document.getElementById(this.elementId);
+    if (!container) throw new Error('YOUTUBE_PLAYER_CONTAINER_MISSING');
+    const iframe = document.createElement('iframe');
+    const params = new URLSearchParams({
+      autoplay: '0',
+      controls: '1',
+      enablejsapi: '1',
+      origin: globalThis.location?.origin || '',
+      playsinline: '1'
+    });
+    iframe.width = '480';
+    iframe.height = '270';
+    iframe.title = 'YouTube video player';
+    iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+    iframe.allowFullscreen = true;
+    iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+    iframe.src = `https://www.youtube-nocookie.com/embed/${videoId}?${params}`;
+    container.replaceChildren(iframe);
+    return iframe;
+  }
+
   async ensurePlayer(videoId = '') {
+    if (videoId) await this.getVideoPolicy(videoId);
     if (!this.readyPromise) {
       const initialVideoId = videoId;
       const startupDeadline = Date.now() + PLAYER_STARTUP_TIMEOUT_MS;
@@ -70,18 +126,7 @@ export class YouTubeEmbedPlayer {
           reject(new Error('YOUTUBE_PLAYER_READY_TIMEOUT'));
         }, Math.max(0, startupDeadline - Date.now()));
         try {
-          this.player = new YT.Player(this.elementId, {
-            width: '480',
-            height: '270',
-            videoId: initialVideoId || undefined,
-            playerVars: {
-              autoplay: 0,
-              controls: 1,
-              enablejsapi: 1,
-              playsinline: 1,
-              origin: globalThis.location?.origin || ''
-            },
-            events: {
+          const events = {
               onReady: event => {
                 if (settled) return;
                 settled = true;
@@ -94,8 +139,23 @@ export class YouTubeEmbedPlayer {
               },
               onError: event => this.onError(event.data),
               onAutoplayBlocked: () => this.onAutoplayBlocked()
-            },
-          });
+          };
+          if (initialVideoId) {
+            this.player = new YT.Player(this.createPrivacyEnhancedIframe(initialVideoId), { events });
+          } else {
+            this.player = new YT.Player(this.elementId, {
+              width: '480',
+              height: '270',
+              playerVars: {
+                autoplay: 0,
+                controls: 1,
+                enablejsapi: 1,
+                playsinline: 1,
+                origin: globalThis.location?.origin || ''
+              },
+              events
+            });
+          }
         } catch (error) {
           settled = true;
           clearTimeout(readinessTimeout);
@@ -119,7 +179,7 @@ export class YouTubeEmbedPlayer {
   async cueVideo(videoId, startSeconds = 0) {
     if (!/^[A-Za-z0-9_-]{11}$/.test(videoId || '')) throw new Error('INVALID_YOUTUBE_VIDEO_ID');
     const requestId = this.cancelScheduledPlay();
-    const player = await this.ensurePlayer();
+    const player = await this.ensurePlayer(videoId);
     if (requestId !== this.playRequestId) return;
     player.cueVideoById({ videoId, startSeconds: Math.max(0, Number(startSeconds) || 0) });
     this.videoId = videoId;
@@ -132,7 +192,7 @@ export class YouTubeEmbedPlayer {
   async playAt(videoId, targetServerTime, startSeconds = 0) {
     if (videoId && !/^[A-Za-z0-9_-]{11}$/.test(videoId)) throw new Error('INVALID_YOUTUBE_VIDEO_ID');
     const requestId = this.cancelScheduledPlay();
-    const player = await this.ensurePlayer();
+    const player = await this.ensurePlayer(videoId);
     if (requestId !== this.playRequestId) return;
     if (videoId && videoId !== this.videoId) {
       player.cueVideoById({ videoId, startSeconds: Math.max(0, Number(startSeconds) || 0) });

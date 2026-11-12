@@ -9,6 +9,7 @@ import { validateStreamUrl } from './streaming/urlSecurity.js';
 import roomHandler from '../api/room.js';
 import uploadAudioHandler from '../api/upload-audio.js';
 import ytSearchHandler from '../api/yt-search.js';
+import ytVideoPolicyHandler from '../api/yt-video-policy.js';
 import ytStreamHandler from '../api/yt-stream.js';
 import healthHandler from '../api/health.js';
 
@@ -107,6 +108,10 @@ const server = http.createServer(async (req, res) => {
 
   if (reqUrl === '/api/yt-search') {
     return runApiHandler(ytSearchHandler, req, res);
+  }
+
+  if (reqUrl === '/api/yt-video-policy') {
+    return runApiHandler(ytVideoPolicyHandler, req, res);
   }
 
   if (reqUrl === '/api/yt-stream') {

@@ -11,6 +11,7 @@ afterEach(() => {
 
 function installFakePlayer() {
   const instances = [];
+  const container = { children: [], replaceChildren(...children) { this.children = children; } };
   class FakePlayer {
     constructor(elementId, options) {
       this.elementId = elementId;
@@ -28,10 +29,57 @@ function installFakePlayer() {
   }
   globalThis.YT = { Player: FakePlayer };
   globalThis.location = { origin: 'https://rync.zafir.my' };
+  globalThis.document = {
+    container,
+    getElementById: () => container,
+    createElement: tagName => ({ tagName })
+  };
+  globalThis.fetch = vi.fn(async url => ({
+    ok: true,
+    json: async () => ({
+      videoId: new URL(url, 'https://rync.zafir.my').searchParams.get('id'),
+      madeForKids: false,
+      embeddable: true
+    })
+  }));
   return instances;
 }
 
 describe('YouTube embedded player adapter', () => {
+  it('waits for video policy before creating a privacy-enhanced iframe player', async () => {
+    const instances = installFakePlayer();
+    let resolvePolicy;
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(resolve => { resolvePolicy = resolve; })));
+    const player = new YouTubeEmbedPlayer('youtubePlayerContainer');
+
+    const cue = player.cueVideo('dQw4w9WgXcQ');
+    await Promise.resolve();
+    expect(instances).toHaveLength(0);
+    expect(globalThis.document.container.children).toEqual([]);
+
+    resolvePolicy({ ok: true, json: async () => ({ videoId: 'dQw4w9WgXcQ', madeForKids: true, embeddable: true }) });
+    await cue;
+
+    expect(instances).toHaveLength(1);
+    expect(instances[0].elementId.src).toMatch(/^https:\/\/www\.youtube-nocookie\.com\/embed\/dQw4w9WgXcQ\?/);
+    expect(instances[0].elementId.src).toContain('origin=https%3A%2F%2Frync.zafir.my');
+    expect(instances[0].options.events).toBeDefined();
+  });
+
+  it('never embeds when video policy is unavailable or embedding is disabled', async () => {
+    const instances = installFakePlayer();
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ videoId: 'dQw4w9WgXcQ', madeForKids: false, embeddable: false })
+    })));
+    const player = new YouTubeEmbedPlayer('youtubePlayerContainer');
+
+    await expect(player.playAt('dQw4w9WgXcQ', Date.now())).rejects.toThrow('VIDEO_NOT_EMBEDDABLE');
+
+    expect(instances).toHaveLength(0);
+    expect(globalThis.document.container.children).toEqual([]);
+  });
+
   it('preloads the official iframe API without creating a player', async () => {
     vi.resetModules();
     const { YouTubeEmbedPlayer: IsolatedPlayer } = await import('../public/js/music/YouTubeEmbedPlayer.js');
@@ -87,7 +135,11 @@ describe('YouTube embedded player adapter', () => {
     await player.playAt('dQw4w9WgXcQ', Date.now() - 1, 12);
 
     expect(instances).toHaveLength(1);
-    expect(instances[0].options.playerVars).toMatchObject({ autoplay: 0, controls: 1, enablejsapi: 1, origin: 'https://rync.zafir.my' });
+    expect(instances[0].elementId.src).toContain('https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?');
+    expect(instances[0].elementId.src).toContain('autoplay=0');
+    expect(instances[0].elementId.src).toContain('controls=1');
+    expect(instances[0].elementId.src).toContain('enablejsapi=1');
+    expect(instances[0].elementId.src).toContain('origin=https%3A%2F%2Frync.zafir.my');
     expect(instances[0].calls).toContainEqual(['cueVideoById', { videoId: 'dQw4w9WgXcQ', startSeconds: 12 }]);
     expect(instances[0].calls).toContainEqual(['playVideo']);
   });
@@ -216,7 +268,7 @@ describe('YouTube embedded player adapter', () => {
     vi.advanceTimersByTime(1000);
 
     expect(instances[0].calls.filter(call => call[0] === 'playVideo')).toHaveLength(1);
-    expect(instances[0].calls).toContainEqual(['cueVideoById', { videoId: 'abcdefghijk', startSeconds: 0 }]);
+    expect(instances[0].calls).toContainEqual(['cueVideoById', { videoId: 'abcdefghijk' }]);
   });
 
   it('ignores stale play requests when a newer track is selected during iframe startup', async () => {
@@ -228,7 +280,7 @@ describe('YouTube embedded player adapter', () => {
     await Promise.all([oldRequest, newRequest]);
 
     expect(instances[0].calls.filter(call => call[0] === 'cueVideoById')).toEqual([
-      ['cueVideoById', { videoId: 'abcdefghijk', startSeconds: 0 }]
+      ['cueVideoById', { videoId: 'abcdefghijk' }]
     ]);
     expect(instances[0].calls.filter(call => call[0] === 'playVideo')).toHaveLength(1);
   });

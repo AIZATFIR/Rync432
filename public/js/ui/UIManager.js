@@ -2460,6 +2460,16 @@ export class UIManager {
     }
   }
 
+  getYouTubePlaybackError(error) {
+    if (error?.message === 'VIDEO_NOT_EMBEDDABLE') {
+      return { message: 'Video ini tidak mengizinkan pemutaran di Rync. Pilih video lain.', retryable: false };
+    }
+    if (error?.message === 'VIDEO_NOT_FOUND') {
+      return { message: 'Video YouTube ini sudah tidak tersedia. Pilih video lain.', retryable: false };
+    }
+    return { message: 'Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.', retryable: true };
+  }
+
   getYouTubeTargetServerTime(delayMs = 50) {
     const serverTime = this.app?.socketClient?.clockSync?.getServerTime?.();
     return (Number.isFinite(serverTime) ? serverTime : Date.now()) + delayMs;
@@ -2480,7 +2490,8 @@ export class UIManager {
       this.setYouTubePlayerStatus('');
       return true;
     } catch (error) {
-      this.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.', { retryable: true });
+      const playbackError = this.getYouTubePlaybackError(error);
+      this.setYouTubePlayerStatus(playbackError.message, { retryable: playbackError.retryable });
       return false;
     } finally {
       if (button) {

@@ -1828,6 +1828,20 @@ describe('YouTube search queue UI', () => {
     expect(retry.disabled).toBe(false);
   });
 
+  it('explains blocked and missing YouTube videos without offering a futile retry', async () => {
+    const youtubePlayer = { destroy: vi.fn(), playAt: vi.fn().mockRejectedValue(new Error('VIDEO_NOT_EMBEDDABLE')) };
+    const retry = { hidden: true, disabled: false, textContent: 'Coba lagi' };
+    const status = { textContent: '' };
+    const ui = new UIManager({ youtubePlayer, audioEngine: { pauseOffsetSec: 0 } });
+    ui.currentTrack = { id: 'yt_dQw4w9WgXcQ', sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ' };
+    ui.elements = { youtubePlayerStatus: status, youtubePlayerRetryBtn: retry };
+
+    await expect(ui.retryYouTubePlayback()).resolves.toBe(false);
+
+    expect(status.textContent).toContain('tidak mengizinkan pemutaran');
+    expect(retry.hidden).toBe(true);
+  });
+
   it('uses the synchronized server clock for local YouTube start requests', () => {
     const ui = new UIManager({ socketClient: { clockSync: { getServerTime: () => 10_000 } } });
 
