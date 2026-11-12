@@ -70,6 +70,8 @@ describe('Rync page structure', () => {
     expect(css).toContain('background: var(--surface-card);');
     expect(css).not.toContain('background: linear-gradient(155deg, #191d15, #12150f 72%);');
     expect(css).toMatch(/\.btn-spotify-primary\s*\{[^}]*color:\s*var\(--text-on-accent\)/);
+    expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*?\.primary-nav\s*\{[^}]*background: var\(--surface-card\);/);
+    expect(css).toContain('@media (prefers-reduced-transparency: reduce)');
 
     const lightTokens = css.match(/:root\[data-theme="light"\]\s*\{([^}]+)\}/)?.[1] || '';
     const token = name => lightTokens.match(new RegExp(`${name}:\\s*(#[0-9a-f]{6})`, 'i'))?.[1];

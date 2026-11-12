@@ -1808,7 +1808,7 @@ body {
   min-height: 64px;
   margin: 10px auto 0;
   padding: 8px 12px;
-  background: rgba(25, 29, 21, 0.97);
+  background: var(--surface-card);
   border: 1px solid var(--border-subtle);
   border-radius: 14px;
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.38);
@@ -1975,7 +1975,7 @@ body:not(.is-playing) .visualizer-container { display: none; }
     height: calc(64px + env(safe-area-inset-bottom));
     justify-content: space-around;
     padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
-    background: rgba(16, 19, 14, 0.96);
+    background: var(--surface-card);
     border: 0;
     border-top: 1px solid var(--border-subtle);
     border-radius: 0;
@@ -2016,6 +2016,14 @@ body:not(.is-playing) .visualizer-container { display: none; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .mini-player, .primary-nav, .modal-overlay {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .mini-player, .primary-nav { background: var(--surface-card); }
 }
 
 /* Keep the empty player focused on choosing a source, not inactive controls. */
