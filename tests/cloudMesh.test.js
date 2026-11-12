@@ -160,6 +160,34 @@ describe('CloudMesh audio transfer', () => {
     expect(payload.signalId).toBeUndefined();
   });
 
+  it('retries an offer after peer setup fails instead of retaining a dead connection', async () => {
+    class FakePeerConnection {
+      connectionState = 'new';
+      createDataChannel = vi.fn(() => ({}));
+      createOffer = vi.fn().mockRejectedValue(new Error('temporary offer failure'));
+      close = vi.fn(() => { this.connectionState = 'closed'; });
+    }
+    vi.stubGlobal('RTCPeerConnection', FakePeerConnection);
+    const mesh = new CloudMesh(() => {});
+    mesh.setupDataChannel = vi.fn();
+
+    await expect(mesh.initiateWebRTCOffer('guest')).resolves.toBe(false);
+
+    expect(mesh.peerConnections.has('guest')).toBe(false);
+  });
+
+  it('treats a queued MQTT signal as delivered when the HTTP fallback is unavailable', async () => {
+    const mesh = new CloudMesh(() => {});
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'host';
+    mesh.mqttClient = { publish: vi.fn() };
+    mesh.isMqttConnected = true;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }));
+
+    await expect(mesh.sendSignal('guest', { type: 'offer', sdp: { type: 'offer' } })).resolves.toBe(true);
+    expect(mesh.mqttClient.publish).toHaveBeenCalledOnce();
+  });
+
   it('keeps a peer during a transient disconnect and cancels cleanup after recovery', () => {
     vi.useFakeTimers();
     class FakePeerConnection {
@@ -294,9 +322,8 @@ describe('CloudMesh audio transfer', () => {
     expect(mesh.peerConnections.size).toBe(0);
   });
 
-  it('negotiates a peer channel and transfers a requested audio buffer end to end', async () => {
+  it('connects a five-device host star and transfers audio to a guest', async () => {
     const hostEvents = [];
-    const guestEvents = [];
     class FakeDataChannel {
       readyState = 'connecting';
       bufferedAmount = 0;
@@ -351,26 +378,36 @@ describe('CloudMesh audio transfer', () => {
     vi.stubGlobal('RTCPeerConnection', FakePeerConnection);
     vi.stubGlobal('RTCSessionDescription', class { constructor(value) { Object.assign(this, value); } });
     const host = new CloudMesh((type, payload) => hostEvents.push({ type, payload }));
-    const guest = new CloudMesh((type, payload) => guestEvents.push({ type, payload }));
-    host.roomId = guest.roomId = 'ROOM';
+    const guests = Array.from({ length: 4 }, (_, index) => new CloudMesh(() => {}));
+    const guestEvents = [];
+    guests.forEach((guest, index) => {
+      guest.roomId = 'ROOM';
+      guest.peerId = `guest-${index + 1}`;
+      guest.lastKnownTrack = { id: 'track-1', name: 'Song' };
+      guest.updateLoadingState = vi.fn();
+      guest.broadcastReadiness = vi.fn();
+      if (index === 0) guest.onEvent = (type, payload) => guestEvents.push({ type, payload });
+    });
+    host.roomId = 'ROOM';
     host.peerId = 'host';
-    guest.peerId = 'guest';
     host.isHost = true;
     host.lastKnownTrack = { id: 'track-1', name: 'Song' };
-    guest.lastKnownTrack = host.lastKnownTrack;
     host.localAudioBufferCache.set('track-1', new Uint8Array([4, 8, 15, 16, 23, 42]).buffer);
     host.updateLoadingState = vi.fn();
-    guest.updateLoadingState = vi.fn();
     host.broadcastReadiness = vi.fn();
-    guest.broadcastReadiness = vi.fn();
-    host.sendSignal = async (_target, signal) => guest.handleIncomingSignal('host', signal);
-    guest.sendSignal = async (_target, signal) => host.handleIncomingSignal('guest', signal);
+    const guestById = new Map(guests.map(guest => [guest.peerId, guest]));
+    host.sendSignal = async (target, signal) => { await guestById.get(target).handleIncomingSignal('host', signal); return true; };
+    guests.forEach(guest => {
+      guest.sendSignal = async (_target, signal) => { await host.handleIncomingSignal(guest.peerId, signal); return true; };
+    });
 
-    await host.initiateWebRTCOffer('guest');
+    for (const guest of guests) await host.initiateWebRTCOffer(guest.peerId);
+    const guest = guests[0];
     guest.requestTrackBufferFromPeers('Song', 'track-1');
 
     const received = guestEvents.find(event => event.type === 'BINARY_AUDIO_RECEIVED')?.payload?.arrayBuffer;
-    expect(host.peerConnections.get('guest').channel.readyState).toBe('open');
+    expect(host.peerConnections.size).toBe(4);
+    expect([...host.peerConnections.values()].every(peer => peer.channel.readyState === 'open')).toBe(true);
     expect(guest.dataChannels.get('host').readyState).toBe('open');
     expect(Array.from(new Uint8Array(received))).toEqual([4, 8, 15, 16, 23, 42]);
     expect(host.pendingAudioTransferAcks.size).toBe(0);
@@ -1113,12 +1150,15 @@ describe('CloudMesh audio transfer', () => {
     expect(mesh.lastKnownQueue.map(item => item.id)).toEqual(['current', 'next']);
   });
 
-  it('clears room peer transports and identity when leaving', () => {
+  it('clears room peer transports and sends the host token in the leave request', async () => {
     const mesh = new CloudMesh(() => {});
     mesh.roomId = 'ROOM';
     mesh.peerId = 'peer-1';
+    mesh.hostToken = 'private-host-token';
     mesh.roomTopic = 'room-topic';
     mesh.peerTopic = 'peer-topic';
+    const sendBeacon = vi.fn(() => true);
+    vi.stubGlobal('navigator', { sendBeacon });
     const peer = { close: vi.fn() };
     const channel = { close: vi.fn() };
     mesh.peerConnections.set('peer-2', peer);
@@ -1134,6 +1174,11 @@ describe('CloudMesh audio transfer', () => {
     expect(mesh.pendingIceCandidates.size).toBe(0);
     expect(mesh.roomId).toBeNull();
     expect(mesh.peerId).toBeNull();
+    expect(sendBeacon).toHaveBeenCalledOnce();
+    expect(sendBeacon.mock.calls[0][0]).toBe('/api/room?action=leave_room');
+    await expect(sendBeacon.mock.calls[0][1].text()).resolves.toBe(JSON.stringify({
+      roomId: 'ROOM', peerId: 'peer-1', hostToken: 'private-host-token'
+    }));
   });
 
   it('waits for server room creation before reporting the room ready', async () => {

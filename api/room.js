@@ -64,9 +64,8 @@ const checkQueueRevision = (room, body, res) => {
   }
   return true;
 };
-const freezeForStaleHost = (room, now) => {
-  const hostPeer = room?.peers?.[room.hostId];
-  if (!hostPeer || now - (hostPeer.lastSeen || 0) < HOST_STALE_MS || room.hostDisconnectedAt) return false;
+const freezeHostPlayback = (room, now) => {
+  if (!room || room.hostDisconnectedAt) return false;
   if (room.state === 'PLAYING') {
     const targetTime = Number(room.targetServerTime);
     const elapsed = Number.isFinite(targetTime) && targetTime > 0 ? Math.max(0, (now - targetTime) / 1000) : 0;
@@ -76,6 +75,11 @@ const freezeForStaleHost = (room, now) => {
   room.targetServerTime = null;
   room.hostDisconnectedAt = now;
   return true;
+};
+const freezeForStaleHost = (room, now) => {
+  const hostPeer = room?.peers?.[room.hostId];
+  if (!hostPeer || now - (hostPeer.lastSeen || 0) < HOST_STALE_MS) return false;
+  return freezeHostPlayback(room, now);
 };
 
 function chooseNextTrack(room, automatic, preparedTrackId) {
@@ -937,9 +941,13 @@ export default async function handler(req, res) {
   if (action === 'leave_room') {
     const room = rooms.get(roomId);
     if (room && room.peers[peerId]) {
+      if (room.hostId === peerId) {
+        if (!requireHost(room, body.hostToken)) return;
+        freezeHostPlayback(room, now);
+      }
       delete room.peers[peerId];
       room.updatedAt = now;
-      return res.status(200).json({ success: true });
+      return res.status(200).json({ success: true, state: room.state, hostDisconnected: !!room.hostDisconnectedAt });
     }
     return res.status(200).json({ success: true });
   }

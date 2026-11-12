@@ -470,6 +470,30 @@ describe('room authority', () => {
     expect(delivered.body.signals).toContainEqual({ from: 'guest-peer', to: 'host-peer', data: request, timestamp: expect.any(Number) });
   });
 
+  it('requires the host token to leave and freezes playback for remaining guests', async () => {
+    const roomId = `H${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
+    await callRoom('play', {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken,
+      track: { id: 'track-a', name: 'A' }, targetServerTime: Date.now() - 5_000, startOffsetSec: 4
+    });
+
+    const spoofedLeave = await callRoom('leave_room', { roomId, peerId: 'host-peer' });
+    const hostLeave = await callRoom('leave_room', {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken
+    });
+    const guestSnapshot = await callRoom('poll', { roomId, peerId: 'guest-peer' });
+
+    expect(spoofedLeave.statusCode).toBe(403);
+    expect(hostLeave.statusCode).toBe(200);
+    expect(guestSnapshot.body.state).toBe('PAUSED');
+    expect(guestSnapshot.body.hostDisconnected).toBe(true);
+    expect(guestSnapshot.body.targetServerTime).toBeNull();
+    expect(guestSnapshot.body.startOffsetSec).toBeGreaterThanOrEqual(9);
+    expect(guestSnapshot.body.peers.some(peer => peer.id === 'host-peer')).toBe(false);
+  });
+
   it('rejects queue additions atomically when they exceed the room limit', async () => {
     const roomId = `K${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
     await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });

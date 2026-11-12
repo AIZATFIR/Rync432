@@ -642,8 +642,10 @@ export class CloudMesh {
       try {
         const fullPayload = { ...payload, fromPeerId: this.peerId };
         this.mqttClient.publish(topic, JSON.stringify(fullPayload));
-      } catch (e) {}
+        return true;
+      } catch (e) { return false; }
     }
+    return false;
   }
 
   initBroadcastChannel(roomId, deviceName) {
@@ -2562,25 +2564,29 @@ export class CloudMesh {
   }
 
   async initiateWebRTCOffer(targetPeerId) {
-    const pc = this.createPeerConnection(targetPeerId);
-    const channel = pc.createDataChannel('audioMesh', { ordered: true });
-    this.setupDataChannel(targetPeerId, channel);
-
+    let pc;
     try {
+      pc = this.createPeerConnection(targetPeerId);
+      const channel = pc.createDataChannel('audioMesh', { ordered: true });
+      this.setupDataChannel(targetPeerId, channel);
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      await this.sendSignal(targetPeerId, {
+      const sent = await this.sendSignal(targetPeerId, {
         type: 'offer',
         sdp: pc.localDescription.toJSON()
       });
+      if (!sent) throw new Error('WEBRTC_OFFER_SIGNAL_FAILED');
+      return true;
     } catch (e) {
+      if (pc) this.cleanupPeerConnection(targetPeerId, pc);
       console.warn('WebRTC offer error:', e.message);
+      return false;
     }
   }
 
   async sendSignal(targetPeerId, signalData) {
     const signal = { ...signalData, signalId: signalData.signalId || createSignalId() };
-    this.publishMqtt(`rync432/v1/peer/${targetPeerId}`, {
+    const mqttSent = this.publishMqtt(`rync432/v1/peer/${targetPeerId}`, {
       type: 'SIGNAL',
       from: this.peerId,
       data: signal
@@ -2597,9 +2603,9 @@ export class CloudMesh {
           data: signal
         })
       });
-      return response.ok;
+      return response.ok === true || mqttSent;
     } catch (error) {
-      return false;
+      return mqttSent;
     }
   }
 
@@ -2885,11 +2891,14 @@ export class CloudMesh {
     }
     if (roomId && peerId) {
       try {
-        if (navigator.sendBeacon) {
-          navigator.sendBeacon(`/api/room?action=leave_room&roomId=${roomId}&peerId=${peerId}`);
-        } else {
-          fetch(`/api/room?action=leave_room&roomId=${roomId}&peerId=${peerId}`, { method: 'POST', keepalive: true }).catch(() => {});
-        }
+        const url = '/api/room?action=leave_room';
+        const body = JSON.stringify({ roomId, peerId, hostToken: this.hostToken || undefined });
+        const queued = typeof navigator.sendBeacon === 'function'
+          && navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
+        if (!queued) fetch(url, {
+          method: 'POST', keepalive: true,
+          headers: { 'Content-Type': 'application/json' }, body
+        }).catch(() => {});
       } catch (e) { }
     }
     this.peerConnections.forEach(peer => {
