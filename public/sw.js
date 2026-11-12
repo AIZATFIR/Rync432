@@ -1,11 +1,17 @@
 // Rync432 Service Worker - Offline Cache & Background Audio Support
-const CACHE_NAME = 'rync432-v1';
+const CACHE_NAME = 'rync432-v2';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
+  '/privacy.html',
+  '/terms.html',
   '/css/style.css',
   '/manifest.json',
   '/js/app.js',
+  '/js/privacyGate.js',
+  '/js/privacy/consent.js',
+  '/js/privacy/youtubeDataRetention.js',
+  '/js/privacy/youtubePlaybackErrors.js',
   '/js/ui/UIManager.js',
   '/js/ui/Visualizer.js',
   '/js/ui/QRCodeGenerator.js',

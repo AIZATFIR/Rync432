@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { LocalLibrary } from '../public/js/library/LocalLibrary.js';
+import { YOUTUBE_API_DATA_TTL_MS } from '../public/js/privacy/youtubeDataRetention.js';
 
 describe('LocalLibrary Local Storage Fallback', () => {
   let lib;
@@ -8,6 +9,8 @@ describe('LocalLibrary Local Storage Fallback', () => {
     // Reset simulated storage
     const storage = {};
     global.localStorage = {
+      get length() { return Object.keys(storage).length; },
+      key: (index) => Object.keys(storage)[index] || null,
       getItem: (key) => storage[key] || null,
       setItem: (key, val) => { storage[key] = String(val); },
       removeItem: (key) => { delete storage[key]; },
@@ -19,7 +22,7 @@ describe('LocalLibrary Local Storage Fallback', () => {
   });
 
   it('adds and retrieves favorite tracks', async () => {
-    const track = { id: 'yt_123', name: 'Ambient Focus', artist: 'Rync Synth' };
+    const track = { id: 'yt_123', sourceType: 'youtube', apiDataFetchedAt: Date.now(), name: 'Ambient Focus', artist: 'Rync Synth' };
     await lib.addFavorite(track);
 
     const isFav = await lib.isFavorite('yt_123');
@@ -31,7 +34,7 @@ describe('LocalLibrary Local Storage Fallback', () => {
   });
 
   it('removes favorite track properly', async () => {
-    const track = { id: 'yt_123', name: 'Ambient Focus', artist: 'Rync Synth' };
+    const track = { id: 'yt_123', sourceType: 'youtube', apiDataFetchedAt: Date.now(), name: 'Ambient Focus', artist: 'Rync Synth' };
     await lib.addFavorite(track);
     await lib.removeFavorite('yt_123');
 
@@ -150,6 +153,25 @@ describe('LocalLibrary Local Storage Fallback', () => {
     expect((await lib.getPlaylists())[0].tracks.map(track => track.id)).toEqual(['c', 'a', 'b']);
   });
 
+  it('removes expired YouTube API metadata from favorites, history, and playlists', async () => {
+    const expired = { id: 'yt_old', sourceType: 'youtube', apiDataFetchedAt: Date.now() - YOUTUBE_API_DATA_TTL_MS - 1 };
+    const fresh = { id: 'yt_new', sourceType: 'youtube', apiDataFetchedAt: Date.now() };
+    localStorage.setItem('rync_favs', JSON.stringify([expired, fresh]));
+    localStorage.setItem('rync_history', JSON.stringify([
+      { ...expired, timestamp: 2 }, { ...fresh, timestamp: 1 }
+    ]));
+    localStorage.setItem('rync_playlists', JSON.stringify([{
+      id: 'playlist_1', name: 'Saved', tracks: [expired, fresh]
+    }]));
+
+    await expect(lib.getFavorites()).resolves.toEqual([fresh]);
+    await expect(lib.getRecentHistory()).resolves.toEqual([expect.objectContaining({ id: 'yt_new' })]);
+    await expect(lib.getPlaylists()).resolves.toEqual([expect.objectContaining({ tracks: [fresh] })]);
+    expect(JSON.parse(localStorage.getItem('rync_favs'))).toEqual([fresh]);
+    expect(JSON.parse(localStorage.getItem('rync_history'))).toEqual([expect.objectContaining({ id: 'yt_new' })]);
+    expect(JSON.parse(localStorage.getItem('rync_playlists'))[0].tracks).toEqual([fresh]);
+  });
+
   it('falls back to localStorage when IndexedDB is unavailable', async () => {
     delete global.indexedDB;
     const fallbackLibrary = new LocalLibrary();
@@ -192,5 +214,16 @@ describe('LocalLibrary Local Storage Fallback', () => {
     expect(await lib.getLocalAudio('file-1')).toMatchObject({ id: 'file-1', audioData: bytes });
     expect(await lib.getLocalAudioTracks()).toEqual([expect.objectContaining({ id: 'file-1' })]);
     expect(await lib.saveLocalAudio({ id: 'bad' }, new Uint8Array(8))).toBe(false);
+  });
+
+  it('clears Rync localStorage and its IndexedDB library when asked', async () => {
+    localStorage.setItem('rync_theme', 'light');
+    localStorage.setItem('rync_favs', '[]');
+    localStorage.setItem('other_app_setting', 'keep');
+
+    expect(await lib.clearAllLocalData()).toBe(true);
+    expect(localStorage.getItem('rync_theme')).toBe(null);
+    expect(localStorage.getItem('rync_favs')).toBe(null);
+    expect(localStorage.getItem('other_app_setting')).toBe('keep');
   });
 });

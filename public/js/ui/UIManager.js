@@ -5,6 +5,8 @@ import { MusicSourceManager } from '../music/MusicSourceManager.js';
 import { extractYouTubeVideoId, isYouTubeUrl } from '../music/sources/YouTubeSource.js';
 import { MusicSourceType } from '../music/types.js';
 import { LocalLibrary } from '../library/LocalLibrary.js';
+import { isExpiredYouTubeApiData } from '../privacy/youtubeDataRetention.js';
+import { getYouTubePlaybackError } from '../privacy/youtubePlaybackErrors.js';
 import { recordLocalMetric } from '../metrics/localMetrics.js';
 import { roomJoinMessage } from '../network/roomJoinMessage.js';
 
@@ -155,6 +157,7 @@ export class UIManager {
       userModalName: document.getElementById('userModalName'),
       userModalEmail: document.getElementById('userModalEmail'),
       signOutBtn: document.getElementById('signOutBtn'),
+      revokePrivacyConsentBtn: document.getElementById('revokePrivacyConsentBtn'),
 
       // Hero Room Buttons & Inputs
       createRoomBtn: document.getElementById('createRoomBtn'),
@@ -315,6 +318,7 @@ export class UIManager {
       this.showUrlFeedback('Audio menunggu izin browser. Tekan Play untuk melanjutkan.', 'info');
     };
     this.app.audioEngine.onPlaybackEnded = () => this.handleAudioPlaybackEnded();
+    document.addEventListener('visibilitychange', () => this.handleDocumentVisibilityChange(document.hidden));
   }
 
   handleAudioPlaybackEnded() {
@@ -467,6 +471,17 @@ export class UIManager {
         this.renderUserState();
       });
     }
+
+    elements.revokePrivacyConsentBtn?.addEventListener('click', async () => {
+      if (!window.confirm('Hapus library, preferensi, dan data Rync yang tersimpan di browser ini, lalu cabut persetujuan?')) return;
+      try { await firebaseAuth.signOut(); } catch (error) {}
+      const cleared = await this.localLibrary.clearAllLocalData();
+      if (!cleared) {
+        this.showUrlFeedback('Data tidak terhapus. Tutup tab Rync lain lalu coba lagi.', 'error');
+        return;
+      }
+      window.location.reload();
+    });
 
     // 2. Room Actions
     if (elements.createRoomBtn) {
@@ -734,7 +749,7 @@ export class UIManager {
 
         if (elements.directUrlInput) elements.directUrlInput.value = '';
         if (resolved.sourceType === 'youtube') {
-          await this.streamAudioFromUrl(item.sourceUrl || url.trim(), item.name, item.artist, item.duration, item.thumbnail);
+          await this.streamAudioFromUrl(item.sourceUrl || url.trim(), item.name, item.artist, item.duration, item.thumbnail, item.apiDataFetchedAt);
         } else {
           await this.playResolvedAudio(item);
         }
@@ -1443,7 +1458,7 @@ export class UIManager {
             this.showUrlFeedback('Lagu gagal ditambahkan ke antrean. Coba lagi.', 'error');
           };
           try {
-            const addedItem = await this.addYoutubeTrackToQueue(itemUrl, itemTitle, itemArtist, item.duration, thumbSrc, queueItemId);
+            const addedItem = await this.addYoutubeTrackToQueue(itemUrl, itemTitle, itemArtist, item.duration, thumbSrc, queueItemId, item.apiDataFetchedAt);
             queueBtn.textContent = '✓ Ditambah';
             queueBtn.style.backgroundColor = 'var(--spotify-green)';
             queueBtn.style.color = '#000';
@@ -1464,7 +1479,7 @@ export class UIManager {
         playButton.disabled = true;
         playButton.textContent = 'Memuat…';
         try {
-          await this.streamAudioFromUrl(itemUrl, itemTitle, itemArtist, item.duration, thumbSrc);
+          await this.streamAudioFromUrl(itemUrl, itemTitle, itemArtist, item.duration, thumbSrc, item.apiDataFetchedAt);
         } catch (error) {
           this.showUrlFeedback('Video gagal dimuat. Coba lagi atau buka sumber YouTube.', 'error');
         } finally {
@@ -1481,7 +1496,10 @@ export class UIManager {
     try {
       if (typeof localStorage === 'undefined') return [];
       const queue = JSON.parse(localStorage.getItem('rync_solo_queue') || '[]');
-      return Array.isArray(queue) ? queue : [];
+      if (!Array.isArray(queue)) return [];
+      const retained = queue.filter(item => !isExpiredYouTubeApiData(item));
+      if (retained.length !== queue.length) localStorage.setItem('rync_solo_queue', JSON.stringify(retained));
+      return retained;
     } catch (error) {
       return [];
     }
@@ -1518,7 +1536,7 @@ export class UIManager {
     await this.app.socketClient.addToQueue(item);
   }
 
-  async streamAudioFromUrl(url, trackTitle, artist = 'YouTube', duration = 210, thumbnail = '') {
+  async streamAudioFromUrl(url, trackTitle, artist = 'YouTube', duration = 210, thumbnail = '', apiDataFetchedAt = null) {
     const playRequestId = ++this.youtubePlaybackRequestSequence;
     const videoId = extractYouTubeVideoId(url);
     if (!videoId) throw new Error('ID video YouTube tidak valid');
@@ -1532,18 +1550,25 @@ export class UIManager {
       sourceId: videoId,
       sourceUrl: `https://www.youtube.com/watch?v=${videoId}`
     };
+    if (Number.isFinite(apiDataFetchedAt)) item.apiDataFetchedAt = apiDataFetchedAt;
     if (!this.app.socketClient.roomId) {
       this.addToSoloQueue(item);
       this.app.socketClient.cloudMesh.lastKnownTrack = item;
+      this.setView('player');
       this.app.socketClient.cloudMesh.loadTrackBuffer(item);
       this.app.youtubePlayer?.setVolume(this.app.audioEngine.volume);
       this.setYouTubePlayerStatus('Memuat player YouTube…');
       this.app.youtubePlayer?.playAt(item.sourceId, this.getYouTubeTargetServerTime(), 0)
-        .catch(() => this.setYouTubePlayerStatus('Tekan Play di player YouTube untuk mulai.'));
+        .catch(error => {
+          const status = getYouTubePlaybackError(error, item.sourceId);
+          this.setYouTubePlayerStatus(status.message, { retryable: status.retryable, sourceUrl: status.sourceUrl });
+          this.app.socketClient.cloudMesh.broadcastReadiness('FAILED', item.id, 'youtube');
+        });
       this.updateTrackUI(item.name, item.duration, item.thumbnail, item);
       return item;
     }
     const socketClient = this.app.socketClient;
+    if (this.currentView !== 'room') this.setView('room');
     const existingQueueItem = (socketClient.cloudMesh?.lastKnownQueue || []).find(queued => queued.id === item.id);
     const alreadyQueued = !!existingQueueItem;
     if (existingQueueItem) item.queueItemId = queueItemKey(existingQueueItem);
@@ -1640,7 +1665,7 @@ export class UIManager {
     return item;
   }
 
-  async addYoutubeTrackToQueue(url, trackTitle, artist = 'YouTube', duration = 210, thumbnail = '', queueItemId = createQueueItemId()) {
+  async addYoutubeTrackToQueue(url, trackTitle, artist = 'YouTube', duration = 210, thumbnail = '', queueItemId = createQueueItemId(), apiDataFetchedAt = null) {
     const videoId = extractYouTubeVideoId(url);
     const thumbUrl = thumbnail && thumbnail !== 'NA' && thumbnail.startsWith('http')
       ? thumbnail
@@ -1656,6 +1681,7 @@ export class UIManager {
       sourceId: videoId,
       sourceUrl: `https://www.youtube.com/watch?v=${videoId}`
     };
+    if (Number.isFinite(apiDataFetchedAt)) item.apiDataFetchedAt = apiDataFetchedAt;
     if (this.app.socketClient.roomId) {
       const socketClient = this.app.socketClient;
       const added = await socketClient.addToQueue(item);
@@ -2451,23 +2477,23 @@ export class UIManager {
     if (typeof document !== 'undefined') document.body?.classList.toggle('is-youtube-track', visible);
   }
 
-  setYouTubePlayerStatus(message = '', { retryable = false, retrying = false } = {}) {
-    if (this.elements.youtubePlayerStatus) this.elements.youtubePlayerStatus.textContent = message;
+  setYouTubePlayerStatus(message = '', { retryable = false, retrying = false, sourceUrl = '' } = {}) {
+    if (this.elements.youtubePlayerStatus) {
+      this.elements.youtubePlayerStatus.textContent = message;
+      if (/^https:\/\/(www\.)?youtube\.com\/watch\?v=[A-Za-z0-9_-]{11}$/.test(sourceUrl || '')) {
+        const link = document.createElement('a');
+        link.href = sourceUrl;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = ' Buka YouTube';
+        this.elements.youtubePlayerStatus.appendChild(link);
+      }
+    }
     if (this.elements.youtubePlayerRetryBtn) {
       this.elements.youtubePlayerRetryBtn.hidden = !message || (!retryable && !retrying);
       this.elements.youtubePlayerRetryBtn.disabled = retrying;
       this.elements.youtubePlayerRetryBtn.textContent = retrying ? 'Memuat…' : 'Coba lagi';
     }
-  }
-
-  getYouTubePlaybackError(error) {
-    if (error?.message === 'VIDEO_NOT_EMBEDDABLE') {
-      return { message: 'Video ini tidak mengizinkan pemutaran di Rync. Pilih video lain.', retryable: false };
-    }
-    if (error?.message === 'VIDEO_NOT_FOUND') {
-      return { message: 'Video YouTube ini sudah tidak tersedia. Pilih video lain.', retryable: false };
-    }
-    return { message: 'Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.', retryable: true };
   }
 
   getYouTubeTargetServerTime(delayMs = 50) {
@@ -2490,8 +2516,11 @@ export class UIManager {
       this.setYouTubePlayerStatus('');
       return true;
     } catch (error) {
-      const playbackError = this.getYouTubePlaybackError(error);
-      this.setYouTubePlayerStatus(playbackError.message, { retryable: playbackError.retryable });
+      const playbackError = getYouTubePlaybackError(error, track.sourceId);
+      this.setYouTubePlayerStatus(playbackError.message, {
+        retryable: playbackError.retryable,
+        sourceUrl: playbackError.sourceUrl || track.sourceUrl
+      });
       return false;
     } finally {
       if (button) {
@@ -2540,6 +2569,13 @@ export class UIManager {
     const showPlayer = view === 'player';
     const showRoom = view === 'room' && hasRoom;
     const activePlayerView = showPlayer || showSearch || showRoom;
+    const youtubePlayerVisible = showPlayer || showRoom;
+
+    if (!youtubePlayerVisible && this.currentTrack?.sourceType === 'youtube' && this.isPlayingState) {
+      this.app.audioEngine.pauseOffsetSec = this.app.youtubePlayer?.getCurrentTime?.() || this.app.audioEngine.pauseOffsetSec || 0;
+      this.setPlayState(false);
+      this.setYouTubePlayerStatus('YouTube dijeda saat layar player disembunyikan. Buka player untuk melanjutkan.');
+    }
 
     if (this.elements.homeDashboard) this.elements.homeDashboard.hidden = !showHome;
     if (this.elements.activeRoomSection) {
@@ -2586,6 +2622,14 @@ export class UIManager {
       this.elements.ytUrlInput?.focus();
     }
     if (showLibrary) this.refreshLibrary();
+  }
+
+  handleDocumentVisibilityChange(hidden) {
+    if (!hidden || this.currentTrack?.sourceType !== 'youtube' || !this.isPlayingState) return false;
+    this.app.audioEngine.pauseOffsetSec = this.app.youtubePlayer?.getCurrentTime?.() || this.app.audioEngine.pauseOffsetSec || 0;
+    this.setPlayState(false);
+    this.setYouTubePlayerStatus('YouTube dijeda karena tab tidak terlihat. Kembali ke player lalu tekan Play.');
+    return true;
   }
 
   openNowPlaying() {
@@ -2899,7 +2943,7 @@ export class UIManager {
       const socketClient = this.app.socketClient;
       if (track.sourceType === 'youtube' && track.sourceId) {
         if (socketClient.roomId) {
-          await this.streamAudioFromUrl(track.sourceUrl || `https://www.youtube.com/watch?v=${track.sourceId}`, track.name, track.artist, track.duration, track.thumbnail);
+          await this.streamAudioFromUrl(track.sourceUrl || `https://www.youtube.com/watch?v=${track.sourceId}`, track.name, track.artist, track.duration, track.thumbnail, track.apiDataFetchedAt);
         } else {
           this.addToSoloQueue(track);
           this.currentTrack = track;
@@ -2907,11 +2951,15 @@ export class UIManager {
           this.updateTrackUI(track.name, track.duration || 0, track.thumbnail || '');
           socketClient.cloudMesh.loadTrackBuffer(track);
           this.app.youtubePlayer?.setVolume(this.app.audioEngine.volume);
+          this.setView('player');
           this.setYouTubePlayerStatus('Memuat player YouTube…');
           this.app.youtubePlayer?.playAt(track.sourceId, this.getYouTubeTargetServerTime(), 0)
-            .catch(() => this.setYouTubePlayerStatus('Tekan Play di player YouTube untuk mulai.'));
+            .catch(error => {
+              const status = getYouTubePlaybackError(error, track.sourceId);
+              this.setYouTubePlayerStatus(status.message, { retryable: status.retryable, sourceUrl: status.sourceUrl });
+              socketClient.cloudMesh.broadcastReadiness('FAILED', track.id, 'youtube');
+            });
         }
-        this.setView('home');
         return;
       }
       await this.app.audioEngine.ensureContext();
@@ -3251,6 +3299,9 @@ export class UIManager {
 
   togglePlayback() {
     const { audioEngine, socketClient } = this.app;
+    if (socketClient.roomId && this.currentTrack?.sourceType === 'youtube' && this.currentView !== 'room') {
+      this.setView('room');
+    }
     if (!socketClient.roomId && this.currentTrack?.sourceType === 'youtube') {
       if (this.isPlayingState) {
         const position = this.app.youtubePlayer?.getCurrentTime() || 0;
@@ -3258,9 +3309,13 @@ export class UIManager {
         this.app.youtubePlayer?.pause();
         this.setPlayState(false);
       } else {
+        if (this.currentView !== 'player') this.setView('player');
         const position = audioEngine.pauseOffsetSec || 0;
         this.app.youtubePlayer?.playAt(this.currentTrack.sourceId, this.getYouTubeTargetServerTime(), position)
-          .catch(() => this.setYouTubePlayerStatus('Tekan Play di player YouTube untuk mulai.'));
+          .catch(error => {
+            const status = getYouTubePlaybackError(error, this.currentTrack.sourceId);
+            this.setYouTubePlayerStatus(status.message, { retryable: status.retryable, sourceUrl: status.sourceUrl });
+          });
       }
       return;
     }
@@ -3287,6 +3342,9 @@ export class UIManager {
       return;
     }
     if (!socketClient.isHost) {
+      if (this.currentTrack?.sourceType === 'youtube' && this.isPlayingState) {
+        audioEngine.pauseOffsetSec = this.app.youtubePlayer?.getCurrentTime?.() || audioEngine.pauseOffsetSec || 0;
+      }
       socketClient.requestControl(this.isPlayingState ? 'pause' : 'play');
       return;
     }
@@ -3295,7 +3353,8 @@ export class UIManager {
       const position = this.currentTrack?.sourceType === 'youtube'
         ? this.app.youtubePlayer?.getCurrentTime() || 0
         : audioEngine.getCurrentPlaybackPosition();
-      audioEngine.stopLocalPlayback();
+      if (this.currentTrack?.sourceType === 'youtube') this.app.youtubePlayer?.pause();
+      else audioEngine.stopLocalPlayback();
       audioEngine.pauseOffsetSec = position;
       this.setPlayState(false);
       socketClient.pausePlayback(position);
@@ -3310,6 +3369,15 @@ export class UIManager {
     const offset = this.currentTrack?.sourceType === 'youtube'
       ? this.app.youtubePlayer?.getCurrentTime() || audioEngine.pauseOffsetSec || 0
       : audioEngine.pauseOffsetSec || 0;
+    if (this.currentTrack?.sourceType === 'youtube') {
+      this.app.youtubePlayer?.playAt(this.currentTrack.sourceId, this.getYouTubeTargetServerTime(800), offset)
+        .catch(error => {
+          const status = getYouTubePlaybackError(error, this.currentTrack.sourceId);
+          this.setYouTubePlayerStatus(status.message, { retryable: status.retryable, sourceUrl: status.sourceUrl });
+          socketClient.cloudMesh?.broadcastReadiness('FAILED', this.currentTrack.id || '', 'youtube');
+        });
+      return;
+    }
     socketClient.schedulePlay(800, offset);
   }
 

@@ -95,6 +95,49 @@ body {
   gap: 14px;
 }
 
+.app-container[inert] { pointer-events: none; user-select: none; }
+.privacy-gate[hidden] { display: none !important; }
+.privacy-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  padding: max(24px, env(safe-area-inset-top)) 18px max(24px, env(safe-area-inset-bottom));
+  background: rgba(7, 8, 10, .94);
+  backdrop-filter: blur(20px);
+}
+.privacy-gate-panel {
+  width: min(100%, 560px);
+  padding: clamp(24px, 5vw, 42px);
+  border: 1px solid var(--border-subtle);
+  border-radius: 18px;
+  background: var(--surface-base, #111216);
+  color: var(--text-base);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .42);
+}
+.privacy-gate-panel h2 { margin: 8px 0 16px; font-size: clamp(1.65rem, 5vw, 2.25rem); line-height: 1.08; letter-spacing: -.045em; }
+.privacy-gate-panel > p:not(.eyebrow) { color: var(--text-silver); line-height: 1.58; font-size: .94rem; }
+.privacy-gate-links, .privacy-links { display: flex; flex-wrap: wrap; gap: 10px 18px; }
+.privacy-gate-links { margin: 22px 0; }
+.privacy-gate a, .privacy-settings a { color: var(--spotify-green); text-underline-offset: 3px; }
+.privacy-consent-check { display: flex; align-items: flex-start; gap: 12px; line-height: 1.5; font-size: .9rem; }
+.privacy-consent-check input { flex: 0 0 20px; width: 20px; height: 20px; margin: 1px 0 0; accent-color: var(--spotify-green); }
+.privacy-gate-panel > button { width: 100%; margin-top: 18px; min-height: 48px; }
+.privacy-gate-error { color: #ff8f8f !important; }
+.privacy-settings p { color: var(--text-silver); font-size: .8rem; line-height: 1.5; }
+.privacy-settings .privacy-links { margin: 12px 0; font-size: .82rem; }
+.privacy-settings > button { width: 100%; white-space: normal; }
+.legal-footer { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 8px 18px; padding: 18px 16px max(18px, env(safe-area-inset-bottom)); color: var(--text-silver); font-size: .75rem; }
+.legal-footer a { color: inherit; text-underline-offset: 3px; }
+.privacy-gated .legal-footer { position: fixed; inset: auto 0 0; color: #aeb0b5; }
+@media (max-width: 480px) {
+  .privacy-gate { align-items: start; padding-top: max(28px, env(safe-area-inset-top)); padding-bottom: max(84px, env(safe-area-inset-bottom)); }
+  .privacy-gate-panel { padding: 23px 20px; border-radius: 14px; }
+  .legal-footer { gap: 8px 12px; }
+}
+
 /* Header */
 .app-header {
   display: flex;

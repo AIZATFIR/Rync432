@@ -662,6 +662,147 @@ describe('YouTube search queue UI', () => {
     expect(ui.renderQueue).toHaveBeenCalledWith(ui.soloQueue);
   });
 
+  it('pauses YouTube playback when navigation hides the embedded player', () => {
+    const player = { pause: vi.fn(), getCurrentTime: () => 23 };
+    const audioEngine = { pauseOffsetSec: 0 };
+    const ui = new UIManager({ socketClient: { roomId: null }, audioEngine, youtubePlayer: player });
+    ui.currentView = 'player';
+    ui.currentTrack = { id: 'yt_dQw4w9WgXcQ', sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ' };
+    ui.isPlayingState = true;
+    ui.setYouTubePlayerStatus = vi.fn();
+
+    ui.setView('search');
+
+    expect(player.pause).toHaveBeenCalledOnce();
+    expect(audioEngine.pauseOffsetSec).toBe(23);
+    expect(ui.isPlayingState).toBe(false);
+    expect(ui.setYouTubePlayerStatus).toHaveBeenCalledWith(expect.stringContaining('dijeda'));
+    expect(ui.currentView).toBe('search');
+  });
+
+  it('pauses YouTube playback when the browser tab becomes hidden', () => {
+    const player = { pause: vi.fn(), getCurrentTime: () => 31 };
+    const audioEngine = { pauseOffsetSec: 0 };
+    const ui = new UIManager({ socketClient: { roomId: null }, audioEngine, youtubePlayer: player });
+    ui.currentTrack = { sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ' };
+    ui.isPlayingState = true;
+    ui.setYouTubePlayerStatus = vi.fn();
+
+    expect(ui.handleDocumentVisibilityChange(true)).toBe(true);
+
+    expect(player.pause).toHaveBeenCalledOnce();
+    expect(audioEngine.pauseOffsetSec).toBe(31);
+    expect(ui.isPlayingState).toBe(false);
+  });
+
+  it('opens the visible player before a mini-player resumes YouTube', async () => {
+    const player = { playAt: vi.fn().mockResolvedValue(undefined) };
+    const ui = new UIManager({
+      socketClient: { roomId: null },
+      audioEngine: { pauseOffsetSec: 17 },
+      youtubePlayer: player
+    });
+    ui.currentView = 'home';
+    ui.currentTrack = { sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ' };
+
+    ui.togglePlayback();
+    await Promise.resolve();
+
+    expect(ui.currentView).toBe('player');
+    expect(player.playAt).toHaveBeenCalledWith('dQw4w9WgXcQ', expect.any(Number), 17);
+  });
+
+  it('keeps library-selected YouTube on the visible player view', async () => {
+    const playAt = vi.fn().mockResolvedValue(undefined);
+    const socketClient = { roomId: null, cloudMesh: { loadTrackBuffer: vi.fn(), broadcastReadiness: vi.fn() } };
+    const ui = new UIManager({
+      socketClient,
+      audioEngine: { volume: 1, stopLocalPlayback: vi.fn(), pauseOffsetSec: 0 },
+      youtubePlayer: { setVolume: vi.fn(), playAt }
+    });
+    const navigation = [];
+    ui.setView = view => { ui.currentView = view; navigation.push(view); };
+    ui.updateTrackUI = vi.fn();
+
+    await ui.playLibraryTrack({
+      id: 'yt_dQw4w9WgXcQ', sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ',
+      name: 'Song', duration: 100
+    });
+
+    expect(navigation).toEqual(['player']);
+    expect(playAt).toHaveBeenCalledOnce();
+  });
+
+  it('uses synchronized room controls when a guest mini-player toggles YouTube', () => {
+    const requestControl = vi.fn();
+    const schedulePlay = vi.fn();
+    const pausePlayback = vi.fn();
+    const player = { pause: vi.fn(), getCurrentTime: () => 44 };
+    const ui = new UIManager({
+      socketClient: { roomId: 'ROOM', isHost: false, requestControl, schedulePlay, pausePlayback },
+      audioEngine: { pauseOffsetSec: 0 }, youtubePlayer: player
+    });
+    ui.currentTrack = { sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ' };
+    ui.currentView = 'home';
+    ui.setView = view => { ui.currentView = view; };
+
+    ui.togglePlayback();
+    expect(ui.currentView).toBe('room');
+    expect(requestControl).toHaveBeenCalledWith('play');
+
+    requestControl.mockClear();
+    ui.isPlayingState = true;
+    ui.togglePlayback();
+    expect(requestControl).toHaveBeenCalledWith('pause');
+    expect(ui.app.audioEngine.pauseOffsetSec).toBe(44);
+    expect(player.pause).not.toHaveBeenCalled();
+  });
+
+  it('pauses and schedules YouTube in sync when the room host toggles playback', () => {
+    const pausePlayback = vi.fn();
+    const schedulePlay = vi.fn();
+    const player = { pause: vi.fn(), getCurrentTime: () => 44, playAt: vi.fn().mockResolvedValue(undefined) };
+    const audioEngine = { pauseOffsetSec: 0, ensureContext: vi.fn() };
+    const ui = new UIManager({
+      socketClient: { roomId: 'ROOM', isHost: true, schedulePlay, pausePlayback, clockSync: { getServerTime: () => 100 } },
+      audioEngine, youtubePlayer: player
+    });
+    ui.currentTrack = { id: 'yt_dQw4w9WgXcQ', sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ' };
+    ui.isPlayingState = true;
+    ui.setPlayState = vi.fn(value => { ui.isPlayingState = value; });
+
+    ui.togglePlayback();
+    expect(player.pause).toHaveBeenCalledOnce();
+    expect(audioEngine.pauseOffsetSec).toBe(44);
+    expect(pausePlayback).toHaveBeenCalledWith(44);
+
+    ui.setPlayState.mockClear();
+    ui.togglePlayback();
+    expect(schedulePlay).not.toHaveBeenCalled();
+    expect(player.playAt).toHaveBeenCalledWith('dQw4w9WgXcQ', 900, 44);
+  });
+
+  it('reports a solo YouTube policy block and marks the device failed', async () => {
+    const mesh = { lastKnownTrack: null, loadTrackBuffer: vi.fn(), broadcastReadiness: vi.fn() };
+    const player = { setVolume: vi.fn(), playAt: vi.fn().mockRejectedValue(new Error('VIDEO_MADE_FOR_KIDS')) };
+    const socketClient = { roomId: null, cloudMesh: mesh };
+    const ui = new UIManager({ socketClient, audioEngine: { volume: 1, stopLocalPlayback: vi.fn() }, youtubePlayer: player });
+    const status = vi.fn();
+    ui.setYouTubePlayerStatus = status;
+
+    await ui.streamAudioFromUrl('https://youtu.be/dQw4w9WgXcQ', 'Song');
+    await Promise.resolve();
+
+    expect(status).toHaveBeenCalledWith(
+      expect.stringContaining('Made for Kids'),
+      expect.objectContaining({
+        retryable: false,
+        sourceUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+      })
+    );
+    expect(mesh.broadcastReadiness).toHaveBeenCalledWith('FAILED', 'yt_dQw4w9WgXcQ', 'youtube');
+  });
+
   it('shows saved audio files separately from playback history', async () => {
     const localFile = { id: 'file-1', name: 'On device', sourceType: 'local-file' };
     const recent = { id: 'recent-1', name: 'Recent song' };
@@ -1831,7 +1972,8 @@ describe('YouTube search queue UI', () => {
   it('explains blocked and missing YouTube videos without offering a futile retry', async () => {
     const youtubePlayer = { destroy: vi.fn(), playAt: vi.fn().mockRejectedValue(new Error('VIDEO_NOT_EMBEDDABLE')) };
     const retry = { hidden: true, disabled: false, textContent: 'Coba lagi' };
-    const status = { textContent: '' };
+    const status = { textContent: '', appendChild: vi.fn() };
+    vi.stubGlobal('document', { createElement: () => ({}) });
     const ui = new UIManager({ youtubePlayer, audioEngine: { pauseOffsetSec: 0 } });
     ui.currentTrack = { id: 'yt_dQw4w9WgXcQ', sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ' };
     ui.elements = { youtubePlayerStatus: status, youtubePlayerRetryBtn: retry };
@@ -1839,6 +1981,13 @@ describe('YouTube search queue UI', () => {
     await expect(ui.retryYouTubePlayback()).resolves.toBe(false);
 
     expect(status.textContent).toContain('tidak mengizinkan pemutaran');
+    expect(status.appendChild.mock.calls[0][0]).toMatchObject({
+      href: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+      target: '_blank',
+      rel: 'noopener noreferrer',
+      textContent: ' Buka YouTube'
+    });
+    expect(status.appendChild).toHaveBeenCalledOnce();
     expect(retry.hidden).toBe(true);
   });
 

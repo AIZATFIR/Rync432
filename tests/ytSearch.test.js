@@ -63,7 +63,8 @@ describe('YouTube search API', () => {
       title: 'Song title',
       channel: 'Artist',
       duration: 215,
-      url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+      url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+      apiDataFetchedAt: expect.any(Number)
     })]);
     expect(result.headers['cache-control']).toBe('public, s-maxage=300, stale-while-revalidate=600');
   });

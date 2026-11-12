@@ -57,7 +57,7 @@ describe('YouTube embedded player adapter', () => {
     expect(instances).toHaveLength(0);
     expect(globalThis.document.container.children).toEqual([]);
 
-    resolvePolicy({ ok: true, json: async () => ({ videoId: 'dQw4w9WgXcQ', madeForKids: true, embeddable: true }) });
+    resolvePolicy({ ok: true, json: async () => ({ videoId: 'dQw4w9WgXcQ', madeForKids: false, embeddable: true }) });
     await cue;
 
     expect(instances).toHaveLength(1);
@@ -75,6 +75,20 @@ describe('YouTube embedded player adapter', () => {
     const player = new YouTubeEmbedPlayer('youtubePlayerContainer');
 
     await expect(player.playAt('dQw4w9WgXcQ', Date.now())).rejects.toThrow('VIDEO_NOT_EMBEDDABLE');
+
+    expect(instances).toHaveLength(0);
+    expect(globalThis.document.container.children).toEqual([]);
+  });
+
+  it('keeps Made for Kids videos out of the embedded player', async () => {
+    const instances = installFakePlayer();
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ videoId: 'dQw4w9WgXcQ', madeForKids: true, embeddable: true })
+    })));
+    const player = new YouTubeEmbedPlayer('youtubePlayerContainer');
+
+    await expect(player.playAt('dQw4w9WgXcQ', Date.now())).rejects.toThrow('VIDEO_MADE_FOR_KIDS');
 
     expect(instances).toHaveLength(0);
     expect(globalThis.document.container.children).toEqual([]);

@@ -2,6 +2,8 @@
  * Rync LocalLibrary - IndexedDB storage for Favorites, Playlists, and Recent Tracks.
  * Ensures solo listening and personal collections persist across sessions on this device.
  */
+import { isExpiredYouTubeApiData } from '../privacy/youtubeDataRetention.js';
+
 const HISTORY_LIMIT = 100;
 
 export class LocalLibrary {
@@ -44,6 +46,33 @@ export class LocalLibrary {
         resolve(null);
       };
     });
+  }
+
+  async clearAllLocalData() {
+    if (this.db) {
+      this.db.close();
+      this.db = null;
+    }
+    if (typeof indexedDB !== 'undefined') {
+      const deleted = await new Promise(resolve => {
+        const request = indexedDB.deleteDatabase(this.dbName);
+        request.onsuccess = () => resolve(true);
+        request.onerror = () => resolve(false);
+        request.onblocked = () => resolve(false);
+      });
+      if (!deleted) return false;
+    }
+    try {
+      const keys = [];
+      for (let index = 0; index < localStorage.length; index++) {
+        const key = localStorage.key(index);
+        if (key?.startsWith('rync_')) keys.push(key);
+      }
+      keys.forEach(key => localStorage.removeItem(key));
+    } catch {
+      return false;
+    }
+    return true;
   }
 
   async addFavorite(track) {
@@ -89,15 +118,23 @@ export class LocalLibrary {
     const db = await this.open();
     if (db) {
       return new Promise((resolve) => {
-        const tx = db.transaction('favorites', 'readonly');
+        const tx = db.transaction('favorites', 'readwrite');
         const store = tx.objectStore('favorites');
         const req = store.getAll();
-        req.onsuccess = () => resolve(req.result || []);
+        req.onsuccess = () => {
+          const favorites = req.result || [];
+          const retained = favorites.filter(item => !isExpiredYouTubeApiData(item));
+          favorites.filter(item => isExpiredYouTubeApiData(item)).forEach(item => store.delete(item.id));
+          resolve(retained);
+        };
         req.onerror = () => resolve([]);
       });
     }
     try {
-      return JSON.parse(localStorage.getItem('rync_favs') || '[]');
+      const favorites = JSON.parse(localStorage.getItem('rync_favs') || '[]');
+      const retained = Array.isArray(favorites) ? favorites.filter(item => !isExpiredYouTubeApiData(item)) : [];
+      if (retained.length !== favorites.length) localStorage.setItem('rync_favs', JSON.stringify(retained));
+      return retained;
     } catch (e) {
       return [];
     }
@@ -205,11 +242,13 @@ export class LocalLibrary {
     const db = await this.open();
     if (db) {
       return new Promise((resolve) => {
-        const tx = db.transaction('history', 'readonly');
+        const tx = db.transaction('history', 'readwrite');
         const store = tx.objectStore('history');
         const req = store.getAll();
         req.onsuccess = () => {
-          const list = req.result || [];
+          const all = req.result || [];
+          const list = all.filter(item => !isExpiredYouTubeApiData(item));
+          all.filter(item => isExpiredYouTubeApiData(item)).forEach(item => store.delete(item.id));
           list.sort((a, b) => b.timestamp - a.timestamp);
           resolve(list.slice(0, limit).map(item => ({ ...item, id: item.trackId || item.id })));
         };
@@ -218,7 +257,9 @@ export class LocalLibrary {
     }
     try {
       const hist = JSON.parse(localStorage.getItem('rync_history') || '[]');
-      return hist.slice(0, limit);
+      const retained = Array.isArray(hist) ? hist.filter(item => !isExpiredYouTubeApiData(item)) : [];
+      if (retained.length !== hist.length) localStorage.setItem('rync_history', JSON.stringify(retained));
+      return retained.slice(0, limit);
     } catch (e) {
       return [];
     }
@@ -248,13 +289,29 @@ export class LocalLibrary {
     const db = await this.open();
     if (db) {
       return new Promise((resolve) => {
-        const request = db.transaction('playlists', 'readonly').objectStore('playlists').getAll();
-        request.onsuccess = () => resolve(request.result || []);
+        const tx = db.transaction('playlists', 'readwrite');
+        const store = tx.objectStore('playlists');
+        const request = store.getAll();
+        request.onsuccess = () => {
+          const playlists = request.result || [];
+          const retained = playlists.map(playlist => {
+            const tracks = (playlist.tracks || []).filter(track => !isExpiredYouTubeApiData(track));
+            if (tracks.length !== (playlist.tracks || []).length) store.put({ ...playlist, tracks });
+            return { ...playlist, tracks };
+          });
+          resolve(retained);
+        };
         request.onerror = () => resolve([]);
       });
     }
     try {
-      return JSON.parse(localStorage.getItem('rync_playlists') || '[]');
+      const playlists = JSON.parse(localStorage.getItem('rync_playlists') || '[]');
+      const retained = Array.isArray(playlists) ? playlists.map(playlist => ({
+        ...playlist,
+        tracks: (playlist.tracks || []).filter(track => !isExpiredYouTubeApiData(track))
+      })) : [];
+      if (JSON.stringify(retained) !== JSON.stringify(playlists)) localStorage.setItem('rync_playlists', JSON.stringify(retained));
+      return retained;
     } catch (e) {
       return [];
     }

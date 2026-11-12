@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta name="theme-color" content="#0a0a0c">
+  <title>Kebijakan Privasi — Rync</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    body { min-height: 100vh; background: var(--bg-base, #0a0a0c); color: var(--text-base, #f4f4f5); }
+    .legal-page { width: min(100% - 36px, 760px); margin: 0 auto; padding: 40px 0 72px; }
+    .legal-page h1 { margin: 8px 0 12px; font-size: clamp(2rem, 7vw, 3.3rem); letter-spacing: -.055em; }
+    .legal-page h2 { margin: 32px 0 10px; font-size: 1.15rem; }
+    .legal-page p, .legal-page li { color: var(--text-silver, #b0b0b7); line-height: 1.7; }
+    .legal-page a { color: var(--spotify-green, #d8ff45); text-underline-offset: 3px; }
+    .legal-page ul { padding-left: 22px; }
+    .legal-back { display: inline-block; margin-bottom: 28px; }
+  </style>
+</head>
+<body>
+  <main class="legal-page">
+    <a class="legal-back" href="/">← Kembali ke Rync</a>
+    <p class="eyebrow">RYNC · PRIVASI</p>
+    <h1>Kebijakan Privasi</h1>
+    <p>Terakhir diperbarui: 12 November 2026. Kebijakan ini menjelaskan data yang diproses ketika kamu memakai Rync, pemutar musik dan layanan dengar bersama yang dioperasikan oleh pemilik domain rync.zafir.my.</p>
+
+    <h2>Data yang diproses Rync</h2>
+    <ul>
+      <li><strong>Untuk room:</strong> kode room, ID perangkat acak, nama perangkat yang kamu masukkan, lagu aktif dan antrean, posisi/status playback, status kesiapan, serta pesan signaling WebRTC. Data ini diperlukan agar room dapat disinkronkan. Room dan metadata-nya dihapus setelah paling lama 3 jam tanpa aktivitas.</li>
+      <li><strong>Untuk library di perangkat:</strong> favorit, playlist, riwayat, antrean solo, pencarian terbaru, preferensi tema, dan pengaturan audio disimpan di browser menggunakan IndexedDB atau localStorage. Data ini tetap ada sampai kamu menghapusnya atau membersihkan data situs di browser.</li>
+      <li><strong>Untuk metrik teknis:</strong> durasi pencarian, persiapan audio, join room, dan antrean disimpan hanya di browser ini untuk membantu diagnosis. Rync tidak mengirim metrik tersebut ke server analitik.</li>
+      <li><strong>Untuk file audio dan relay room:</strong> file yang kamu pilih tetap di perangkat untuk pemutaran solo. Jika host membagikan audio ke room, data audio dikirim melalui WebRTC atau relay server selama room aktif; file relay mengikuti batas pembersihan room 3 jam setelah aktivitas terakhir.</li>
+      <li><strong>Untuk pencarian YouTube:</strong> istilah pencarian dan ID video dikirim ke server Rync lalu YouTube Data API. Hasil publik yang diperlukan untuk judul, channel, durasi, thumbnail, dan status pemutaran diproses untuk menampilkan hasil dan memastikan video boleh disematkan.</li>
+    </ul>
+
+    <h2>YouTube dan layanan pihak ketiga</h2>
+    <p>Rync menggunakan <a href="https://developers.google.com/youtube/terms/developer-policies" target="_blank" rel="noopener noreferrer">YouTube API Services</a> dan pemutar sematan resmi. Saat player dimuat atau video diputar, browser dapat berkomunikasi langsung dengan Google/YouTube dan mengirim informasi teknis seperti alamat IP, identitas browser, dan interaksi player sesuai kebijakan mereka. Rync memakai domain privacy-enhanced YouTube dan autoplay dimatikan sampai playback diminta.</p>
+    <p>Rync memeriksa status Made for Kids dan tidak menyematkan video yang ditandai demikian, karena Rync tidak dapat menonaktifkan seluruh tracking yang dilakukan player pihak ketiga. Kamu dapat membuka video tersebut langsung di YouTube. Pemutaran YouTube dijeda saat player atau tab browser tidak terlihat; Rync tidak menjalankan audio YouTube di latar belakang. Konten YouTube tetap tunduk pada <a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener noreferrer">Ketentuan YouTube</a> dan <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">Kebijakan Privasi Google</a>.</p>
+    <p>Room dapat memakai broker MQTT publik EMQX untuk pesan realtime; bila tidak tersedia, Rync beralih ke polling server. Library MQTT dimuat dari cdnjs setelah persetujuan diberikan. Login Google bersifat opsional dan ditangani Firebase Authentication. Saat memakai layanan tersebut, Google/Firebase dapat memproses data sesuai kebijakan mereka.</p>
+
+    <h2>Penyimpanan dan masa retensi</h2>
+    <p>Cache pencarian Rync disimpan 5 menit di server, dengan cache jaringan yang dapat menyajikan hasil lama hingga 10 menit tambahan, dan 1 menit pada sesi halaman. Status izin pemutaran disimpan di memori server dan browser selama 5 menit. Metadata YouTube yang disimpan dari pencarian di library lokal akan dihapus dari fitur library setelah 30 hari; data API yang lebih lama harus diambil ulang atau dihapus. Room dan state-nya memiliki batas kedaluwarsa 3 jam setelah aktivitas terakhir.</p>
+    <p>Data library non-YouTube tersimpan pada perangkat sampai dihapus olehmu. Rync tidak menjual data pribadi. Data room tidak ditampilkan ke orang di luar room, kecuali informasi yang diperlukan untuk mengirim audio, signaling, dan sinkronisasi ke anggota room.</p>
+
+    <h2>Kontrol dan penghapusan</h2>
+    <p>Kamu dapat menghapus riwayat dari Library, menghapus favorit/playlist/file satu per satu, atau memakai Settings → Privasi &amp; data untuk menghapus data Rync di browser ini sekaligus mencabut persetujuan. Membersihkan storage situs di pengaturan browser juga menghapus library lokal. Menghapus data browser tidak dapat menghapus salinan room yang masih aktif; room dibersihkan otomatis setelah masa kedaluwarsa.</p>
+    <p>Rync tidak meminta akses ke akun YouTube atau menyimpan kredensial YouTube. Jika kamu memakai login Google opsional, keluar melalui Settings untuk menghapus sesi autentikasi dari browser.</p>
+
+    <h2>Perubahan dan kontak</h2>
+    <p>Persetujuan akan diminta kembali saat cakupan kebijakan berubah. Untuk pertanyaan privasi, hubungi pemilik situs melalui kanal kontak pada rync.zafir.my. Informasi kontak langsung perlu ditambahkan oleh operator sebelum layanan dibuka untuk umum.</p>
+  </main>
+</body>
+</html>

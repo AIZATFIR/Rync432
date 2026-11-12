@@ -64,6 +64,7 @@ export class YouTubeEmbedPlayer {
   async getVideoPolicy(videoId) {
     const cached = this.videoPolicyCache.get(videoId);
     if (cached && Date.now() - cached.checkedAt < VIDEO_POLICY_TTL_MS) {
+      if (cached.madeForKids) throw new Error('VIDEO_MADE_FOR_KIDS');
       if (!cached.embeddable) throw new Error('VIDEO_NOT_EMBEDDABLE');
       return cached;
     }
@@ -87,6 +88,7 @@ export class YouTubeEmbedPlayer {
       this.videoPolicyRequests.set(videoId, request);
     }
     const policy = await request;
+    if (policy.madeForKids) throw new Error('VIDEO_MADE_FOR_KIDS');
     if (!policy.embeddable) throw new Error('VIDEO_NOT_EMBEDDABLE');
     return policy;
   }

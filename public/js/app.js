@@ -3,6 +3,7 @@ import { SocketClient } from './network/SocketClient.js';
 import { UIManager } from './ui/UIManager.js';
 import { Visualizer } from './ui/Visualizer.js';
 import { YouTubeEmbedPlayer } from './music/YouTubeEmbedPlayer.js';
+import { getYouTubePlaybackError } from './privacy/youtubePlaybackErrors.js';
 
 function youtubeVideoId(track) {
   if (!track || track.sourceType !== 'youtube') return null;
@@ -151,7 +152,9 @@ class App {
     this.uiManager.setYouTubeAutoplayBlocked(false);
     this.socketClient?.cloudMesh?.broadcastReadiness('FAILED', this.uiManager.currentTrack?.id || '', 'youtube');
     this.uiManager.setYouTubePlayerStatus(messages[code] || 'Video YouTube gagal diputar. Coba video lain.', {
-      retryable: ![2, 100, 101, 150, 153].includes(code)
+      retryable: ![2, 100, 101, 150, 153].includes(code),
+      sourceUrl: [100, 101, 150].includes(code) && youtubeVideoId(this.uiManager.currentTrack)
+        ? `https://www.youtube.com/watch?v=${youtubeVideoId(this.uiManager.currentTrack)}` : ''
     });
   }
 
@@ -198,6 +201,7 @@ class App {
           }
           uiManager.updateTrackUI(payload.currentTrack.name || 'Shared Track', payload.currentTrack.duration || 0, payload.currentTrack.thumbnail || '');
           if (youtubeVideoId(payload.currentTrack)) {
+            uiManager.setView('room');
             this.socketClient.cloudMesh.loadTrackBuffer(payload.currentTrack);
           } else if (payload.currentTrack.isSynthetic) {
             audioEngine.generateSyntheticTrack();
@@ -212,8 +216,9 @@ class App {
               youtubeVideoId(payload.currentTrack),
               payload.playbackState.startServerTime,
               payload.playbackState.startOffsetSec || 0
-            ).catch(() => {
-              uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.', { retryable: true });
+            ).catch(error => {
+              const status = getYouTubePlaybackError(error, youtubeVideoId(payload.currentTrack));
+              uiManager.setYouTubePlayerStatus(status.message, { retryable: status.retryable, sourceUrl: status.sourceUrl });
               socketClient.cloudMesh.broadcastReadiness('FAILED', payload.currentTrack?.id || '', 'youtube');
             });
           } else {
@@ -242,6 +247,7 @@ class App {
           uiManager.setYouTubePlayerStatus('ID video YouTube tidak valid.');
           break;
         }
+        uiManager.setView(socketClient.roomId ? 'room' : 'player');
         uiManager.setYouTubePlayerVisible(true);
         uiManager.setYouTubeAutoplayBlocked(false);
         uiManager.setYouTubePlayerStatus('Memuat player YouTube…');
@@ -249,16 +255,18 @@ class App {
         if (typeof schedule === 'number' && schedule > Date.now()) {
           this.youtubePlayer.playAt(videoId, schedule, payload.startOffsetSec || 0)
             .then(() => uiManager.setYouTubePlayerStatus(''))
-            .catch(() => {
-              uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.', { retryable: true });
+            .catch(error => {
+              const status = getYouTubePlaybackError(error, videoId);
+              uiManager.setYouTubePlayerStatus(status.message, { retryable: status.retryable, sourceUrl: status.sourceUrl });
               socketClient.cloudMesh.broadcastReadiness('FAILED', payload.id || '', 'youtube');
             });
           break;
         }
         this.youtubePlayer.cueVideo(videoId, payload.startOffsetSec || 0)
           .then(() => uiManager.setYouTubePlayerStatus(''))
-          .catch(() => {
-            uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.', { retryable: true });
+          .catch(error => {
+            const status = getYouTubePlaybackError(error, videoId);
+            uiManager.setYouTubePlayerStatus(status.message, { retryable: status.retryable, sourceUrl: status.sourceUrl });
             socketClient.cloudMesh.broadcastReadiness('FAILED', payload.id || '', 'youtube');
           });
         break;
@@ -420,6 +428,7 @@ class App {
           const track = payload.track || socketClient?.cloudMesh?.lastKnownTrack;
           if (track && youtubeVideoId(track)) {
             socketClient.cloudMesh.lastKnownTrack = track;
+            uiManager.setView(socketClient.roomId ? 'room' : 'player');
             uiManager.setYouTubePlayerVisible(true);
             uiManager.updateTrackUI(track.name || 'YouTube video', track.duration || 0, track.thumbnail || '');
             uiManager.renderQueue(uiManager.cachedQueue);
@@ -427,8 +436,9 @@ class App {
               youtubeVideoId(track),
               payload.targetServerTime || payload.scheduledServerTime,
               payload.startOffsetSec || 0
-            ).catch(() => {
-              uiManager.setYouTubePlayerStatus('Player YouTube tidak bisa dimuat. Periksa koneksi lalu coba lagi.', { retryable: true });
+            ).catch(error => {
+              const status = getYouTubePlaybackError(error, youtubeVideoId(track));
+              uiManager.setYouTubePlayerStatus(status.message, { retryable: status.retryable, sourceUrl: status.sourceUrl });
               socketClient.cloudMesh.broadcastReadiness('FAILED', track.id || '', 'youtube');
             });
             break;
@@ -510,7 +520,7 @@ class App {
   }
 }
 
-window.addEventListener('DOMContentLoaded', () => {
+export function startApp() {
   const app = new App();
   app.init();
   window.__ryncApp = app;
@@ -523,4 +533,5 @@ window.addEventListener('DOMContentLoaded', () => {
       });
     });
   }
-});
+  return app;
+}

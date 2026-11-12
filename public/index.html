@@ -16,12 +16,9 @@
   <link rel="stylesheet" href="/css/style.css">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2250%22 r=%2245%22 fill=%22%23d8ff45%22/></svg>">
   
-  <!-- Real-Time Pub/Sub Bus Engine -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.10.3/mqtt.min.js"></script>
-
 </head>
 <body>
-  <div class="app-container">
+  <div class="app-container" id="appShell" inert aria-hidden="true">
     
     <!-- Top Navigation Header -->
     <header class="app-header" id="mainHeader">
@@ -544,6 +541,17 @@
         </div>
       </div>
 
+      <div class="settings-box privacy-settings">
+        <strong>Privasi &amp; data</strong>
+        <p>Library dan preferensi tersimpan di browser ini. Persetujuan dapat dicabut kapan saja.</p>
+        <div class="privacy-links">
+          <a href="/privacy.html">Kebijakan Privasi</a>
+          <a href="/terms.html">Ketentuan Penggunaan</a>
+          <a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener noreferrer">Ketentuan YouTube</a>
+        </div>
+        <button type="button" class="btn-spotify btn-spotify-outline" id="revokePrivacyConsentBtn">Cabut persetujuan dan hapus data lokal</button>
+      </div>
+
       <!-- Account Card -->
       <div class="settings-box">
         <div id="authLoggedOutView" style="display: flex; flex-direction: column; gap: 8px;">
@@ -628,7 +636,34 @@
     </div>
   </div>
 
+  <section class="privacy-gate" id="privacyGate" role="dialog" aria-modal="true" aria-labelledby="privacyGateTitle">
+    <div class="privacy-gate-panel">
+      <p class="eyebrow">RYNC · SEBELUM MULAI</p>
+      <h2 id="privacyGateTitle">Dengar bareng, dengan jelas.</h2>
+      <p>Rync memakai YouTube Data API dan pemutar YouTube untuk pencarian dan playback. Room mengirim kode room, nama perangkat, antrean, lagu aktif, dan status koneksi ke server Rync agar sesi bisa disinkronkan.</p>
+      <p>Library, riwayat, antrean personal, dan preferensi disimpan di browser perangkat ini. Lihat cara kerja penyimpanan, layanan pihak ketiga, dan penghapusan data di kebijakan kami.</p>
+      <div class="privacy-gate-links">
+        <a href="/privacy.html" target="_blank" rel="noopener noreferrer">Baca Kebijakan Privasi</a>
+        <a href="/terms.html" target="_blank" rel="noopener noreferrer">Baca Ketentuan Penggunaan</a>
+        <a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener noreferrer">Ketentuan YouTube</a>
+      </div>
+      <label class="privacy-consent-check">
+        <input id="privacyConsentCheckbox" type="checkbox">
+        <span>Saya telah membaca dan menyetujui Kebijakan Privasi serta Ketentuan Penggunaan Rync. Saya memahami penggunaan Rync tunduk pada Ketentuan YouTube.</span>
+      </label>
+      <p class="privacy-gate-error" id="privacyGateError" role="alert" hidden>Persetujuan belum tersimpan. Aktifkan penyimpanan browser, lalu coba lagi.</p>
+      <button type="button" class="btn-spotify btn-spotify-primary" id="privacyConsentAcceptBtn" disabled>Setuju &amp; mulai</button>
+    </div>
+  </section>
+
+  <footer class="legal-footer" id="legalFooter" inert aria-hidden="true">
+    <span>Rync bukan produk Google atau YouTube.</span>
+    <a href="/privacy.html">Privasi</a>
+    <a href="/terms.html">Ketentuan Rync</a>
+    <a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener noreferrer">Ketentuan YouTube</a>
+  </footer>
+
   <!-- Scripts -->
-  <script type="module" src="/js/app.js"></script>
+  <script type="module" src="/js/privacyGate.js"></script>
 </body>
 </html>

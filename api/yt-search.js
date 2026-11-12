@@ -98,6 +98,7 @@ async function resolveSearch(query, cacheKey, key, staleCache) {
       // Duration is supplemental; valid video results remain usable if enrichment is slow.
     }
     const durations = new Map((detailsData.items || []).map(item => [item.id, parseIsoDuration(item.contentDetails?.duration)]));
+    const apiDataFetchedAt = Date.now();
     const results = videos.map(item => {
       const id = item.id.videoId;
       const duration = durations.get(id) || 0;
@@ -108,6 +109,7 @@ async function resolveSearch(query, cacheKey, key, staleCache) {
         channel: item.snippet?.channelTitle || 'YouTube channel',
         duration,
         durationText: duration ? durationText(duration) : '',
+        apiDataFetchedAt,
         thumbnail: thumbnails.medium?.url || thumbnails.default?.url || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
         url: `https://www.youtube.com/watch?v=${id}`
       };
