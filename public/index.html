@@ -87,6 +87,28 @@
     <!-- Hidden File Input for Batch Music Audio Selection -->
     <input type="file" id="audioFileInput" aria-label="Pilih file audio lokal" accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac" multiple style="display: none;">
 
+    <main class="home-dashboard" id="homeDashboard" aria-labelledby="homeDashboardHeading" hidden>
+      <section class="home-welcome">
+        <p class="eyebrow">RYNC · MUSIC, TOGETHER</p>
+        <h2 id="homeDashboardHeading">Putar yang kamu suka.</h2>
+        <p>Temukan musik, lanjutkan dari library, atau ajak teman masuk ke satu antrean.</p>
+        <div class="home-welcome-actions">
+          <button type="button" class="btn-spotify btn-spotify-primary" id="homeDashboardSearchBtn">Cari musik</button>
+          <button type="button" class="btn-spotify btn-spotify-outline" id="homeDashboardRoomBtn">Dengar bareng</button>
+        </div>
+      </section>
+      <section class="home-recent-section" aria-labelledby="homeRecentHeading">
+        <div class="home-section-heading">
+          <div>
+            <p class="eyebrow">DARI PERANGKAT INI</p>
+            <h3 id="homeRecentHeading">Putar lagi</h3>
+          </div>
+          <button type="button" class="library-action" id="homeOpenLibraryBtn">Buka library</button>
+        </div>
+        <div class="home-recent-list" id="homeRecentList"></div>
+      </section>
+    </main>
+
     <!-- Landing / Room Select (Hero) -->
     <section class="spotify-card hero-centered-card" id="roomHeroSection" hidden>
       <div class="hero-title-group" style="text-align: center;">

@@ -26,6 +26,16 @@ describe('Rync page structure', () => {
     expect(settingsModal).toContain('audioTuningSection');
   });
 
+  it('provides a real Home dashboard with recent playback and music actions', () => {
+    const htmlPath = fileURLToPath(new URL('../public/index.html', import.meta.url));
+    const html = readFileSync(htmlPath, 'utf8');
+    const dashboard = html.slice(html.indexOf('id="homeDashboard"'), html.indexOf('id="roomHeroSection"'));
+    expect(dashboard).toContain('id="homeDashboardSearchBtn"');
+    expect(dashboard).toContain('id="homeDashboardRoomBtn"');
+    expect(dashboard).toContain('id="homeRecentList"');
+    expect(dashboard).toContain('id="homeOpenLibraryBtn"');
+  });
+
   it('keeps header labels compact at the narrowest supported viewport', () => {
     const cssPath = fileURLToPath(new URL('../public/css/style.css', import.meta.url));
     const css = readFileSync(cssPath, 'utf8');
@@ -34,6 +44,13 @@ describe('Rync page structure', () => {
     expect(compactHeader).toContain('#connectionStatus { display: none; }');
     expect(compactHeader).toContain('.listen-together-button { width: 44px;');
     expect(compactHeader).toContain('.status-pill { width: 32px;');
+  });
+
+  it('keeps Now Playing chrome out of the Search screen on phones', () => {
+    const cssPath = fileURLToPath(new URL('../public/css/style.css', import.meta.url));
+    const css = readFileSync(cssPath, 'utf8');
+    expect(css).toMatch(/#activeRoomSection\.search-mode \.now-playing-toolbar\s*\{[^}]*display:\s*none/);
+    expect(css).toMatch(/body\.now-playing-open \.now-playing-toolbar\s*\{/);
   });
 
   it('constrains the room code form to its action tile', () => {
@@ -1890,7 +1907,7 @@ describe('YouTube search queue UI', () => {
     expect(ui.elements.activeRoomSection.style.display).toBe('none');
 
     ui.setView('home');
-    expect(ui.elements.activeRoomSection.style.display).toBe('flex');
+    expect(ui.elements.activeRoomSection.style.display).toBe('none');
     expect(ui.elements.librarySection.hidden).toBe(true);
   });
 
@@ -1914,10 +1931,11 @@ describe('YouTube search queue UI', () => {
     expect(ui.elements.navRoomBtn.hidden).toBe(false);
   });
 
-  it('shows the player on Home and reserves Search for source discovery', () => {
+  it('shows a music dashboard on Home and reserves Search for source discovery', () => {
     const node = () => ({ hidden: false, style: {}, attributes: {}, classList: { toggle() {} }, setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name) { delete this.attributes[name]; } });
     const ui = new UIManager({ audioEngine: {}, socketClient: {} });
     ui.elements = {
+      homeDashboard: node(),
       activeRoomSection: node(), roomHeroSection: node(), librarySection: node(),
       homeEmptyState: node(),
       sourceHubSection: node(), sourceSearchSection: node(), queueCardSection: node(),
@@ -1925,16 +1943,19 @@ describe('YouTube search queue UI', () => {
     };
 
     ui.setView('home');
+    expect(ui.elements.homeDashboard.hidden).toBe(false);
+    expect(ui.elements.activeRoomSection.style.display).toBe('none');
     expect(ui.elements.homeEmptyState.hidden).toBe(false);
     expect(ui.elements.sourceHubSection.style.display).toBe('');
     expect(ui.elements.sourceSearchSection.style.display).toBe('none');
-    expect(ui.elements.queueCardSection.style.display).toBe('');
 
     ui.currentTrack = { name: 'Song' };
     ui.setView('home');
     expect(ui.elements.homeEmptyState.hidden).toBe(true);
 
     ui.setView('search');
+    expect(ui.elements.homeDashboard.hidden).toBe(true);
+    expect(ui.elements.activeRoomSection.style.display).toBe('flex');
     expect(ui.elements.sourceHubSection.style.display).toBe('none');
     expect(ui.elements.sourceSearchSection.style.display).toBe('');
     expect(ui.elements.queueCardSection.style.display).toBe('none');
@@ -1972,7 +1993,7 @@ describe('YouTube search queue UI', () => {
     expect(dot.classList.toggle).toHaveBeenCalledWith('connected', false);
   });
 
-  it('keeps a compact player available on Library and room setup views', () => {
+  it('keeps a compact player available on Home, Library, and room setup views', () => {
     const node = () => ({ hidden: false, style: {}, attributes: {}, classList: { toggle() {} }, setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name) { delete this.attributes[name]; } });
     const ui = new UIManager({ socketClient: { roomId: null } });
     ui.elements = {
@@ -1987,8 +2008,8 @@ describe('YouTube search queue UI', () => {
     ui.setView('room');
     expect(ui.elements.miniPlayerBar.hidden).toBe(false);
     ui.setView('home');
-    expect(ui.elements.activeRoomSection.style.display).toBe('flex');
-    expect(ui.elements.miniPlayerBar.hidden).toBe(true);
+    expect(ui.elements.activeRoomSection.style.display).toBe('none');
+    expect(ui.elements.miniPlayerBar.hidden).toBe(false);
   });
 
   it('mirrors playback state into the mini player control', () => {
@@ -2009,6 +2030,19 @@ describe('YouTube search queue UI', () => {
     expect(button.attributes['aria-pressed']).toBe('false');
     expect(visualizer.stop).toHaveBeenCalledOnce();
     expect(toggle).toHaveBeenLastCalledWith('is-playing', false);
+  });
+
+  it('shows the mini player on Home once a track is selected', () => {
+    const bar = { hidden: true };
+    const ui = new UIManager({});
+    ui.currentView = 'home';
+    ui.currentTrack = { name: 'Selected track' };
+    ui.elements = { miniPlayerBar: bar, miniPlayerTitle: {}, miniPlayerArtist: {}, miniPlayerArtwork: { style: {} } };
+    vi.stubGlobal('window', { location: { origin: 'http://localhost' } });
+
+    ui.updateMiniPlayer();
+
+    expect(bar.hidden).toBe(false);
   });
 
   it('opens Now Playing over the current view and restores that view on close', () => {
@@ -2045,6 +2079,34 @@ describe('YouTube search queue UI', () => {
     expect(trigger.attributes['aria-expanded']).toBe('false');
     expect(trigger.focus).toHaveBeenCalledOnce();
     expect(ui.currentView).toBe('library');
+  });
+
+  it('opens a full Now Playing view on desktop and returns to its previous tab', () => {
+    const classes = new Set();
+    const classList = { toggle: (name, enabled) => enabled ? classes.add(name) : classes.delete(name) };
+    vi.stubGlobal('document', { body: { classList } });
+    vi.stubGlobal('window', { matchMedia: vi.fn(() => ({ matches: false })) });
+    const node = () => ({ hidden: false, style: {}, attributes: {}, classList, setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name) { delete this.attributes[name]; }, focus: vi.fn() });
+    const ui = new UIManager({ socketClient: { roomId: null } });
+    ui.currentView = 'library';
+    ui.currentTrack = { name: 'Track A' };
+    ui.elements = {
+      activeRoomSection: node(), homeDashboard: node(), roomHeroSection: node(), librarySection: node(),
+      sourceHubSection: node(), sourceSearchSection: node(), queueCardSection: node(), miniPlayerBar: node(), miniPlayerOpenBtn: node(),
+      navHomeBtn: node(), navSearchBtn: node(), navLibraryBtn: node(), navRoomBtn: node(), nowPlayingCloseBtn: node()
+    };
+
+    expect(ui.openNowPlaying()).toBe(true);
+    expect(ui.currentView).toBe('player');
+    expect(ui.elements.activeRoomSection.style.display).toBe('flex');
+    expect(ui.elements.activeRoomSection.attributes.role).toBeUndefined();
+    expect(ui.elements.miniPlayerBar.hidden).toBe(true);
+    expect(ui.elements.navLibraryBtn.attributes['aria-current']).toBe('page');
+
+    ui.closeNowPlaying();
+    expect(ui.currentView).toBe('library');
+    expect(ui.elements.librarySection.hidden).toBe(false);
+    expect(ui.elements.miniPlayerBar.hidden).toBe(false);
   });
 
   it('does not open a mobile Now Playing sheet before a track is selected', () => {

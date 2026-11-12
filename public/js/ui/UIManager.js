@@ -72,6 +72,7 @@ export class UIManager {
     this.isPlayingState = false;
     this.currentView = 'home';
     this.nowPlayingOpen = false;
+    this.nowPlayingIsMobile = false;
     this.nowPlayingPreviousView = 'home';
     this.currentTrack = null;
     this.youtubePlaybackRequestSequence = 0;
@@ -102,6 +103,7 @@ export class UIManager {
       roomHeroSection: document.getElementById('roomHeroSection'),
       activeRoomSection: document.getElementById('activeRoomSection'),
       librarySection: document.getElementById('librarySection'),
+      homeDashboard: document.getElementById('homeDashboard'),
       sourceHubSection: document.getElementById('sourceHubSection'),
       sourceSearchSection: document.getElementById('sourceSearchSection'),
       audioTuningSection: document.getElementById('audioTuningSection'),
@@ -113,6 +115,10 @@ export class UIManager {
       listenTogetherLabel: document.getElementById('listenTogetherLabel'),
       homeEmptyState: document.getElementById('homeEmptyState'),
       homeFindMusicBtn: document.getElementById('homeFindMusicBtn'),
+      homeDashboardSearchBtn: document.getElementById('homeDashboardSearchBtn'),
+      homeDashboardRoomBtn: document.getElementById('homeDashboardRoomBtn'),
+      homeOpenLibraryBtn: document.getElementById('homeOpenLibraryBtn'),
+      homeRecentList: document.getElementById('homeRecentList'),
       miniPlayerBar: document.getElementById('miniPlayerBar'),
       miniPlayerOpenBtn: document.getElementById('miniPlayerOpenBtn'),
       nowPlayingCloseBtn: document.getElementById('nowPlayingCloseBtn'),
@@ -345,6 +351,9 @@ export class UIManager {
     ].forEach(([button, view]) => button?.addEventListener('click', () => this.setView(view)));
 
     elements.homeFindMusicBtn?.addEventListener('click', () => this.setView('search'));
+    elements.homeDashboardSearchBtn?.addEventListener('click', () => this.setView('search'));
+    elements.homeDashboardRoomBtn?.addEventListener('click', () => this.setView('room'));
+    elements.homeOpenLibraryBtn?.addEventListener('click', () => this.setView('library'));
     elements.listenTogetherBtn?.addEventListener('click', () => this.setView('room'));
     elements.miniPlayerOpenBtn?.addEventListener('click', () => this.openNowPlaying());
     elements.nowPlayingCloseBtn?.addEventListener('click', () => this.closeNowPlaying());
@@ -359,6 +368,7 @@ export class UIManager {
         this.closeNowPlaying();
         return;
       }
+      if (!this.nowPlayingIsMobile) return;
       if (event.key !== 'Tab') return;
       const focusable = [...(this.elements.activeRoomSection?.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') || [])]
         .filter(element => element.getAttribute('aria-hidden') !== 'true' && element.getClientRects().length);
@@ -2314,7 +2324,10 @@ export class UIManager {
 
     // Save playback to recent history if meaningful track
     if (title && title !== 'Pilih trek lagu' && this.localLibrary) {
-      this.localLibrary.addHistory(currentTrack).catch(() => {});
+      this.localLibrary.addHistory(currentTrack)
+        .then(() => this.localLibrary.getRecentHistory(20))
+        .then(recent => this.renderLibraryTracks(this.elements.homeRecentList, recent.slice(0, 6), 'Belum ada riwayat. Cari musik untuk mulai mendengarkan.'))
+        .catch(() => {});
       this.localLibrary.isFavorite(currentTrack.id)
         .then(isFavorite => this.updateFavoriteButton(isFavorite))
         .catch(() => this.updateFavoriteButton(false));
@@ -2503,21 +2516,27 @@ export class UIManager {
   }
 
   setView(view) {
-    if (!['home', 'search', 'library', 'room'].includes(view)) return;
+    if (!['home', 'search', 'library', 'room', 'player'].includes(view)) return;
     this.currentView = view;
     this.syncHomeEmptyState();
     const hasRoom = !!this.app.socketClient?.roomId;
+    const showHome = view === 'home';
     const showRoomSetup = view === 'room' && !hasRoom;
     const showLibrary = view === 'library';
     const showSearch = view === 'search';
+    const showPlayer = view === 'player';
+    const showRoom = view === 'room' && hasRoom;
+    const activePlayerView = showPlayer || showSearch || showRoom;
 
+    if (this.elements.homeDashboard) this.elements.homeDashboard.hidden = !showHome;
     if (this.elements.activeRoomSection) {
-      this.elements.activeRoomSection.style.display = showLibrary || showRoomSetup ? 'none' : 'flex';
+      this.elements.activeRoomSection.style.display = activePlayerView ? 'flex' : 'none';
       this.elements.activeRoomSection.classList.toggle('search-mode', showSearch);
+      this.elements.activeRoomSection.classList.toggle('player-mode', showPlayer);
     }
     if (this.elements.miniPlayerBar) {
       const hasTrack = !!this.currentTrack && this.currentTrack.name !== 'Pilih trek lagu';
-      this.elements.miniPlayerBar.hidden = !hasTrack || view === 'home';
+      this.elements.miniPlayerBar.hidden = !hasTrack || showPlayer;
     }
     if (this.elements.roomHeroSection) {
       this.elements.roomHeroSection.hidden = !showRoomSetup;
@@ -2539,8 +2558,9 @@ export class UIManager {
     navButtons.forEach(([button, name]) => {
       if (!button) return;
       if (name === 'room') button.hidden = !hasRoom;
-      button.classList.toggle('active', name === view);
-      if (name === view) button.setAttribute('aria-current', 'page');
+      const activeView = showPlayer ? this.nowPlayingPreviousView : view;
+      button.classList.toggle('active', name === activeView);
+      if (name === activeView) button.setAttribute('aria-current', 'page');
       else button.removeAttribute('aria-current');
     });
     if (this.elements.listenTogetherLabel) {
@@ -2557,30 +2577,34 @@ export class UIManager {
 
   openNowPlaying() {
     const isMobile = typeof window !== 'undefined' && window.matchMedia?.('(max-width: 760px)').matches;
-    if (!isMobile || !this.currentTrack?.name || this.nowPlayingOpen) {
-      if (!isMobile) this.setView('home');
-      return false;
-    }
+    if (!this.currentTrack?.name || this.nowPlayingOpen) return false;
     this.nowPlayingPreviousView = this.currentView;
+    this.nowPlayingIsMobile = isMobile;
+    this.nowPlayingOpen = true;
+    this.elements.miniPlayerOpenBtn?.setAttribute('aria-expanded', 'true');
+    if (!isMobile) {
+      this.setView('player');
+      return true;
+    }
     this.nowPlayingViewStyles = {
       sourceHub: this.elements.sourceHubSection?.style.display,
       sourceSearch: this.elements.sourceSearchSection?.style.display,
       queue: this.elements.queueCardSection?.style.display
     };
-    this.nowPlayingOpen = true;
     document.body.classList.add('now-playing-open');
     this.elements.activeRoomSection?.setAttribute('role', 'dialog');
     this.elements.activeRoomSection?.setAttribute('aria-modal', 'true');
     this.elements.activeRoomSection?.setAttribute('aria-labelledby', 'nowPlayingHeading');
-    this.elements.miniPlayerOpenBtn?.setAttribute('aria-expanded', 'true');
     this.elements.nowPlayingCloseBtn?.focus();
     return true;
   }
 
   closeNowPlaying() {
     if (!this.nowPlayingOpen) return false;
+    const wasMobile = this.nowPlayingIsMobile;
     this.nowPlayingOpen = false;
-    document.body.classList.remove('now-playing-open');
+    if (wasMobile) document.body.classList.remove('now-playing-open');
+    this.nowPlayingIsMobile = false;
     this.elements.activeRoomSection?.removeAttribute('role');
     this.elements.activeRoomSection?.removeAttribute('aria-modal');
     this.elements.activeRoomSection?.removeAttribute('aria-labelledby');
@@ -2591,7 +2615,12 @@ export class UIManager {
       if (this.elements.queueCardSection) this.elements.queueCardSection.style.display = this.nowPlayingViewStyles.queue;
       this.nowPlayingViewStyles = null;
     }
-    this.currentView = this.nowPlayingPreviousView;
+    if (wasMobile) {
+      this.currentView = this.nowPlayingPreviousView;
+      this.syncHomeEmptyState();
+    } else {
+      this.setView(this.nowPlayingPreviousView);
+    }
     this.elements.miniPlayerOpenBtn?.focus();
     return true;
   }
@@ -2622,6 +2651,7 @@ export class UIManager {
       this.renderLibraryTracks(this.elements.favoriteList, favorites, 'Belum ada lagu favorit.');
       this.renderLibraryTracks(this.elements.localAudioList, localFiles, 'File audio yang kamu simpan di perangkat ini akan muncul di sini.', null, true);
       this.renderLibraryTracks(this.elements.recentList, recent, 'Lagu yang diputar akan muncul di sini.');
+      this.renderLibraryTracks(this.elements.homeRecentList, recent.slice(0, 6), 'Belum ada riwayat. Cari musik untuk mulai mendengarkan.');
     } catch (error) {
       console.warn('Library unavailable:', error);
     }
@@ -3203,7 +3233,7 @@ export class UIManager {
       this.elements.miniPlayerArtwork.textContent = artwork ? '' : '♫';
       this.elements.miniPlayerArtwork.style.backgroundImage = artwork;
     }
-    if (this.elements.miniPlayerBar && this.currentView !== 'home') this.elements.miniPlayerBar.hidden = false;
+    if (this.elements.miniPlayerBar) this.elements.miniPlayerBar.hidden = this.currentView === 'player';
   }
 
   togglePlayback() {
