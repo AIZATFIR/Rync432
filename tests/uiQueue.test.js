@@ -37,6 +37,17 @@ describe('Rync page structure', () => {
     expect(dashboard).toContain('id="homeOpenLibraryBtn"');
   });
 
+  it('puts YouTube discovery on Home for new users without playback history', () => {
+    const htmlPath = fileURLToPath(new URL('../public/index.html', import.meta.url));
+    const html = readFileSync(htmlPath, 'utf8');
+    const dashboard = html.slice(html.indexOf('id="homeDashboard"'), html.indexOf('id="roomHeroSection"'));
+
+    expect(dashboard).toContain('id="homeDiscoveryGrid"');
+    expect(dashboard).toContain('id="homeDiscoveryStatus"');
+    expect(dashboard).toContain('id="homeDiscoveryRefreshBtn"');
+    expect(dashboard.match(/data-home-query=/g)).toHaveLength(4);
+  });
+
   it('keeps header labels compact at the narrowest supported viewport', () => {
     const cssPath = fileURLToPath(new URL('../public/css/style.css', import.meta.url));
     const css = readFileSync(cssPath, 'utf8');
@@ -736,7 +747,7 @@ describe('YouTube search queue UI', () => {
   it('uses synchronized room controls when a guest mini-player toggles YouTube', () => {
     const requestControl = vi.fn();
     const schedulePlay = vi.fn();
-    const pausePlayback = vi.fn();
+    const pausePlayback = vi.fn().mockResolvedValue(true);
     const player = { pause: vi.fn(), getCurrentTime: () => 44 };
     const ui = new UIManager({
       socketClient: { roomId: 'ROOM', isHost: false, requestControl, schedulePlay, pausePlayback },
@@ -758,9 +769,9 @@ describe('YouTube search queue UI', () => {
     expect(player.pause).not.toHaveBeenCalled();
   });
 
-  it('pauses and schedules YouTube in sync when the room host toggles playback', () => {
-    const pausePlayback = vi.fn();
-    const schedulePlay = vi.fn();
+  it('pauses and schedules YouTube in sync when the room host toggles playback', async () => {
+    const pausePlayback = vi.fn().mockResolvedValue(true);
+    const schedulePlay = vi.fn().mockResolvedValue(900);
     const player = { pause: vi.fn(), getCurrentTime: () => 44, playAt: vi.fn().mockResolvedValue(undefined) };
     const audioEngine = { pauseOffsetSec: 0, ensureContext: vi.fn() };
     const ui = new UIManager({
@@ -778,7 +789,9 @@ describe('YouTube search queue UI', () => {
 
     ui.setPlayState.mockClear();
     ui.togglePlayback();
-    expect(schedulePlay).not.toHaveBeenCalled();
+    expect(schedulePlay).toHaveBeenCalledWith(800, 44);
+    await Promise.resolve();
+    await Promise.resolve();
     expect(player.playAt).toHaveBeenCalledWith('dQw4w9WgXcQ', 900, 44);
   });
 

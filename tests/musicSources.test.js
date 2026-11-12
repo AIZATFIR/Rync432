@@ -73,6 +73,7 @@ describe('Music Sources & Resolver Layer', () => {
         json: async () => ({ results: [{
           id: 'dQw4w9WgXcQ', title: 'Song', channel: 'Artist', duration: 215,
           durationText: '3:35', thumbnail: 'https://img.youtube.com/thumb.jpg',
+          apiDataFetchedAt: 1_234_567,
           url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
         }] })
       });
@@ -84,6 +85,7 @@ describe('Music Sources & Resolver Layer', () => {
       expect(results).toEqual([expect.objectContaining({
         id: 'yt_dQw4w9WgXcQ', name: 'Song', artist: 'Artist', duration: 215,
         sourceType: MusicSourceType.YOUTUBE, sourceId: 'dQw4w9WgXcQ',
+        apiDataFetchedAt: 1_234_567,
         thumbnail: 'https://img.youtube.com/thumb.jpg',
         sourceUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
       })]);

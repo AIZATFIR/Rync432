@@ -295,6 +295,10 @@ class App {
         uiManager.showUrlFeedback(payload.message || 'Antrean belum tersinkron ke room.', 'error');
         break;
 
+      case 'PLAYBACK_SYNC_ERROR':
+        uiManager.showUrlFeedback(payload.message || 'Playback belum tersinkron ke room.', 'error');
+        break;
+
       case 'CONTROL_REQUEST': {
         if (!socketClient?.isHost) break;
         const labels = {
@@ -313,16 +317,20 @@ class App {
 
         switch (payload.action) {
           case 'play':
-            socketClient.schedulePlay(800, audioEngine.pauseOffsetSec || 0);
+            socketClient.schedulePlay(800, audioEngine.pauseOffsetSec || 0).then(applied => {
+              if (!applied) uiManager.showUrlFeedback('Putar gagal disinkronkan ke room. Coba lagi.', 'error');
+            });
             break;
           case 'pause': {
-            const offset = youtubeVideoId(socketClient.cloudMesh?.lastKnownTrack)
-              ? this.youtubePlayer?.getCurrentTime() || 0
-              : audioEngine.getCurrentPlaybackPosition();
-            audioEngine.stopLocalPlayback();
+            const isYouTube = !!youtubeVideoId(socketClient.cloudMesh?.lastKnownTrack);
+            const offset = isYouTube ? this.youtubePlayer?.getCurrentTime() || 0 : audioEngine.getCurrentPlaybackPosition();
+            if (isYouTube) this.youtubePlayer?.pause();
+            else audioEngine.stopLocalPlayback();
             audioEngine.pauseOffsetSec = offset;
             uiManager.setPlayState(false);
-            socketClient.pausePlayback(offset);
+            socketClient.pausePlayback(offset).then(applied => {
+              if (!applied) uiManager.setPlayState(true);
+            });
             break;
           }
           case 'next': uiManager.goToNextTrack(); break;

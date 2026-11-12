@@ -88,12 +88,29 @@
     <main class="home-dashboard" id="homeDashboard" aria-labelledby="homeDashboardHeading" hidden>
       <section class="home-welcome">
         <p class="eyebrow">RYNC · MUSIC, TOGETHER</p>
-        <h2 id="homeDashboardHeading">Putar yang kamu suka.</h2>
-        <p>Temukan musik, lanjutkan dari library, atau ajak teman masuk ke satu antrean.</p>
+        <h2 id="homeDashboardHeading">Temukan musik.<br>Putar bareng.</h2>
+        <p>Mulai dari lagu yang lagi ramai, lanjutkan dari library, atau ajak teman masuk ke antrean yang sama.</p>
         <div class="home-welcome-actions">
           <button type="button" class="btn-spotify btn-spotify-primary" id="homeDashboardSearchBtn">Cari musik</button>
           <button type="button" class="btn-spotify btn-spotify-outline" id="homeDashboardRoomBtn">Dengar bareng</button>
         </div>
+      </section>
+      <section class="home-discovery-section" aria-labelledby="homeDiscoveryHeading">
+        <div class="home-section-heading home-discovery-heading">
+          <div>
+            <p class="eyebrow">DARI YOUTUBE</p>
+            <h3 id="homeDiscoveryHeading">Lagi ramai</h3>
+          </div>
+          <button type="button" class="library-action" id="homeDiscoveryRefreshBtn" aria-label="Muat ulang rekomendasi musik">Muat ulang</button>
+        </div>
+        <div class="home-discovery-filters" role="group" aria-label="Pilih suasana musik">
+          <button type="button" class="home-discovery-filter active" data-home-query="lagu populer Indonesia" aria-pressed="true">Lagi ramai</button>
+          <button type="button" class="home-discovery-filter" data-home-query="K-pop hits" aria-pressed="false">K-pop</button>
+          <button type="button" class="home-discovery-filter" data-home-query="chill songs" aria-pressed="false">Santai</button>
+          <button type="button" class="home-discovery-filter" data-home-query="Indonesian indie music" aria-pressed="false">Indie</button>
+        </div>
+        <p class="home-discovery-status" id="homeDiscoveryStatus" role="status" aria-live="polite">Memuat rekomendasi…</p>
+        <div class="home-discovery-grid" id="homeDiscoveryGrid" aria-busy="true"></div>
       </section>
       <section class="home-recent-section" aria-labelledby="homeRecentHeading">
         <div class="home-section-heading">

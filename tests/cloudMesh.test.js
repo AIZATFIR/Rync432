@@ -24,6 +24,91 @@ function makeAudioChunkFrame(sequence, timestamp, bytes) {
 }
 
 describe('CloudMesh audio transfer', () => {
+  it('does not broadcast room play before the server accepts the authoritative state', async () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.isHost = true;
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'host';
+    mesh.hostToken = 'token';
+    mesh.isPaused = true;
+    mesh.publishMqtt = vi.fn();
+    mesh.broadcastDataChannelMessage = vi.fn();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, json: async () => ({ success: false, error: 'HOST_ONLY' }) }));
+
+    await expect(mesh.broadcastPlay(Date.now() + 800, 0, { id: 'track-a' })).resolves.toBe(false);
+
+    expect(mesh.isPaused).toBe(true);
+    expect(mesh.publishMqtt).not.toHaveBeenCalled();
+    expect(mesh.broadcastDataChannelMessage).not.toHaveBeenCalled();
+    expect(events.at(-1)).toMatchObject({ type: 'PLAYBACK_SYNC_ERROR', payload: { action: 'play' } });
+  });
+
+  it('does not broadcast room pause before the server accepts the authoritative state', async () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.isHost = true;
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'host';
+    mesh.hostToken = 'token';
+    mesh.isPaused = false;
+    mesh.publishMqtt = vi.fn();
+    mesh.broadcastDataChannelMessage = vi.fn();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, json: async () => ({ success: false, error: 'HOST_ONLY' }) }));
+
+    await expect(mesh.broadcastPause(12)).resolves.toBe(false);
+
+    expect(mesh.isPaused).toBe(false);
+    expect(mesh.publishMqtt).not.toHaveBeenCalled();
+    expect(mesh.broadcastDataChannelMessage).not.toHaveBeenCalled();
+    expect(events.at(-1)).toMatchObject({ type: 'PLAYBACK_SYNC_ERROR', payload: { action: 'pause' } });
+  });
+
+  it('commits room playback state and broadcasts only after server acknowledgement', async () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.isHost = true;
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'host';
+    mesh.hostToken = 'token';
+    mesh.publishMqtt = vi.fn();
+    mesh.broadcastDataChannelMessage = vi.fn();
+    const responses = [
+      { ok: true, json: async () => ({ success: true }) },
+      { ok: true, json: async () => ({ success: true }) }
+    ];
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => responses.shift()));
+
+    await expect(mesh.broadcastPlay(Date.now() + 800, 4, { id: 'track-a' })).resolves.toBe(true);
+    expect(mesh.isPaused).toBe(false);
+    expect(mesh.broadcastDataChannelMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'SCHEDULED_PLAY', startOffsetSec: 4 }));
+
+    await expect(mesh.broadcastPause(9)).resolves.toBe(true);
+    expect(mesh.isPaused).toBe(true);
+    expect(mesh.broadcastDataChannelMessage).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'PAUSED', currentOffsetSec: 9 }));
+  });
+
+  it('bounds a stalled room playback acknowledgement and leaves local state unchanged', async () => {
+    vi.useFakeTimers();
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.isHost = true;
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'host';
+    mesh.hostToken = 'token';
+    mesh.isPaused = true;
+    mesh.publishMqtt = vi.fn();
+    mesh.broadcastDataChannelMessage = vi.fn();
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+    const play = mesh.broadcastPlay(Date.now() + 800, 0, { id: 'track-a' });
+    await vi.advanceTimersByTimeAsync(8_010);
+
+    await expect(play).resolves.toBe(false);
+    expect(mesh.isPaused).toBe(true);
+    expect(mesh.publishMqtt).not.toHaveBeenCalled();
+    expect(mesh.broadcastDataChannelMessage).not.toHaveBeenCalled();
+  });
+
   it('ignores delayed realtime queue snapshots older than the applied room revision', () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
@@ -1024,6 +1109,32 @@ describe('CloudMesh audio transfer', () => {
     await expect(selection).resolves.toBe(false);
 
     expect(events).toContainEqual(expect.objectContaining({ type: 'QUEUE_SYNC_ERROR' }));
+  });
+
+  it('waits for server playback acknowledgement before announcing queued autoplay', async () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.isHost = true;
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'host-peer';
+    mesh.hostToken = 'token';
+    mesh.queueRevision = 3;
+    mesh.publishMqtt = vi.fn();
+    mesh.broadcastDataChannelMessage = vi.fn();
+    const selectedTrack = { id: 'queued-track', name: 'Queued track' };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({
+        success: true, track: selectedTrack, queue: [selectedTrack], queueRevision: 4, startOffsetSec: 0
+      }) })
+      .mockResolvedValueOnce({ ok: false, json: async () => ({ success: false, error: 'HOST_ONLY' }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(mesh.playQueueItem('queued-track', true)).resolves.toBe(false);
+
+    expect(events.some(event => event.type === 'SCHEDULED_PLAY')).toBe(false);
+    expect(mesh.publishMqtt).not.toHaveBeenCalled();
+    expect(mesh.broadcastDataChannelMessage).not.toHaveBeenCalled();
+    expect(events.at(-1)).toMatchObject({ type: 'PLAYBACK_SYNC_ERROR', payload: { action: 'play' } });
   });
 
   it('rebases a queue addition once on a conflict snapshot', async () => {

@@ -108,16 +108,17 @@ export class SocketClient {
     return this.roomReady;
   }
 
-  schedulePlay(delayMs = 800, startOffsetSec = 0) {
+  async schedulePlay(delayMs = 800, startOffsetSec = 0) {
     if (!this.isHost) return false;
     const targetServerTime = this.clockSync.getServerTime() + delayMs;
-    this.broadcastPlay(targetServerTime, startOffsetSec);
-    return true;
+    const applied = await this.broadcastPlay(targetServerTime, startOffsetSec);
+    return applied ? targetServerTime : false;
   }
 
-  pausePlayback(currentOffsetSec = 0) {
+  async pausePlayback(currentOffsetSec = 0) {
     if (!this.isHost) return false;
-    this.cloudMesh.broadcastPause(currentOffsetSec);
+    const applied = await this.cloudMesh.broadcastPause(currentOffsetSec);
+    if (!applied) return false;
     this.onEvent('PAUSED', { currentOffsetSec });
     return true;
   }
@@ -127,10 +128,10 @@ export class SocketClient {
     return this.schedulePlay(250, positionSec);
   }
 
-  broadcastPlay(targetServerTime, startOffsetSec, track) {
+  async broadcastPlay(targetServerTime, startOffsetSec, track) {
     if (!this.isHost) return false;
-    this.cloudMesh.broadcastPlay(targetServerTime, startOffsetSec, track);
-    this.onEvent('SCHEDULED_PLAY', { targetServerTime, startOffsetSec, track: track || this.cloudMesh.lastKnownTrack });
+    const applied = await this.cloudMesh.broadcastPlay(targetServerTime, startOffsetSec, track);
+    if (!applied) return false;
     return true;
   }
 

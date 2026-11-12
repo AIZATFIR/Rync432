@@ -1394,6 +1394,30 @@ export class CloudMesh {
         this.onEvent('QUEUE_SYNC_ERROR', { message: 'Room gagal memilih lagu. Refresh antrean lalu coba lagi.' });
         return false;
       }
+      this.applyCanonicalQueue(data.queue, data.queueRevision);
+      if (autoplay && data.track) {
+        const targetServerTime = this.serverTimeNow() + 800;
+        try {
+          const response = await fetchQueueMutation('/api/room?action=play', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              roomId: requestRoomId,
+              peerId: this.peerId,
+              hostToken: this.hostToken,
+              targetServerTime,
+              startOffsetSec: data.startOffsetSec || 0,
+              track: data.track
+            })
+          });
+          const result = await response.json();
+          if (!response.ok || result.success !== true) throw new Error(result.error || 'ROOM_PLAY_FAILED');
+        } catch (error) {
+          this.onEvent('PLAYBACK_SYNC_ERROR', { action: 'play', message: 'Putar gagal disinkronkan ke room. Coba lagi.' });
+          return false;
+        }
+        data.targetServerTime = targetServerTime;
+      }
       if (data.track) {
         this.lastKnownTrack = data.track;
         const cachedBuffer = this.localAudioBufferCache.get(data.track.id);
@@ -1419,18 +1443,6 @@ export class CloudMesh {
           this.publishMqtt(this.roomTopic, { type: 'SCHEDULED_PLAY', payload });
           this.broadcastDataChannelMessage({ type: 'SCHEDULED_PLAY', ...payload });
           this.broadcastChannel?.postMessage({ type: 'SCHEDULED_PLAY', payload });
-          fetch('/api/room?action=play', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              roomId: this.roomId,
-              peerId: this.peerId,
-              hostToken: this.hostToken,
-              targetServerTime: payload.targetServerTime,
-              startOffsetSec: payload.startOffsetSec,
-              track: data.track
-            })
-          }).catch(() => {});
         } else {
           this.onEvent('PAUSED', { currentOffsetSec: 0 });
           this.broadcastChannel?.postMessage({ type: 'PAUSED', payload: { currentOffsetSec: 0 } });
@@ -2133,19 +2145,42 @@ export class CloudMesh {
   }
 
   async broadcastPlay(targetServerTime, startOffsetSec, track) {
-    if (!this.isHost) return;
-    this.isPaused = false;
+    if (!this.isHost) return false;
     const trackPayload = track || this.lastKnownTrack;
-    this.lastKnownState = youtubeVideoId(trackPayload)
-      ? this.serverTimeNow() - ((Number(startOffsetSec) || 0) * 1000)
-      : targetServerTime;
-    this.lastKnownOffsetSec = startOffsetSec;
     if (trackPayload) {
       const videoId = youtubeVideoId(trackPayload);
       if (videoId) {
         trackPayload.sourceType = 'youtube';
         trackPayload.sourceId = videoId;
       }
+    }
+
+    try {
+      const response = await fetchQueueMutation('/api/room?action=play', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: this.roomId,
+          peerId: this.peerId,
+          hostToken: this.hostToken,
+          targetServerTime,
+          startOffsetSec,
+          track: trackPayload
+        })
+      });
+      const result = await response.json();
+      if (!response.ok || result.success !== true) throw new Error(result.error || 'ROOM_PLAY_FAILED');
+    } catch (error) {
+      this.onEvent('PLAYBACK_SYNC_ERROR', { action: 'play', message: 'Putar gagal disinkronkan ke room. Coba lagi.' });
+      return false;
+    }
+
+    this.isPaused = false;
+    this.lastKnownState = youtubeVideoId(trackPayload)
+      ? this.serverTimeNow() - ((Number(startOffsetSec) || 0) * 1000)
+      : targetServerTime;
+    this.lastKnownOffsetSec = startOffsetSec;
+    if (trackPayload) {
       this.lastKnownTrack = trackPayload;
       this.onEvent('TRACK_METADATA', trackPayload);
     }
@@ -2169,22 +2204,30 @@ export class CloudMesh {
       track: trackPayload
     });
 
-    fetch('/api/room?action=play', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        roomId: this.roomId,
-        peerId: this.peerId,
-        hostToken: this.hostToken,
-        targetServerTime,
-        startOffsetSec,
-        track: trackPayload
-      })
-    }).catch(() => {});
+    return true;
   }
 
   async broadcastPause(currentOffsetSec) {
-    if (!this.isHost) return;
+    if (!this.isHost) return false;
+
+    try {
+      const response = await fetchQueueMutation('/api/room?action=pause', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: this.roomId,
+          peerId: this.peerId,
+          hostToken: this.hostToken,
+          currentOffsetSec
+        })
+      });
+      const result = await response.json();
+      if (!response.ok || result.success !== true) throw new Error(result.error || 'ROOM_PAUSE_FAILED');
+    } catch (error) {
+      this.onEvent('PLAYBACK_SYNC_ERROR', { action: 'pause', message: 'Jeda gagal disinkronkan ke room. Coba lagi.' });
+      return false;
+    }
+
     this.isPaused = true;
     this.lastPauseTime = Date.now();
     this.lastKnownState = 'PAUSED';
@@ -2207,16 +2250,7 @@ export class CloudMesh {
       currentOffsetSec
     });
 
-    fetch('/api/room?action=pause', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        roomId: this.roomId,
-        peerId: this.peerId,
-        hostToken: this.hostToken,
-        currentOffsetSec
-      })
-    }).catch(() => {});
+    return true;
   }
 
   async sendTrackMetadata(metadata) {

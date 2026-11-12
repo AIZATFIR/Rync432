@@ -105,6 +105,7 @@ export class YouTubeSource {
         duration: item.duration,
         thumbnail: item.thumbnail,
         durationText: item.durationText,
+        apiDataFetchedAt: item.apiDataFetchedAt,
         sourceType: this.type,
         sourceId: item.id,
         sourceUrl: item.url || `https://www.youtube.com/watch?v=${item.id}`

@@ -19,6 +19,63 @@ async function callRoom(action, body) {
 }
 
 describe('room authority', () => {
+  it('converges two room members after concurrent queue additions and rejects stale queue writes', async () => {
+    const roomId = createTestRoomId();
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
+    const hostSnapshot = await callRoom('poll', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken });
+    const guestSnapshot = await callRoom('poll', { roomId, peerId: 'guest-peer' });
+    const hostAdd = await callRoom('add_queue', {
+      roomId, peerId: 'host-peer', expectedQueueRevision: hostSnapshot.body.queueRevision,
+      clientMutationId: 'host-add-item-001', items: [{ id: 'host-track', queueItemId: 'host-item', name: 'Host track' }]
+    });
+    const staleGuestAdd = await callRoom('add_queue', {
+      roomId, peerId: 'guest-peer', expectedQueueRevision: guestSnapshot.body.queueRevision,
+      clientMutationId: 'guest-add-item-001', items: [{ id: 'guest-track', queueItemId: 'guest-item', name: 'Guest track' }]
+    });
+    const refreshedGuest = await callRoom('poll', { roomId, peerId: 'guest-peer' });
+    const retriedGuestAdd = await callRoom('add_queue', {
+      roomId, peerId: 'guest-peer', expectedQueueRevision: refreshedGuest.body.queueRevision,
+      clientMutationId: 'guest-add-item-002', items: [{ id: 'guest-track', queueItemId: 'guest-item', name: 'Guest track' }]
+    });
+    const finalHost = await callRoom('poll', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken });
+    const finalGuest = await callRoom('poll', { roomId, peerId: 'guest-peer' });
+
+    expect(hostAdd.statusCode).toBe(200);
+    expect(staleGuestAdd.statusCode).toBe(409);
+    expect(retriedGuestAdd.statusCode).toBe(200);
+    expect(finalHost.body.queue).toEqual(finalGuest.body.queue);
+    expect(finalHost.body.queueRevision).toBe(finalGuest.body.queueRevision);
+    expect(finalHost.body.queue.map(item => item.queueItemId)).toEqual(['host-item', 'guest-item']);
+  });
+
+  it('persists acknowledged play and pause state for both members and rejects forged host commands', async () => {
+    const roomId = createTestRoomId();
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
+    const track = { id: 'song-a', name: 'Song A', sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ' };
+    const forgedPlay = await callRoom('play', {
+      roomId, peerId: 'host-peer', hostToken: 'invalid-token', targetServerTime: Date.now() + 800, track
+    });
+    const acceptedPlay = await callRoom('play', {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken, targetServerTime: Date.now() + 800, track
+    });
+    const guestPlaying = await callRoom('poll', { roomId, peerId: 'guest-peer' });
+    const acceptedPause = await callRoom('pause', {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken, currentOffsetSec: 19
+    });
+    const guestPaused = await callRoom('poll', { roomId, peerId: 'guest-peer' });
+
+    expect(forgedPlay.statusCode).toBe(403);
+    expect(acceptedPlay.statusCode).toBe(200);
+    expect(guestPlaying.body).toMatchObject({
+      state: 'PLAYING', track
+    });
+    expect(guestPlaying.body.targetServerTime).toBeGreaterThan(Date.now());
+    expect(acceptedPause.statusCode).toBe(200);
+    expect(guestPaused.body).toMatchObject({ state: 'PAUSED', startOffsetSec: 19, targetServerTime: null });
+  });
+
   it('keeps duplicate tracks as distinct queue items and targets mutations by queue item id', async () => {
     const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
