@@ -1381,6 +1381,10 @@ export class CloudMesh {
       const data = await res.json();
       if (this.roomId !== requestRoomId) return false;
       const queueSnapshotCurrent = this.rememberQueueRevision(data, requestRoomId);
+      if (data.duplicate === true) {
+        if (queueSnapshotCurrent && Array.isArray(data.queue)) this.applyCanonicalQueue(data.queue, data.queueRevision);
+        return data.track || true;
+      }
       if (res.status === 409) {
         if (queueSnapshotCurrent) this.applyCanonicalQueue(data.queue);
         this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Antrean berubah di perangkat lain. Coba lagi.' });
@@ -1464,6 +1468,10 @@ export class CloudMesh {
       });
       const data = await res.json();
       const queueSnapshotCurrent = this.rememberQueueRevision(data);
+      if (data.duplicate === true) {
+        if (queueSnapshotCurrent && Array.isArray(data.queue)) this.applyCanonicalQueue(data.queue, data.queueRevision);
+        return true;
+      }
       if (res.status === 409) {
         if (queueSnapshotCurrent) this.applyCanonicalQueue(data.queue);
         this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Antrean berubah di perangkat lain. Coba lagi.' });
@@ -1520,6 +1528,10 @@ export class CloudMesh {
       const data = await res.json();
       if (this.roomId !== requestRoomId) return false;
       const queueSnapshotCurrent = this.rememberQueueRevision(data, requestRoomId);
+      if (data.duplicate === true) {
+        if (queueSnapshotCurrent && Array.isArray(data.queue)) this.applyCanonicalQueue(data.queue, data.queueRevision);
+        return true;
+      }
       if (!res.ok || !data.success) {
         if (res.status === 409 && queueSnapshotCurrent && Array.isArray(data.queue)) {
           this.applyCanonicalQueue(data.queue);
@@ -1590,6 +1602,11 @@ export class CloudMesh {
       const data = await res.json();
       if (this.roomId !== requestRoomId) return false;
       queueSnapshotCurrent = this.rememberQueueRevision(data, requestRoomId);
+      if (data.duplicate === true) {
+        if (queueId) this.deletedQueueIds.delete(queueId);
+        if (queueSnapshotCurrent && Array.isArray(data.queue)) this.applyCanonicalQueue(data.queue, data.queueRevision);
+        return true;
+      }
       if (res.status === 409) {
         if (queueId) this.deletedQueueIds.delete(queueId);
         if (queueSnapshotCurrent) this.applyCanonicalQueue(data.queue);
@@ -1640,6 +1657,11 @@ export class CloudMesh {
       const data = await res.json();
       if (this.roomId !== requestRoomId) return { removed: [], queue: this.lastKnownQueue || [] };
       queueSnapshotCurrent = this.rememberQueueRevision(data, requestRoomId);
+      if (data.duplicate === true) {
+        ids.forEach(id => this.deletedQueueIds.delete(id));
+        if (queueSnapshotCurrent && Array.isArray(data.queue)) this.applyCanonicalQueue(data.queue, data.queueRevision);
+        return { removed: data.removed || [], queue: this.lastKnownQueue || [] };
+      }
       if (res.status === 409) {
         ids.forEach(id => this.deletedQueueIds.delete(id));
         if (queueSnapshotCurrent) this.applyCanonicalQueue(data.queue);
@@ -1683,6 +1705,10 @@ export class CloudMesh {
       const data = await res.json();
       if (this.roomId !== requestRoomId) return false;
       const queueSnapshotCurrent = this.rememberQueueRevision(data, requestRoomId);
+      if (data.duplicate === true) {
+        if (queueSnapshotCurrent && Array.isArray(data.queue)) this.applyCanonicalQueue(data.queue, data.queueRevision);
+        return true;
+      }
       if (res.status === 409) {
         removed.forEach(entry => this.deletedQueueIds.add(queueItemKey(entry.item)));
         if (queueSnapshotCurrent) this.applyCanonicalQueue(data.queue);
@@ -1731,10 +1757,14 @@ export class CloudMesh {
       const res = await fetchQueueMutation('/api/room?action=next_track', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, clientMutationId, automatic, preparedTrackId: preparedTrackId || undefined })
+        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, clientMutationId, expectedQueueRevision: this.queueRevision, automatic, preparedTrackId: preparedTrackId || undefined })
       });
       const data = await res.json();
       const queueSnapshotCurrent = this.rememberQueueRevision(data, this.roomId);
+      if (data.duplicate === true) {
+        if (queueSnapshotCurrent && Array.isArray(data.queue)) this.applyCanonicalQueue(data.queue, data.queueRevision);
+        return true;
+      }
       if (res.status === 409) {
         this.applyCanonicalQueue(data.queue);
         this.onEvent('QUEUE_SYNC_ERROR', { queue: this.lastKnownQueue, message: 'Antrean berubah saat menyiapkan lagu. Tekan Next lagi.' });

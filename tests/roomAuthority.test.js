@@ -131,6 +131,26 @@ describe('room authority', () => {
     expect(retried.body.track.id).toBe('second');
   });
 
+  it('does not replay stale playback state when a next-track retry arrives late', async () => {
+    const roomId = createTestRoomId();
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
+      { id: 'first', name: 'First' }, { id: 'second', name: 'Second' }, { id: 'third', name: 'Third' }
+    ] });
+    await callRoom('track', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, track: { id: 'first', name: 'First' } });
+    const mutation = {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken,
+      clientMutationId: 'mutation-next-late-001', automatic: false
+    };
+
+    const advanced = await callRoom('next_track', mutation);
+    await callRoom('track', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, track: { id: 'third', name: 'Third' } });
+    const retried = await callRoom('next_track', mutation);
+
+    expect(advanced.body.track.id).toBe('second');
+    expect(retried.body).toMatchObject({ success: true, duplicate: true, track: { id: 'second' } });
+  });
+
   it('stores only validated audio routes for room peers', async () => {
     const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
@@ -222,7 +242,8 @@ describe('room authority', () => {
       ['play_next', { queueId: 'track-b' }],
       ['remove_queue', { queueId: 'track-a' }],
       ['clear_queue', { queueIds: ['track-a'] }],
-      ['restore_queue', { removed: [{ item: { id: 'track-c', name: 'C' }, index: 1 }] }]
+      ['restore_queue', { removed: [{ item: { id: 'track-c', name: 'C' }, index: 1 }] }],
+      ['next_track', { automatic: true }]
     ];
 
     for (const [action, payload] of staleMutations) {

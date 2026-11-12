@@ -252,30 +252,25 @@ export default async function handler(req, res) {
         queueRevision: queueRevisionOf(room)
       };
       if (action === 'clear_queue') response.removed = existing.removed || [];
-      if (action === 'play_queue_item') {
-        response.track = room.track;
-        response.state = room.state;
-        response.targetServerTime = room.targetServerTime;
-        response.startOffsetSec = room.startOffsetSec;
-      }
-      if (action === 'next_track') {
-        response.track = room.track;
-        response.state = room.state;
-        response.targetServerTime = room.targetServerTime;
-        response.startOffsetSec = room.startOffsetSec;
-      }
-      if (action === 'add_queue') {
-        response.track = room.track;
-        response.state = room.state;
-        response.targetServerTime = room.targetServerTime;
-      }
+      if (existing.result) Object.assign(response, existing.result);
       res.status(200).json(response);
       return true;
     }
 
     queueMutationReceiptWriter = response => {
       response.clientMutationId = clientMutationId;
-      const receipt = { peerId, clientMutationId, action, fingerprint, appliedAt: now };
+      const result = {};
+      if (action === 'play_queue_item' || action === 'next_track') {
+        ['track', 'state', 'targetServerTime', 'startOffsetSec'].forEach(key => {
+          if (response[key] !== undefined) result[key] = response[key];
+        });
+      }
+      if (action === 'add_queue') {
+        ['track', 'state', 'targetServerTime'].forEach(key => {
+          if (response[key] !== undefined) result[key] = response[key];
+        });
+      }
+      const receipt = { peerId, clientMutationId, action, fingerprint, appliedAt: now, result };
       if (action === 'clear_queue') receipt.removed = response.removed || [];
       room.queueMutationReceipts = [...receipts, receipt].slice(-MAX_QUEUE_MUTATION_RECEIPTS);
     };
@@ -959,6 +954,7 @@ export default async function handler(req, res) {
         });
       }
       if (prepareQueueMutation(room)) return;
+      if (!checkQueueRevision(room, body, res)) return;
       if (selection.preparedTrackChanged) {
         return res.status(409).json({
           success: false,

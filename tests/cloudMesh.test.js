@@ -2272,6 +2272,33 @@ describe('CloudMesh audio transfer', () => {
     expect(events).toContainEqual(expect.objectContaining({ type: 'QUEUE_SYNC_ERROR' }));
   });
 
+  it('does not replay an old scheduled play when a next-track retry is acknowledged late', async () => {
+    const events = [];
+    const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
+    mesh.roomId = 'ROOM';
+    mesh.peerId = 'host';
+    mesh.isHost = true;
+    mesh.hostToken = 'host-token';
+    mesh.queueRevision = 3;
+    mesh.queueRevisionRoomId = 'ROOM';
+    mesh.applyCanonicalQueue = vi.fn();
+    vi.stubGlobal('fetch', vi.fn(async (_url, options) => ({
+      ok: true,
+      json: async () => ({
+        success: true, duplicate: true, queue: [{ id: 'next' }], queueRevision: 3,
+        track: { id: 'previously-selected' }, state: 'PLAYING', targetServerTime: Date.now() + 800
+      })
+    })));
+
+    await expect(mesh.nextTrack(true)).resolves.toBe(true);
+
+    const request = JSON.parse(fetch.mock.calls[0][1].body);
+    expect(request.expectedQueueRevision).toBe(3);
+    expect(request.clientMutationId).toMatch(/^qm_/);
+    expect(mesh.applyCanonicalQueue).toHaveBeenCalledWith([{ id: 'next' }], 3);
+    expect(events.some(event => event.type === 'SCHEDULED_PLAY')).toBe(false);
+  });
+
   it('keeps local-file queue addition optimistic while exposing a separate server acknowledgement', async () => {
     const mesh = new CloudMesh(() => {});
     mesh.roomId = 'ROOM';
