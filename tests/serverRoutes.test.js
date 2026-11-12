@@ -30,6 +30,7 @@ describe('Server & API Route Adapters', () => {
     expect(jsonOutput.app).toBe('Rync432');
     expect(jsonOutput.t0).toBe(12345678);
     expect(jsonOutput.timestamp).toBeGreaterThan(0);
+    expect(jsonOutput.providers.youtubeSearch).toBe(Boolean(process.env.YOUTUBE_DATA_API_KEY));
   });
 
   it('rejects joining an unknown room instead of creating a ghost room', async () => {

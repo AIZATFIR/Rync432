@@ -1,4 +1,34 @@
-import { MusicSourceType, hashString } from '../types.js';
+import { MusicSourceType } from '../types.js';
+
+const YOUTUBE_HOSTS = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be', 'www.youtu.be']);
+const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
+
+function parseYouTubeUrl(input) {
+  if (typeof input !== 'string') return null;
+  let url;
+  try {
+    url = new URL(/^https?:\/\//i.test(input.trim()) ? input.trim() : `https://${input.trim()}`);
+  } catch (error) {
+    return null;
+  }
+  const hostname = url.hostname.toLowerCase();
+  if (!YOUTUBE_HOSTS.has(hostname)) return null;
+
+  const segments = url.pathname.split('/').filter(Boolean);
+  const pathVideoId = hostname.endsWith('youtu.be')
+    ? segments[0]
+    : ['shorts', 'embed', 'live'].includes(segments[0]) ? segments[1] : '';
+  const videoId = url.searchParams.get('v') || pathVideoId;
+  return { videoId: VIDEO_ID_PATTERN.test(videoId || '') ? videoId : null };
+}
+
+export function isYouTubeUrl(input) {
+  return parseYouTubeUrl(input) !== null;
+}
+
+export function extractYouTubeVideoId(input) {
+  return parseYouTubeUrl(input)?.videoId || null;
+}
 
 export class YouTubeSource {
   constructor() {
@@ -6,14 +36,11 @@ export class YouTubeSource {
   }
 
   canHandle(input) {
-    if (typeof input !== 'string') return false;
-    const trimmed = input.trim();
-    return trimmed.includes('youtube.com') || trimmed.includes('youtu.be');
+    return isYouTubeUrl(input);
   }
 
   extractVideoId(url) {
-    const match = url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([a-zA-Z0-9_-]{11})/);
-    return match ? match[1] : null;
+    return extractYouTubeVideoId(url);
   }
 
   async resolve(input, customMetadata = {}) {
@@ -29,42 +56,59 @@ export class YouTubeSource {
       }
     }
 
-    const streamEndpoint = `/api/yt-stream?id=${videoId}`;
     const assetId = `yt_${videoId}`;
 
     return {
       trackId: assetId,
+      id: assetId,
       title: customMetadata.title || 'YouTube Track',
       artist: customMetadata.artist || 'YouTube',
       duration: customMetadata.duration || 0,
       sourceType: this.type,
-      playableUrl: streamEndpoint,
-      streamUrl: streamEndpoint,
-      mimeType: 'audio/mp4',
-      supportsRange: true,
-      requiresProxy: true,
+      sourceId: videoId,
+      sourceUrl: `https://www.youtube.com/watch?v=${videoId}`,
+      thumbnail: customMetadata.thumbnailUrl || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
       thumbnailUrl: customMetadata.thumbnailUrl || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
     };
   }
 
-  async search(query) {
-    const trimmed = query.trim();
+  async search(query, { signal } = {}) {
+    const trimmed = typeof query === 'string' ? query.trim() : '';
     if (!trimmed) return [];
 
-    const resp = await fetch(`/api/yt-search?q=${encodeURIComponent(trimmed)}`);
-    if (!resp.ok) {
-      throw new Error(`SEARCH_FAILED: Gagal mencari lagu (${resp.status})`);
+    let resp;
+    let data;
+    try {
+      resp = await fetch(`/api/yt-search?q=${encodeURIComponent(trimmed)}`, { signal });
+      data = (await resp.json().catch(() => ({}))) || {};
+    } catch (error) {
+      if (error.name === 'AbortError') throw error;
+      const providerError = new Error('YouTube search is unavailable.');
+      providerError.code = 'PROVIDER_UNAVAILABLE';
+      providerError.retryable = true;
+      throw providerError;
     }
-    const data = await resp.json();
-    return (data.results || []).map(item => ({
-      id: `yt_${item.id}`,
-      title: item.title,
-      artist: item.channel,
-      duration: item.duration,
-      thumbnailUrl: item.thumbnail,
-      sourceType: this.type,
-      sourceUrl: item.url,
-      streamUrl: `/api/yt-stream?url=${encodeURIComponent(item.url)}`
-    }));
+
+    if (!resp.ok) {
+      const error = new Error(data.error || `SEARCH_FAILED: Gagal mencari lagu (${resp.status})`);
+      error.code = data.error || 'PROVIDER_UNAVAILABLE';
+      error.retryable = data.retryable ?? (resp.status === 429 || resp.status >= 500);
+      throw error;
+    }
+
+    return (Array.isArray(data.results) ? data.results : [])
+      .filter(item => /^[A-Za-z0-9_-]{11}$/.test(item?.id || ''))
+      .map(item => ({
+        id: `yt_${item.id}`,
+        name: item.title || 'YouTube video',
+        artist: item.channel || 'YouTube channel',
+        duration: item.duration,
+        thumbnail: item.thumbnail,
+        durationText: item.durationText,
+        apiDataFetchedAt: item.apiDataFetchedAt,
+        sourceType: this.type,
+        sourceId: item.id,
+        sourceUrl: item.url || `https://www.youtube.com/watch?v=${item.id}`
+      }));
   }
 }

@@ -12,6 +12,9 @@ export default function handler(req, res) {
     t1: t1,
     t2: t2,
     timestamp: t2,
-    engine: 'Web Audio API + NTP Cristian Synchronizer'
+    engine: 'Web Audio API + NTP Cristian Synchronizer',
+    providers: {
+      youtubeSearch: Boolean(process.env.YOUTUBE_DATA_API_KEY)
+    }
   });
 }

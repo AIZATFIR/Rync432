@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server/server.js",
     "dev": "node --watch server/server.js",
-    "build": "echo 'Rync432 build successful'",
+    "build": "node scripts/build.js",
     "test": "vitest run"
   },
   "keywords": [

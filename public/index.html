@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Rync — music, together</title>
   <meta name="description" content="Putar musik sendiri atau sinkronkan sesi dengar bareng teman di Rync.">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
   <link rel="manifest" href="/manifest.json">
   <meta name="theme-color" content="#0a0a0c">
   <meta name="mobile-web-app-capable" content="yes">
@@ -15,12 +16,9 @@
   <link rel="stylesheet" href="/css/style.css">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2250%22 r=%2245%22 fill=%22%23d8ff45%22/></svg>">
   
-  <!-- Real-Time Pub/Sub Bus Engine -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.10.3/mqtt.min.js"></script>
-
 </head>
 <body>
-  <div class="app-container">
+  <div class="app-container" id="appShell" inert aria-hidden="true">
     
     <!-- Top Navigation Header -->
     <header class="app-header" id="mainHeader">
@@ -41,7 +39,14 @@
       </div>
 
       <div class="header-right">
-        <div class="status-pill">
+        <button type="button" class="listen-together-button" id="listenTogetherBtn" aria-label="Dengar bareng">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle>
+            <path d="M20 8v6M23 11h-6"></path>
+          </svg>
+          <span id="listenTogetherLabel">Dengar bareng</span>
+        </button>
+        <div class="status-pill" id="connectionStatusPill" role="status" aria-live="polite" aria-label="Status: Online">
           <div class="status-dot connected" id="connectionDot"></div>
           <span id="connectionStatus">Online</span>
         </div>
@@ -64,11 +69,60 @@
       <button type="button" class="primary-nav-item active" id="navHomeBtn" data-view="home" aria-current="page">Home</button>
       <button type="button" class="primary-nav-item" id="navSearchBtn" data-view="search">Search</button>
       <button type="button" class="primary-nav-item" id="navLibraryBtn" data-view="library">Library</button>
-      <button type="button" class="primary-nav-item" id="navRoomBtn" data-view="room">Listen together</button>
+      <button type="button" class="primary-nav-item" id="navRoomBtn" data-view="room">Room</button>
     </nav>
 
+    <section class="mini-player" id="miniPlayerBar" aria-label="Pemutar mini" hidden>
+      <button type="button" class="mini-player-track" id="miniPlayerOpenBtn" aria-label="Buka pemutar penuh" aria-controls="activeRoomSection" aria-expanded="false">
+        <span class="mini-player-art" id="miniPlayerArtwork" aria-hidden="true">♫</span>
+        <span class="mini-player-copy"><strong id="miniPlayerTitle">Belum ada lagu</strong><small id="miniPlayerArtist">Pilih lagu untuk mulai</small></span>
+      </button>
+      <span class="mini-player-time" id="miniPlayerTime">0:00</span>
+      <input type="range" class="mini-player-seek" id="miniPlayerSeek" min="0" max="1000" value="0" aria-label="Posisi lagu" aria-valuetext="0:00 dari 0:00">
+      <button type="button" class="mini-player-play" id="miniPlayerPlayBtn" aria-label="Putar">▶</button>
+    </section>
+
     <!-- Hidden File Input for Batch Music Audio Selection -->
-    <input type="file" id="audioFileInput" accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac" multiple style="display: none;">
+    <input type="file" id="audioFileInput" aria-label="Pilih file audio lokal" accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac" multiple style="display: none;">
+
+    <main class="home-dashboard" id="homeDashboard" aria-labelledby="homeDashboardHeading" hidden>
+      <section class="home-welcome">
+        <p class="eyebrow">RYNC · MUSIC, TOGETHER</p>
+        <h2 id="homeDashboardHeading">Temukan musik.<br>Putar bareng.</h2>
+        <p>Mulai dari lagu yang lagi ramai, lanjutkan dari library, atau ajak teman masuk ke antrean yang sama.</p>
+        <div class="home-welcome-actions">
+          <button type="button" class="btn-spotify btn-spotify-primary" id="homeDashboardSearchBtn">Cari musik</button>
+          <button type="button" class="btn-spotify btn-spotify-outline" id="homeDashboardRoomBtn">Dengar bareng</button>
+        </div>
+      </section>
+      <section class="home-discovery-section" aria-labelledby="homeDiscoveryHeading">
+        <div class="home-section-heading home-discovery-heading">
+          <div>
+            <p class="eyebrow">DARI YOUTUBE</p>
+            <h3 id="homeDiscoveryHeading">Lagi ramai</h3>
+          </div>
+          <button type="button" class="library-action" id="homeDiscoveryRefreshBtn" aria-label="Muat ulang rekomendasi musik">Muat ulang</button>
+        </div>
+        <div class="home-discovery-filters" role="group" aria-label="Pilih suasana musik">
+          <button type="button" class="home-discovery-filter active" data-home-query="lagu populer Indonesia" aria-pressed="true">Lagi ramai</button>
+          <button type="button" class="home-discovery-filter" data-home-query="K-pop hits" aria-pressed="false">K-pop</button>
+          <button type="button" class="home-discovery-filter" data-home-query="chill songs" aria-pressed="false">Santai</button>
+          <button type="button" class="home-discovery-filter" data-home-query="Indonesian indie music" aria-pressed="false">Indie</button>
+        </div>
+        <p class="home-discovery-status" id="homeDiscoveryStatus" role="status" aria-live="polite">Memuat rekomendasi…</p>
+        <div class="home-discovery-grid" id="homeDiscoveryGrid" aria-busy="true"></div>
+      </section>
+      <section class="home-recent-section" aria-labelledby="homeRecentHeading">
+        <div class="home-section-heading">
+          <div>
+            <p class="eyebrow">DARI PERANGKAT INI</p>
+            <h3 id="homeRecentHeading">Putar lagi</h3>
+          </div>
+          <button type="button" class="library-action" id="homeOpenLibraryBtn">Buka library</button>
+        </div>
+        <div class="home-recent-list" id="homeRecentList"></div>
+      </section>
+    </main>
 
     <!-- Landing / Room Select (Hero) -->
     <section class="spotify-card hero-centered-card" id="roomHeroSection" hidden>
@@ -93,7 +147,7 @@
           <h3>Gabung room</h3>
           <p>Masukkan kode undangan atau scan QR.</p>
           <div class="spotify-input-wrap">
-            <input type="text" id="roomCodeInput" class="spotify-input room-code-input" placeholder="KODE" maxlength="4">
+            <input type="text" id="roomCodeInput" class="spotify-input room-code-input" aria-label="Kode undangan room" placeholder="KODE" maxlength="4">
             <button class="btn-spotify btn-spotify-primary" id="joinRoomBtn">Gabung</button>
           </div>
           <button class="btn-spotify btn-spotify-outline" id="scanQrBtn" style="margin-top: 4px; width: 100%;">
@@ -109,6 +163,11 @@
 
     <!-- Active Room Interface -->
     <div id="activeRoomSection" style="display: flex; flex-direction: column; gap: 16px;">
+      <div class="now-playing-toolbar">
+        <button type="button" class="now-playing-close" id="nowPlayingCloseBtn" aria-label="Tutup pemutar penuh">↓</button>
+        <span id="nowPlayingHeading">Sedang diputar</span>
+        <button type="button" class="now-playing-queue" id="nowPlayingQueueBtn" aria-controls="queueCardSection">Antrean ↓</button>
+      </div>
       
       <!-- Room Bar -->
       <div class="active-room-bar">
@@ -127,6 +186,10 @@
           <button class="btn-spotify btn-spotify-dark" id="copyRoomLinkBtn">Share</button>
           <button class="btn-spotify btn-spotify-danger" id="leaveRoomBtn">Keluar</button>
         </div>
+      </div>
+
+      <div class="room-host-notice" id="hostDisconnectedNotice" role="status" aria-live="polite" hidden>
+        Host terputus. Playback dijeda pada posisi terakhir; room menunggu host kembali.
       </div>
 
       <!-- Main Player Stage -->
@@ -167,6 +230,19 @@
               </button>
             </div>
 
+            <div class="home-empty-state" id="homeEmptyState" hidden>
+              <h2>Mulai dengarkan</h2>
+              <p>Cari lagu dari YouTube, pilih audio di perangkat ini, atau tempel tautan audio.</p>
+              <button type="button" class="btn-spotify btn-spotify-primary" id="homeFindMusicBtn">Cari musik</button>
+            </div>
+
+            <div class="youtube-player-shell" id="youtubePlayerShell" hidden>
+              <div id="youtubePlayerContainer"></div>
+              <p class="youtube-player-status" id="youtubePlayerStatus" role="status" aria-live="polite"></p>
+              <button type="button" class="btn-spotify btn-spotify-dark youtube-player-retry" id="youtubePlayerRetryBtn" hidden>Coba lagi</button>
+              <button type="button" class="btn-spotify btn-spotify-primary youtube-enable-audio" id="youtubeEnableAudioBtn" hidden>Aktifkan audio</button>
+            </div>
+
             <!-- Visualizer -->
             <div class="visualizer-container">
               <canvas id="visualizerCanvas"></canvas>
@@ -183,8 +259,14 @@
               </div>
             </div>
 
-            <!-- Classic Spotify Player Controls: Redo | Single Play/Pause Toggle | Next -->
+            <!-- Player transport and shared queue modes -->
             <div class="player-controls-row">
+              <button type="button" class="btn-ctrl-secondary listen-together-control" id="sharePlayerRoomBtn" title="Mulai dengar bareng">Share</button>
+              <button class="btn-ctrl-secondary" id="shuffleToggleBtn" aria-label="Aktifkan acak" aria-pressed="false" title="Acak mati">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="m18 14 4 4-4 4"></path><path d="M18 2l4 4-4 4"></path><path d="M2 18h2.5a6 6 0 0 0 4.2-1.7l6.6-8.6A6 6 0 0 1 19.5 6H22"></path><path d="M2 6h2.5a6 6 0 0 1 4.2 1.7"></path><path d="M14.5 16.3a6 6 0 0 0 5 1.7H22"></path>
+                </svg>
+              </button>
               <button class="btn-ctrl-secondary" id="redoBtn" title="Restart (0:00)">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
                   <polygon points="19 20 9 12 19 4 19 20"></polygon>
@@ -209,16 +291,22 @@
                   <line x1="19" y1="5" x2="19" y2="19"></line>
                 </svg>
               </button>
+              <button class="btn-ctrl-secondary" id="repeatToggleBtn" aria-label="Ulangi mati" aria-pressed="false" data-repeat-mode="off" title="Ulangi mati">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="m17 2 4 4-4 4"></path><path d="M3 11V9a3 3 0 0 1 3-3h15"></path><path d="m7 22-4-4 4-4"></path><path d="M21 13v2a3 3 0 0 1-3 3H3"></path>
+                </svg>
+                <span class="repeat-one-indicator" aria-hidden="true">1</span>
+              </button>
             </div>
 
             <!-- Volume & Spatial Channel Control (This Device) -->
-            <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 12px;">
+            <div class="player-local-output-controls" style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 12px;">
               <div class="volume-control-wrap">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
                   <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
                 </svg>
-                <input type="range" class="range-slider" id="volumeSlider" min="0" max="1" step="0.01" value="1">
+                <input type="range" class="range-slider" id="volumeSlider" aria-label="Volume perangkat ini" min="0" max="1" step="0.01" value="1">
               </div>
 
               <!-- Spatial Channel Selector (This Device) -->
@@ -235,12 +323,19 @@
           <!-- Collaborative Queue / Playlist Section -->
           <div class="spotify-card" id="queueCardSection">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-              <div style="font-weight: 700; font-size: 0.95rem; color: #fff;">Antrean Lagu (Queue)</div>
-              <span id="queueCountBadge" style="font-size: 0.72rem; color: var(--text-silver); font-weight: 600;">0 lagu</span>
+              <div style="font-weight: 700; font-size: 0.95rem; color: var(--text-base);">Antrean Lagu</div>
+              <div class="queue-header-actions">
+                <span id="queueCountBadge" style="font-size: 0.72rem; color: var(--text-silver); font-weight: 600;">0 lagu</span>
+                <button id="clearUpcomingBtn" class="queue-clear-btn" type="button" hidden>Hapus berikutnya</button>
+              </div>
             </div>
 
             <div class="queue-list" id="queueListContainer">
               <div class="queue-empty-msg">Antrean kosong. Tambah lagu dari Direct URL, YouTube, atau upload file.</div>
+            </div>
+            <div id="queueUndoBar" class="queue-undo-bar" role="status" aria-live="polite" hidden>
+              <span>Lagu berikutnya dihapus.</span>
+              <button id="queueUndoBtn" type="button">Undo</button>
             </div>
           </div>
 
@@ -257,10 +352,11 @@
             <div class="source-tab-content active" id="tabContentYoutube">
               <div class="yt-stream-box">
                 <div class="spotify-input-wrap">
-                  <input type="text" id="ytUrlInput" class="spotify-input" placeholder="Cari judul lagu atau paste link YouTube..." style="flex: 1; font-size: 0.95rem; padding: 10px 14px;">
-                  <button class="btn-spotify btn-spotify-primary" id="fetchYtAudioBtn" style="padding: 10px 18px; font-weight: 700;">Cari / Play</button>
+                  <input type="text" id="ytUrlInput" class="spotify-input" aria-label="Cari lagu YouTube atau tempel tautan" placeholder="Cari lagu atau tautan YouTube" style="flex: 1; font-size: 0.95rem; padding: 10px 14px;">
+                  <button class="btn-spotify btn-spotify-primary" id="fetchYtAudioBtn" style="padding: 10px 18px; font-weight: 700;">Cari</button>
                 </div>
 
+                <div class="yt-search-recents" id="ytSearchRecents" role="region" aria-label="Pencarian terbaru" style="display: none;"></div>
                 <!-- Live Search Results Dropdown/List -->
                 <div class="yt-search-results" id="ytSearchResults" style="display: none;"></div>
 
@@ -276,14 +372,14 @@
             <div class="source-tab-content" id="tabContentDirectUrl" style="display: none;">
               <div class="yt-stream-box">
                 <div class="spotify-input-wrap">
-                  <input type="url" id="directUrlInput" class="spotify-input" placeholder="Paste link audio (MP3 / WAV / FLAC / OGG / stream)..." style="flex: 1;">
+                  <input type="url" id="directUrlInput" class="spotify-input" aria-label="Tautan audio langsung" placeholder="Paste link audio (MP3 / WAV / FLAC / OGG / stream)..." style="flex: 1;">
                   <button class="btn-spotify btn-spotify-primary" id="fetchDirectUrlBtn">Load & Sync</button>
                 </div>
                 <div id="directUrlFeedback" class="url-feedback-text" style="display: none;"></div>
 
                 <div class="preset-chips" style="margin-top: 10px;">
                   <span style="font-size: 0.72rem; color: var(--text-silver); margin-right: 4px; align-self: center;">Contoh:</span>
-                  <button class="chip-btn" id="sampleUrlWav" data-url="/sample.wav">Acoustic WAV</button>
+                  <button class="chip-btn" id="sampleUrlWav" data-url="/test_music_sample.wav">Acoustic WAV</button>
                   <button class="chip-btn" id="sampleUrlHelix" data-url="https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3">SoundHelix (MP3)</button>
                   <button class="chip-btn" id="sampleUrlSynth" data-url="synth">Neon Synth</button>
                 </div>
@@ -292,7 +388,7 @@
 
             <!-- Tab: File Upload -->
             <div class="source-tab-content" id="tabContentFile" style="display: none;">
-              <div class="dropzone-box" id="audioDropzone">
+              <button type="button" class="dropzone-box" id="audioDropzone" aria-label="Pilih file audio untuk ditambahkan">
                 <div class="dropzone-icon">
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -300,9 +396,9 @@
                     <line x1="12" y1="3" x2="12" y2="15"></line>
                   </svg>
                 </div>
-                <div style="font-weight: 700; font-size: 0.9rem; color: #fff;">Upload Musik (MP3 / WAV / FLAC)</div>
+                <div style="font-weight: 700; font-size: 0.9rem; color: var(--text-base);">Upload Musik (MP3 / WAV / FLAC)</div>
                 <div style="font-size: 0.76rem; color: var(--text-silver);">Klik atau drag & drop file musik ke sini</div>
-              </div>
+              </button>
             </div>
 
             <!-- Tab: Demo -->
@@ -314,52 +410,13 @@
             </div>
           </div>
 
-          <!-- Bottom Audio Tuning & DSP Mastering Card -->
-          <div class="spotify-card" style="padding: 14px 16px;">
-            <div style="font-weight: 700; font-size: 0.88rem; color: #fff; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between;">
-              <span>Penyetelan Audio & DSP</span>
-              <span id="activeEqNameTag" style="font-size: 0.72rem; color: var(--spotify-green); font-weight: 700;">Studio Master</span>
-            </div>
-
-            <!-- Studio DSP Mastering & Equalizer Presets -->
-            <div style="margin-bottom: 14px;">
-              <div style="font-size: 0.74rem; color: var(--text-silver); font-weight: 600; margin-bottom: 6px;">Sound Mastering:</div>
-              <div class="preset-chips">
-                <button class="chip-btn active" id="eqStudioBtn" data-eq="studio">Studio Master</button>
-                <button class="chip-btn" id="eqBassBtn" data-eq="bassboost">Bass Boost</button>
-                <button class="chip-btn" id="eqVocalBtn" data-eq="vocal">Vocal / Clear</button>
-                <button class="chip-btn" id="eqFlatBtn" data-eq="flat">Flat (Raw)</button>
-              </div>
-            </div>
-
-            <!-- Dedicated Delay Tuner for THIS Device (Independent Tuning) -->
-            <div style="padding-top: 10px; border-top: 1px solid var(--border-subtle);">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <span style="font-size: 0.74rem; color: var(--text-silver); font-weight: 600;">Kompensasi Delay Speaker:</span>
-                <span class="current-offset-display" id="latencyDisplay" style="font-size: 0.85rem;">0 ms</span>
-              </div>
-              
-              <div class="preset-chips" style="margin-bottom: 8px;">
-                <button class="chip-btn active" id="presetWired">Speaker HP (0ms)</button>
-                <button class="chip-btn" id="presetInternal">Laptop (+15ms)</button>
-                <button class="chip-btn" id="presetBt">Bluetooth (+120ms)</button>
-              </div>
-
-              <div class="precision-step-group" style="padding: 2px 6px;">
-                <button class="step-btn" id="stepMinus1" style="width: 24px; height: 24px; font-size: 0.9rem;">−</button>
-                <input type="range" class="range-slider" id="latencySlider" min="-100" max="300" step="1" value="0" style="margin: 0 8px; flex: 1;">
-                <button class="step-btn" id="stepPlus1" style="width: 24px; height: 24px; font-size: 0.9rem;">+</button>
-              </div>
-            </div>
-          </div>
-
         </div>
 
         <!-- Right: Connected Devices List -->
         <div class="devices-stage">
           <div class="spotify-card">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-              <div style="font-weight: 700; font-size: 0.95rem; color: #fff;">Device</div>
+              <div style="font-weight: 700; font-size: 0.95rem; color: var(--text-base);">Device</div>
               <button class="btn-spotify btn-spotify-outline" id="manageDevicesBtn" style="padding: 4px 10px; font-size: 0.72rem; min-height: 28px;">
                 QR Code
               </button>
@@ -388,8 +445,15 @@
         <h3 id="favoritesHeading">Liked tracks</h3>
         <div id="favoriteList" class="library-list"></div>
       </section>
+      <section class="library-group" aria-labelledby="localAudioHeading">
+        <h3 id="localAudioHeading">Audio on this device</h3>
+        <div id="localAudioList" class="library-list"></div>
+      </section>
       <section class="library-group" aria-labelledby="recentHeading">
-        <h3 id="recentHeading">Recently played</h3>
+        <div class="library-group-heading">
+          <h3 id="recentHeading">Recently played</h3>
+          <button type="button" class="library-action" id="clearHistoryBtn">Hapus riwayat</button>
+        </div>
         <div id="recentList" class="library-list"></div>
       </section>
     </section>
@@ -400,7 +464,7 @@
   <div class="modal-overlay" id="qrScannerModal">
     <div class="modal-content" style="max-width: 360px; text-align: center;">
       <button class="modal-close-btn" id="qrScannerCloseBtn">&times;</button>
-      <h3 style="font-size: 1.1rem; font-weight: 700; color: #fff;">Scan QR Code</h3>
+        <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--text-base);">Scan QR Code</h3>
       <p style="font-size: 0.78rem; color: var(--text-silver);">Arahkan kamera ke QR Code Host untuk gabung otomatis.</p>
       
       <div class="scanner-video-wrap">
@@ -416,12 +480,12 @@
       <button class="modal-close-btn" id="deviceSettingsCloseBtn">&times;</button>
       
       <div style="text-align: center;">
-        <h3 style="font-size: 1.1rem; font-weight: 700; color: #fff;" id="modalTargetDeviceName">Pengaturan Speaker</h3>
+        <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--text-base);" id="modalTargetDeviceName">Pengaturan Speaker</h3>
         <p style="font-size: 0.78rem; color: var(--text-silver); margin-top: 2px;">Atur alokasi channel suara dan volume speaker ini.</p>
       </div>
 
       <div class="settings-box" style="margin-top: 8px;">
-        <div style="font-size: 0.8rem; font-weight: 700; color: #fff; margin-bottom: 8px;">Alokasi Channel:</div>
+        <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-base); margin-bottom: 8px;">Alokasi Channel:</div>
         <div class="segmented-channel-chips" style="width: 100%;">
           <button class="channel-chip active" id="modalSpatialStereo" style="flex: 1;">Stereo</button>
           <button class="channel-chip" id="modalSpatialLeft" style="flex: 1;">Left (L)</button>
@@ -431,11 +495,11 @@
       </div>
 
       <div class="settings-box">
-        <div style="display: flex; justify-content: space-between; font-size: 0.8rem; font-weight: 700; color: #fff; margin-bottom: 6px;">
+        <div style="display: flex; justify-content: space-between; font-size: 0.8rem; font-weight: 700; color: var(--text-base); margin-bottom: 6px;">
           <span>Volume Speaker:</span>
           <span id="modalVolumeText" style="color: var(--spotify-green);">100%</span>
         </div>
-        <input type="range" class="range-slider" id="modalDeviceVolume" min="0" max="1" step="0.05" value="1">
+        <input type="range" class="range-slider" id="modalDeviceVolume" aria-label="Volume speaker yang dipilih" min="0" max="1" step="0.05" value="1">
       </div>
 
       <div style="display: flex; gap: 8px; margin-top: 10px;">
@@ -455,7 +519,7 @@
       <button class="modal-close-btn" id="devicesModalCloseBtn">&times;</button>
       
       <div style="text-align: center;">
-        <h3 style="font-size: 1.15rem; font-weight: 700; color: #fff;">Sambungkan Device</h3>
+        <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-base);">Sambungkan Device</h3>
         <p style="font-size: 0.8rem; color: var(--text-silver); margin-top: 4px;">Scan QR dari HP lain untuk gabung room ini.</p>
       </div>
 
@@ -468,7 +532,7 @@
       </button>
 
       <div style="margin-top: 8px;">
-        <div style="font-weight: 700; font-size: 0.85rem; color: #fff; margin-bottom: 6px;">Device di Room (Klik utk Atur):</div>
+        <div style="font-weight: 700; font-size: 0.85rem; color: var(--text-base); margin-bottom: 6px;">Device di Room (Klik utk Atur):</div>
         <div class="devices-list" id="devicesMatrixList"></div>
       </div>
     </div>
@@ -479,7 +543,31 @@
     <div class="modal-content" style="max-width: 420px;">
       <button class="modal-close-btn" id="modalCloseBtn">&times;</button>
       
-      <h3 style="font-size: 1.15rem; font-weight: 700; color: #fff; text-align: center;">Settings & Profile</h3>
+      <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-base); text-align: center;">Settings & Profile</h3>
+
+      <div class="settings-box">
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-title">Tema terang</div>
+            <div class="toggle-desc">Gunakan permukaan warna kertas.</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="themeToggle" aria-label="Aktifkan tema terang">
+            <span class="slider-round"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="settings-box privacy-settings">
+        <strong>Privasi &amp; data</strong>
+        <p>Library dan preferensi tersimpan di browser ini. Persetujuan dapat dicabut kapan saja.</p>
+        <div class="privacy-links">
+          <a href="/privacy.html">Kebijakan Privasi</a>
+          <a href="/terms.html">Ketentuan Penggunaan</a>
+          <a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener noreferrer">Ketentuan YouTube</a>
+        </div>
+        <button type="button" class="btn-spotify btn-spotify-outline" id="revokePrivacyConsentBtn">Cabut persetujuan dan hapus data lokal</button>
+      </div>
 
       <!-- Account Card -->
       <div class="settings-box">
@@ -499,7 +587,7 @@
           <div style="display: flex; align-items: center; gap: 10px;">
             <img id="userModalAvatar" src="" alt="Avatar" style="width: 38px; height: 38px; border-radius: 50%; border: 2px solid var(--spotify-green);">
             <div>
-              <div id="userModalName" style="font-weight: 700; font-size: 0.9rem; color: #fff;">User</div>
+              <div id="userModalName" style="font-weight: 700; font-size: 0.9rem; color: var(--text-base);">User</div>
               <div id="userModalEmail" style="font-size: 0.72rem; color: var(--text-silver);">email@gmail.com</div>
             </div>
           </div>
@@ -511,8 +599,8 @@
       <div class="settings-box">
         <div class="toggle-row">
           <div>
-            <div class="toggle-title">Keep-Alive Metronome</div>
-            <div class="toggle-desc">Cegah audio DAC sleep di HP</div>
+            <div class="toggle-title">Metronome</div>
+            <div class="toggle-desc">Ketukan 100 BPM berbunyi di perangkat ini.</div>
           </div>
           <label class="switch">
             <input type="checkbox" id="metronomeToggle">
@@ -521,45 +609,78 @@
         </div>
       </div>
 
-      <!-- Feature: Latency Delay Tuner -->
-      <div class="settings-box">
-        <div class="tuner-header">
-          <div>
-            <div style="font-weight: 700; font-size: 0.9rem; color: #fff;">Delay Tuner (±1ms)</div>
-            <div style="font-size: 0.75rem; color: var(--text-silver);">Kompensasi hardware speaker</div>
+      <details class="spotify-card audio-tuning-card" id="audioTuningSection">
+        <summary class="audio-tuning-summary">
+          <span>Audio &amp; sinkronisasi</span>
+          <span id="activeEqNameTag" style="font-size: 0.72rem; color: var(--spotify-green); font-weight: 700;">Studio Master</span>
+        </summary>
+        <div style="margin-bottom: 14px;">
+          <div style="font-size: 0.74rem; color: var(--text-silver); font-weight: 600; margin-bottom: 6px;">Equalizer</div>
+          <div class="preset-chips">
+            <button class="chip-btn active" id="eqStudioBtn" data-eq="studio">Studio</button>
+            <button class="chip-btn" id="eqBassBtn" data-eq="bassboost">Bass</button>
+            <button class="chip-btn" id="eqVocalBtn" data-eq="vocal">Vokal</button>
+            <button class="chip-btn" id="eqFlatBtn" data-eq="flat">Flat</button>
           </div>
-          <div class="current-offset-display" id="latencyDisplay">0 ms</div>
         </div>
-
-        <!-- Precision Step Controls -->
-        <div class="precision-step-group" style="margin-top: 8px;">
-          <button class="step-btn" id="stepMinus1">−</button>
-          <span style="font-size: 0.78rem; font-weight: 600; color: var(--text-silver);">Fine Tune</span>
-          <button class="step-btn" id="stepPlus1">+</button>
+        <div style="padding-top: 10px; border-top: 1px solid var(--border-subtle);">
+          <div class="tuner-header">
+            <div>
+              <div style="font-weight: 700; font-size: 0.9rem; color: var(--text-base);">Kompensasi latency perangkat</div>
+              <div style="font-size: 0.75rem; color: var(--text-silver);">Atur per speaker bila output berbeda waktu.</div>
+            </div>
+            <div class="current-offset-display" id="latencyDisplay">0 ms</div>
+          </div>
+          <div class="preset-chips" style="margin-top: 8px;">
+            <button class="chip-btn active" id="presetWired">Headphone (0 ms)</button>
+            <button class="chip-btn" id="presetInternal">Laptop (+15 ms)</button>
+            <button class="chip-btn" id="presetBt">Bluetooth (+120 ms)</button>
+          </div>
+          <div class="precision-step-group" style="margin-top: 10px;">
+            <button class="step-btn" id="stepMinus1" aria-label="Kurangi latency 1 milidetik">−</button>
+            <input type="range" class="range-slider" id="latencySlider" min="-100" max="300" step="1" value="0" aria-label="Kompensasi latency audio">
+            <button class="step-btn" id="stepPlus1" aria-label="Tambah latency 1 milidetik">+</button>
+          </div>
+          <div class="nudge-buttons" style="margin-top: 8px;">
+            <button class="nudge-btn" id="nudgeMinus10">−10 ms</button>
+            <button class="nudge-btn" id="nudgeMinus2">−2 ms</button>
+            <button class="nudge-btn" id="nudgePlus2">+2 ms</button>
+            <button class="nudge-btn" id="nudgePlus10">+10 ms</button>
+          </div>
         </div>
-
-        <div class="slider-container" style="margin-top: 10px;">
-          <input type="range" class="range-slider" id="latencySlider" min="-100" max="300" step="1" value="0">
-        </div>
-
-        <div class="nudge-buttons" style="margin-top: 8px;">
-          <button class="nudge-btn" id="nudgeMinus10">-10ms</button>
-          <button class="nudge-btn" id="nudgeMinus2">-2ms</button>
-          <button class="nudge-btn" id="nudgePlus2">+2ms</button>
-          <button class="nudge-btn" id="nudgePlus10">+10ms</button>
-        </div>
-
-        <div class="preset-chips" style="margin-top: 8px;">
-          <button class="chip-btn active" id="presetWired">Wired (0ms)</button>
-          <button class="chip-btn" id="presetInternal">Phone (+15ms)</button>
-          <button class="chip-btn" id="presetBt">Bluetooth (+120ms)</button>
-        </div>
-      </div>
+      </details>
 
     </div>
   </div>
 
+  <section class="privacy-gate" id="privacyGate" role="dialog" aria-modal="true" aria-labelledby="privacyGateTitle">
+    <div class="privacy-gate-panel">
+      <p class="eyebrow">RYNC · SEBELUM MULAI</p>
+      <h2 id="privacyGateTitle">Dengar bareng, dengan jelas.</h2>
+      <p>Rync memakai YouTube Data API dan pemutar YouTube untuk pencarian dan playback. Room mengirim kode room, nama perangkat, antrean, lagu aktif, dan status koneksi ke server Rync agar sesi bisa disinkronkan.</p>
+      <p>Library, riwayat, antrean personal, dan preferensi disimpan di browser perangkat ini. Lihat cara kerja penyimpanan, layanan pihak ketiga, dan penghapusan data di kebijakan kami.</p>
+      <div class="privacy-gate-links">
+        <a href="/privacy.html" target="_blank" rel="noopener noreferrer">Baca Kebijakan Privasi</a>
+        <a href="/terms.html" target="_blank" rel="noopener noreferrer">Baca Ketentuan Penggunaan</a>
+        <a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener noreferrer">Ketentuan YouTube</a>
+      </div>
+      <label class="privacy-consent-check">
+        <input id="privacyConsentCheckbox" type="checkbox">
+        <span>Saya telah membaca dan menyetujui Kebijakan Privasi serta Ketentuan Penggunaan Rync. Saya memahami penggunaan Rync tunduk pada Ketentuan YouTube.</span>
+      </label>
+      <p class="privacy-gate-error" id="privacyGateError" role="alert" hidden>Persetujuan belum tersimpan. Aktifkan penyimpanan browser, lalu coba lagi.</p>
+      <button type="button" class="btn-spotify btn-spotify-primary" id="privacyConsentAcceptBtn" disabled>Setuju &amp; mulai</button>
+    </div>
+  </section>
+
+  <footer class="legal-footer" id="legalFooter" inert aria-hidden="true">
+    <span>Rync bukan produk Google atau YouTube.</span>
+    <a href="/privacy.html">Privasi</a>
+    <a href="/terms.html">Ketentuan Rync</a>
+    <a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener noreferrer">Ketentuan YouTube</a>
+  </footer>
+
   <!-- Scripts -->
-  <script type="module" src="/js/app.js"></script>
+  <script type="module" src="/js/privacyGate.js"></script>
 </body>
 </html>

@@ -57,6 +57,7 @@ export class AudioResolver {
         };
       }
     } catch (e) {
+      if (signal?.aborted || e?.name === 'AbortError') throw e;
       // CORS blocked or network error -> fallback to proxy
     }
 

@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { access } from 'node:fs/promises';
 import { MusicSourceManager } from '../public/js/music/MusicSourceManager.js';
 import { DirectUrlSource } from '../public/js/music/sources/DirectUrlSource.js';
 import { YouTubeSource } from '../public/js/music/sources/YouTubeSource.js';
@@ -7,6 +8,8 @@ import { LocalSource } from '../public/js/music/sources/LocalSource.js';
 import { SpotifySource } from '../public/js/music/sources/SpotifySource.js';
 import { AudioResolver } from '../public/js/music/AudioResolver.js';
 import { MusicSourceType } from '../public/js/music/types.js';
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe('Music Sources & Resolver Layer', () => {
   const manager = new MusicSourceManager();
@@ -46,8 +49,54 @@ describe('Music Sources & Resolver Layer', () => {
       const resolved = await ytSource.resolve('https://youtu.be/dQw4w9WgXcQ');
       expect(resolved.trackId).toBe('yt_dQw4w9WgXcQ');
       expect(resolved.sourceType).toBe(MusicSourceType.YOUTUBE);
-      expect(resolved.playableUrl).toContain('dQw4w9WgXcQ');
-      expect(resolved.requiresProxy).toBe(true);
+      expect(resolved.sourceId).toBe('dQw4w9WgXcQ');
+      expect(resolved.sourceUrl).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    });
+
+    it('recognizes YouTube Music and live URLs without accepting lookalike domains', async () => {
+      const musicLink = 'https://music.youtube.com/watch?v=dQw4w9WgXcQ';
+      const liveLink = 'https://www.youtube.com/live/dQw4w9WgXcQ';
+
+      expect(ytSource.canHandle(musicLink)).toBe(true);
+      expect(ytSource.extractVideoId(liveLink)).toBe('dQw4w9WgXcQ');
+      expect(ytSource.canHandle('https://youtube.com.attacker.example/watch?v=dQw4w9WgXcQ')).toBe(false);
+      await expect(manager.resolve(musicLink)).resolves.toMatchObject({
+        trackId: 'yt_dQw4w9WgXcQ',
+        sourceType: MusicSourceType.YOUTUBE
+      });
+    });
+
+    it('searches through the adapter with cancellation and normalized UI fields', async () => {
+      const signal = new AbortController().signal;
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ results: [{
+          id: 'dQw4w9WgXcQ', title: 'Song', channel: 'Artist', duration: 215,
+          durationText: '3:35', thumbnail: 'https://img.youtube.com/thumb.jpg',
+          apiDataFetchedAt: 1_234_567,
+          url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+        }] })
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const results = await ytSource.search('ambient', { signal });
+
+      expect(fetchMock).toHaveBeenCalledWith('/api/yt-search?q=ambient', { signal });
+      expect(results).toEqual([expect.objectContaining({
+        id: 'yt_dQw4w9WgXcQ', name: 'Song', artist: 'Artist', duration: 215,
+        sourceType: MusicSourceType.YOUTUBE, sourceId: 'dQw4w9WgXcQ',
+        apiDataFetchedAt: 1_234_567,
+        thumbnail: 'https://img.youtube.com/thumb.jpg',
+        sourceUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+      })]);
+    });
+
+    it('preserves structured provider errors and retryability', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: false, status: 429, json: async () => ({ error: 'RATE_LIMITED', retryable: true })
+      }));
+
+      await expect(ytSource.search('ambient')).rejects.toMatchObject({ code: 'RATE_LIMITED', retryable: true });
     });
   });
 
@@ -71,7 +120,9 @@ describe('Music Sources & Resolver Layer', () => {
       expect(publicSource.canHandle('public_acoustic_wav')).toBe(true);
       const resolved = await publicSource.resolve('public_acoustic_wav');
       expect(resolved.title).toBe('Acoustic Master WAV');
-      expect(resolved.playableUrl).toBe('/sample.wav');
+      expect(resolved.playableUrl).toBe('/test_music_sample.wav');
+      expect(publicSource.canHandle(resolved.playableUrl)).toBe(true);
+      await expect(access(new URL(`../public${resolved.playableUrl}`, import.meta.url))).resolves.toBeUndefined();
     });
   });
 
@@ -88,13 +139,26 @@ describe('Music Sources & Resolver Layer', () => {
       const resolver = new AudioResolver();
       const resolvedMock = {
         trackId: 'direct_test',
-        playableUrl: '/sample.wav',
+        playableUrl: '/test_music_sample.wav',
         sourceType: MusicSourceType.PUBLIC_AUDIO
       };
 
       const endpoint = await resolver.resolvePlayableEndpoint(resolvedMock);
-      expect(endpoint.playableUrl).toBe('/sample.wav');
+      expect(endpoint.playableUrl).toBe('/test_music_sample.wav');
       expect(endpoint.usedProxy).toBe(false);
+    });
+
+    it('preserves cancellation instead of returning a proxy endpoint', async () => {
+      const controller = new AbortController();
+      const abortError = Object.assign(new Error('aborted'), { name: 'AbortError' });
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(abortError));
+      const resolver = new AudioResolver();
+
+      await expect(resolver.resolvePlayableEndpoint({
+        trackId: 'direct_test',
+        playableUrl: 'https://audio.example/song.mp3',
+        sourceType: MusicSourceType.DIRECT_URL
+      }, controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
     });
   });
 });

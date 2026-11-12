@@ -1,166 +1,164 @@
-import { execFile } from 'child_process';
-import { promisify } from 'util';
+const RESULT_LIMIT = 8;
+const QUERY_MAX_LENGTH = 200;
+const PROVIDER_REQUEST_TIMEOUT_MS = 3_000;
+const DURATION_ENRICHMENT_TIMEOUT_MS = 500;
+const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
+const SEARCH_CACHE_MAX_ITEMS = 100;
+const SEARCH_CACHE_CONTROL = 'public, s-maxage=300, stale-while-revalidate=600';
+const searchCache = new Map();
+const inFlightSearches = new Map();
 
-const execFileAsync = promisify(execFile);
+function parseIsoDuration(duration = '') {
+  const match = duration.match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/);
+  if (!match) return 0;
+  return Number(match[1] || 0) * 3600 + Number(match[2] || 0) * 60 + Number(match[3] || 0);
+}
 
-export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=600');
+function durationText(seconds) {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+  return hours
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`
+    : `${minutes}:${String(remainder).padStart(2, '0')}`;
+}
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+function errorReason(payload) {
+  return payload?.error?.errors?.[0]?.reason || '';
+}
+
+function providerErrorResponse(response, payload) {
+  const reason = errorReason(payload);
+  if (response.status === 403 && ['quotaExceeded', 'dailyLimitExceeded', 'rateLimitExceeded'].includes(reason)) {
+    return { statusCode: 429, retryAfter: '3600', body: { error: 'RATE_LIMITED', provider: 'youtube', retryable: true } };
   }
-
-  const query = req.query?.q || '';
-  if (!query.trim()) {
-    return res.status(400).json({ error: 'Missing search query ?q=...' });
+  if (response.status === 400 || response.status === 403) {
+    return { statusCode: 503, body: { error: 'PROVIDER_CONFIGURATION_ERROR', provider: 'youtube', retryable: false } };
   }
+  return { statusCode: 502, body: { error: 'PROVIDER_UNAVAILABLE', provider: 'youtube', retryable: true } };
+}
 
-  // 1. Primary for Dedicated Server: Native yt-dlp search
+async function fetchJson(url, timeoutMs = PROVIDER_REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  let timeout;
   try {
-    const { stdout } = await execFileAsync('yt-dlp', [
-      '--no-warnings',
-      '--flat-playlist',
-      '--print', '%(id)s|||%(title)s|||%(uploader)s|||%(duration)s|||%(thumbnail)s',
-      `ytsearch8:${query}`
-    ], { timeout: 8000 });
-
-    const results = [];
-    const lines = stdout.trim().split('\n').filter(Boolean);
-    for (const line of lines) {
-      const parts = line.split('|||');
-      if (parts.length >= 3 && parts[0]) {
-        const id = parts[0].trim();
-        const title = parts[1]?.trim() || 'YouTube Track';
-        const channel = parts[2]?.trim() || 'YouTube Artist';
-        const duration = Number(parts[3]) || 0;
-        const rawThumb = parts[4]?.trim();
-        const thumbnail = (rawThumb && rawThumb !== 'NA' && rawThumb.startsWith('http'))
-          ? rawThumb
-          : `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
-        results.push({
-          id,
-          title,
-          channel,
-          duration,
-          durationText: `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}`,
-          thumbnail,
-          url: `https://www.youtube.com/watch?v=${id}`
-        });
-      }
-    }
-    if (results.length > 0) {
-      return res.status(200).json({ results });
-    }
-  } catch (ytDlpErr) {
-    // yt-dlp not available or failed, fallback to HTTP HTML scraping
+    const request = (async () => {
+      const response = await fetch(url, { signal: controller.signal });
+      return { response, data: (await response.json().catch(() => ({}))) || {} };
+    })();
+    return await Promise.race([
+      request,
+      new Promise((resolve, reject) => {
+        timeout = setTimeout(() => {
+          controller.abort();
+          reject(Object.assign(new Error('PROVIDER_TIMEOUT'), { name: 'TimeoutError' }));
+        }, timeoutMs);
+      })
+    ]);
+  } finally {
+    clearTimeout(timeout);
   }
+}
 
+function cacheResults(cacheKey, results) {
+  searchCache.delete(cacheKey);
+  searchCache.set(cacheKey, { results, storedAt: Date.now() });
+  while (searchCache.size > SEARCH_CACHE_MAX_ITEMS) searchCache.delete(searchCache.keys().next().value);
+}
+
+async function resolveSearch(query, cacheKey, key, staleCache) {
   try {
-    // 1. Direct YouTube Search HTML Scrape
-    const ytUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=EgIQAQ%253D%253D`;
-    const response = await fetch(ytUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-      }
+    const searchUrl = new URL('https://www.googleapis.com/youtube/v3/search');
+    searchUrl.search = new URLSearchParams({
+      key,
+      part: 'snippet',
+      q: query,
+      type: 'video',
+      videoCategoryId: '10',
+      maxResults: String(RESULT_LIMIT)
+    });
+    const { response: searchResponse, data: searchData } = await fetchJson(searchUrl);
+    if (!searchResponse.ok) return providerErrorResponse(searchResponse, searchData);
+
+    const videos = (Array.isArray(searchData.items) ? searchData.items : [])
+      .filter(item => /^[A-Za-z0-9_-]{11}$/.test(item?.id?.videoId || ''))
+      .slice(0, RESULT_LIMIT);
+    if (!videos.length) {
+      cacheResults(cacheKey, []);
+      return { statusCode: 200, body: { results: [], cached: false } };
+    }
+
+    const detailsUrl = new URL('https://www.googleapis.com/youtube/v3/videos');
+    detailsUrl.search = new URLSearchParams({ key, part: 'contentDetails', id: videos.map(item => item.id.videoId).join(',') });
+    let detailsData = {};
+    try {
+      const { response: detailsResponse, data } = await fetchJson(detailsUrl, DURATION_ENRICHMENT_TIMEOUT_MS);
+      if (detailsResponse.ok) detailsData = data;
+    } catch (error) {
+      // Duration is supplemental; valid video results remain usable if enrichment is slow.
+    }
+    const durations = new Map((detailsData.items || []).map(item => [item.id, parseIsoDuration(item.contentDetails?.duration)]));
+    const apiDataFetchedAt = Date.now();
+    const results = videos.map(item => {
+      const id = item.id.videoId;
+      const duration = durations.get(id) || 0;
+      const thumbnails = item.snippet?.thumbnails || {};
+      return {
+        id,
+        title: item.snippet?.title || 'YouTube video',
+        channel: item.snippet?.channelTitle || 'YouTube channel',
+        duration,
+        durationText: duration ? durationText(duration) : '',
+        apiDataFetchedAt,
+        thumbnail: thumbnails.medium?.url || thumbnails.default?.url || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+        url: `https://www.youtube.com/watch?v=${id}`
+      };
     });
 
-    if (response.ok) {
-      const html = await response.text();
-      const match = html.match(/var ytInitialData = ({.*?});<\/script>/s) || html.match(/ytInitialData\s*=\s*({.+?});/s);
-      
-      if (match && match[1]) {
-        const data = JSON.parse(match[1]);
-        const contents = data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents;
-        
-        const results = [];
-        if (Array.isArray(contents)) {
-          for (const section of contents) {
-            const itemSection = section?.itemSectionRenderer?.contents;
-            if (Array.isArray(itemSection)) {
-              for (const item of itemSection) {
-                const video = item?.videoRenderer;
-                if (video && video.videoId) {
-                  const id = video.videoId;
-                  const title = video.title?.runs?.map(r => r.text).join('') || video.title?.simpleText || 'Untitled';
-                  const channel = video.ownerText?.runs?.map(r => r.text).join('') || video.shortBylineText?.runs?.map(r => r.text).join('') || 'YouTube Artist';
-                  
-                  // Duration parsing (e.g. "3:45" or "1:12:30")
-                  const durationText = video.lengthText?.simpleText || video.lengthText?.runs?.map(r => r.text).join('') || '3:30';
-                  const durationParts = durationText.split(':').map(Number);
-                  let durationSec = 0;
-                  if (durationParts.length === 2) {
-                    durationSec = durationParts[0] * 60 + durationParts[1];
-                  } else if (durationParts.length === 3) {
-                    durationSec = durationParts[0] * 3600 + durationParts[1] * 60 + durationParts[2];
-                  }
+    cacheResults(cacheKey, results);
+    return { statusCode: 200, body: { results, cached: false } };
+  } catch (error) {
+    if (staleCache) return { statusCode: 200, body: { results: staleCache.results, cached: true, stale: true } };
+    const timedOut = error?.name === 'AbortError' || error?.name === 'TimeoutError';
+    return {
+      statusCode: timedOut ? 504 : 502,
+      body: { error: timedOut ? 'PROVIDER_TIMEOUT' : 'PROVIDER_UNAVAILABLE', provider: 'youtube', retryable: true }
+    };
+  }
+}
 
-                  const thumbnail = video.thumbnail?.thumbnails?.pop()?.url || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+export default async function handler(req, res) {
+  res.setHeader('Cache-Control', 'no-store');
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'GET') return res.status(405).json({ error: 'METHOD_NOT_ALLOWED' });
 
-                  results.push({
-                    id,
-                    title,
-                    channel,
-                    duration: durationSec || 210,
-                    durationText,
-                    thumbnail,
-                    url: `https://www.youtube.com/watch?v=${id}`
-                  });
+  const query = typeof req.query?.q === 'string' ? req.query.q.trim() : '';
+  if (!query) return res.status(400).json({ error: 'MISSING_QUERY' });
+  if (query.length > QUERY_MAX_LENGTH) return res.status(400).json({ error: 'QUERY_TOO_LONG', maxLength: QUERY_MAX_LENGTH });
 
-                  if (results.length >= 8) break;
-                }
-              }
-            }
-            if (results.length >= 8) break;
-          }
-        }
+  const key = process.env.YOUTUBE_DATA_API_KEY;
+  if (!key) return res.status(503).json({ error: 'PROVIDER_NOT_CONFIGURED', provider: 'youtube', retryable: false });
 
-        if (results.length > 0) {
-          return res.status(200).json({ results });
-        }
-      }
+  const cacheKey = query.toLocaleLowerCase();
+  const cached = searchCache.get(cacheKey);
+  if (cached && Date.now() - cached.storedAt < SEARCH_CACHE_TTL_MS) {
+    res.setHeader('Cache-Control', SEARCH_CACHE_CONTROL);
+    return res.status(200).json({ results: cached.results, cached: true });
+  }
+
+  let search = inFlightSearches.get(cacheKey);
+  if (!search) {
+    search = resolveSearch(query, cacheKey, key, cached);
+    inFlightSearches.set(cacheKey, search);
+  }
+  try {
+    const result = await search;
+    if (result.retryAfter) res.setHeader('Retry-After', result.retryAfter);
+    if (result.statusCode === 200 && !result.body.stale) {
+      res.setHeader('Cache-Control', SEARCH_CACHE_CONTROL);
     }
-  } catch (err) {
-    console.warn('Direct YouTube scrape error:', err.message);
+    return res.status(result.statusCode).json(result.body);
+  } finally {
+    if (inFlightSearches.get(cacheKey) === search) inFlightSearches.delete(cacheKey);
   }
-
-  // 2. Invidious / Piped API fallbacks with live results
-  const publicInstances = [
-    `https://inv.tux.pizza/api/v1/search?q=${encodeURIComponent(query)}&type=video`,
-    `https://invidious.nerdvpn.de/api/v1/search?q=${encodeURIComponent(query)}&type=video`,
-    `https://pipedapi.kavin.rocks/search?q=${encodeURIComponent(query)}&filter=music_songs`
-  ];
-
-  for (const instance of publicInstances) {
-    try {
-      const resp = await fetch(instance, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-      if (resp.ok) {
-        const data = await resp.json();
-        const items = data.items || data || [];
-        if (Array.isArray(items) && items.length > 0) {
-          const results = items.slice(0, 8).map(item => {
-            const id = item.videoId || (item.url ? item.url.replace('/watch?v=', '') : '');
-            return {
-              id,
-              title: item.title || 'YouTube Track',
-              channel: item.author || item.uploaderName || 'Artist',
-              duration: item.lengthSeconds || item.duration || 200,
-              thumbnail: item.thumbnail || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
-              url: `https://www.youtube.com/watch?v=${id}`
-            };
-          }).filter(i => i.id);
-
-          if (results.length > 0) {
-            return res.status(200).json({ results });
-          }
-        }
-      }
-    } catch (e) {}
-  }
-
-  return res.status(200).json({ results: [] });
 }

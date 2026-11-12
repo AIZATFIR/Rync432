@@ -1,242 +1,33 @@
-import { execFile } from 'child_process';
-import { promisify } from 'util';
+import { extractYouTubeVideoId } from '../public/js/music/sources/YouTubeSource.js';
 
-const execFileAsync = promisify(execFile);
-
-export const config = {
-  api: {
-    responseLimit: '50mb'
-  }
-};
+function extractVideoId(input) {
+  const value = String(input || '').trim();
+  if (/^[A-Za-z0-9_-]{11}$/.test(value)) return value;
+  return extractYouTubeVideoId(value);
+}
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Cache-Control', 'no-store');
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'GET') return res.status(405).json({ error: 'METHOD_NOT_ALLOWED' });
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
-  const queryUrl = req.query?.url || '';
-  const queryId = req.query?.id || '';
-
-  // 1. Direct Audio File URL (MP3 / WAV / OGG / FLAC)
-  if (queryUrl.startsWith('http') && !queryUrl.includes('youtube.com') && !queryUrl.includes('youtu.be')) {
-    try {
-      const audioResp = await fetch(queryUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-      });
-      if (audioResp.ok) {
-        const ct = audioResp.headers.get('content-type') || 'audio/mpeg';
-        res.setHeader('Content-Type', ct);
-        const buf = await audioResp.arrayBuffer();
-        return res.status(200).send(Buffer.from(buf));
-      }
-    } catch (e) {
-      return res.redirect(queryUrl);
-    }
-  }
-
-  let videoId = queryId;
-  if (!videoId && queryUrl) {
-    const match = queryUrl.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([a-zA-Z0-9_-]{11})/);
-    if (match) {
-      videoId = match[1];
-    }
-  }
-
-  if (!videoId) {
-    return res.status(400).json({
-      error: 'URL tidak valid. Masukkan link YouTube atau link file audio langsung.'
+  const requestedUrl = typeof req.query?.url === 'string' ? req.query.url : '';
+  const videoId = extractVideoId(req.query?.id || requestedUrl);
+  if (videoId) {
+    return res.status(410).json({
+      error: 'EMBED_PLAYER_REQUIRED',
+      videoId,
+      message: 'Gunakan player YouTube resmi untuk video ini.'
     });
   }
 
-  let resolvedAudioUrl = null;
-  let trackTitle = 'YouTube Audio';
-
-  // 2. Primary for Dedicated Server: Native yt-dlp (Bypasses all bot-blocks & extract audio instantly)
+  if (!requestedUrl) return res.status(400).json({ error: 'INVALID_URL' });
+  let parsedUrl;
   try {
-    const { stdout } = await execFileAsync('yt-dlp', [
-      '--no-warnings',
-      '--no-playlist',
-      '--extractor-args', 'youtube:player_client=android',
-      '--print', '%(title)s',
-      '--print', '%(url)s',
-      '-f', 'bestaudio[ext=m4a]/bestaudio/best',
-      `https://www.youtube.com/watch?v=${videoId}`
-    ], { timeout: 12000 });
-
-    const lines = stdout.trim().split('\n').filter(Boolean);
-    if (lines.length >= 2) {
-      trackTitle = lines[0].trim() || trackTitle;
-      resolvedAudioUrl = lines[1].trim();
-    } else if (lines.length === 1 && lines[0].startsWith('http')) {
-      resolvedAudioUrl = lines[0].trim();
-    }
-  } catch (ytDlpErr) {
-    // yt-dlp not available or failed, fallback to HTTP scrapers
+    parsedUrl = new URL(requestedUrl);
+  } catch (error) {
+    return res.status(400).json({ error: 'INVALID_URL' });
   }
-
-  // 2. Fallback: Direct YouTube Innertube API (ANDROID_VR Client)
-  if (!resolvedAudioUrl) {
-    try {
-      const innertubeResp = await fetch('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-          'X-YouTube-Client-Name': '28',
-          'X-YouTube-Client-Version': '1.58.18'
-        },
-        body: JSON.stringify({
-          context: {
-            client: {
-              clientName: 'ANDROID_VR',
-              clientVersion: '1.58.18',
-              deviceModel: 'Quest 3',
-              hl: 'en',
-              gl: 'US'
-            }
-          },
-          videoId: videoId
-        })
-      });
-
-      if (innertubeResp.ok) {
-        const data = await innertubeResp.json();
-        trackTitle = data.videoDetails?.title || trackTitle;
-        const formats = data.streamingData?.adaptiveFormats || [];
-        const audioFormats = formats.filter(f => (f.mimeType || '').startsWith('audio/') && f.url);
-
-        if (audioFormats.length > 0) {
-          // Sort by audio quality (highest bitrate first)
-          audioFormats.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-          resolvedAudioUrl = audioFormats[0].url;
-        }
-      }
-    } catch (err) {
-      console.warn('Innertube direct error:', err.message);
-    }
-  }
-
-  // 3. Fallback: Secondary Multi-Node Extractors (Cobalt v10, Invidious, Piped)
-  if (!resolvedAudioUrl) {
-    const fallbackNodes = [
-      {
-        type: 'cobalt',
-        url: 'https://api.cobalt.tools',
-        body: { url: `https://www.youtube.com/watch?v=${videoId}`, downloadMode: 'audio', audioFormat: 'mp3' }
-      },
-      {
-        type: 'cobalt',
-        url: 'https://cobalt-api.kwiatekm.tokyo',
-        body: { url: `https://www.youtube.com/watch?v=${videoId}`, downloadMode: 'audio', audioFormat: 'mp3' }
-      },
-      {
-        type: 'invidious',
-        url: `https://yewtu.be/api/v1/videos/${videoId}`
-      },
-      {
-        type: 'invidious',
-        url: `https://invidious.jing.rocks/api/v1/videos/${videoId}`
-      },
-      {
-        type: 'invidious',
-        url: `https://invidious.nerdvpn.de/api/v1/videos/${videoId}`
-      },
-      {
-        type: 'invidious',
-        url: `https://inv.tux.pizza/api/v1/videos/${videoId}`
-      }
-    ];
-
-    for (const node of fallbackNodes) {
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 3500);
-
-        if (node.type === 'cobalt') {
-          const resp = await fetch(node.url, {
-            method: 'POST',
-            signal: controller.signal,
-            headers: {
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-            },
-            body: JSON.stringify(node.body)
-          });
-          clearTimeout(timeout);
-          if (resp.ok) {
-            const d = await resp.json();
-            if (d.url) {
-              resolvedAudioUrl = d.url;
-              break;
-            }
-          }
-        } else {
-          const resp = await fetch(node.url, {
-            signal: controller.signal,
-            headers: { 'User-Agent': 'Mozilla/5.0' }
-          });
-          clearTimeout(timeout);
-          if (resp.ok) {
-            const d = await resp.json();
-            trackTitle = d.title || trackTitle;
-            const audioFormats = (d.adaptiveFormats || d.audioStreams || []).filter(f => (f.type || f.mimeType || '').startsWith('audio/') && f.url);
-            if (audioFormats.length > 0) {
-              resolvedAudioUrl = audioFormats[0].url;
-              break;
-            }
-          }
-        }
-      } catch (e) {}
-    }
-  }
-
-  // 4. Stream binary audio back to Web Audio API Engine
-  if (resolvedAudioUrl) {
-    try {
-      const audioFetch = await fetch(resolvedAudioUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Accept': '*/*'
-        }
-      });
-
-      if (audioFetch.ok) {
-        const contentType = audioFetch.headers.get('content-type') || 'audio/mp4';
-        const contentLength = audioFetch.headers.get('content-length');
-        res.setHeader('Content-Type', contentType);
-        res.setHeader('X-Track-Title', encodeURIComponent(trackTitle));
-        res.setHeader('Cache-Control', 'public, max-age=3600');
-        if (contentLength) {
-          res.setHeader('Content-Length', contentLength);
-        }
-
-        if (audioFetch.body && typeof audioFetch.body.getReader === 'function') {
-          try {
-            const { Readable } = await import('stream');
-            if (typeof Readable.fromWeb === 'function') {
-              return Readable.fromWeb(audioFetch.body).pipe(res);
-            }
-          } catch (e) {}
-        }
-
-        const arrayBuf = await audioFetch.arrayBuffer();
-        return res.status(200).send(Buffer.from(arrayBuf));
-      } else {
-        return res.redirect(resolvedAudioUrl);
-      }
-    } catch (streamErr) {
-      return res.redirect(resolvedAudioUrl);
-    }
-  }
-
-  return res.status(422).json({
-    error: 'PROVIDER_UNAVAILABLE: Stream YouTube diblokir oleh IP cloud/serverless. Gunakan link Direct Audio (MP3/WAV/FLAC) atau upload file langsung.',
-    videoId,
-    source: 'youtube'
-  });
+  if (!['http:', 'https:'].includes(parsedUrl.protocol)) return res.status(400).json({ error: 'INVALID_URL' });
+  return res.redirect(`/api/stream?url=${encodeURIComponent(parsedUrl.href)}`);
 }

@@ -1,102 +1,47 @@
-# Rync432 • Spotify-Style Multi-Device Audio Synchronizer 🎵🟢
+# Rync
 
-> **Web-Native Ultra-Low Latency Synchronized Audio Mesh Player**  
-> Mengubah sekumpulan smartphone, laptop, dan tablet menjadi satu kesatuan multi-channel sound system yang megah dan berharmoni dengan akurasi sub-milidetik.
+Rync adalah music player berbasis browser dengan pencarian YouTube, library lokal, antrean, dan room untuk mendengarkan bersama. Buat room dari player lalu bagikan link atau kode room ke teman.
 
-![Spotify Theme](https://img.shields.io/badge/UI-Spotify%20Dark%20Theme-1ed760?style=for-the-badge&logo=spotify&logoColor=black)
-![Web Audio API](https://img.shields.io/badge/Audio-Web%20Audio%20API-orange?style=for-the-badge)
-![WebSockets](https://img.shields.io/badge/Sync-NTP%20Cristian%20Algorithm-6366f1?style=for-the-badge)
-![Vercel Ready](https://img.shields.io/badge/Deployment-Vercel-black?style=for-the-badge&logo=vercel)
+## Jalankan lokal
 
----
-
-## ✨ Fitur Unggulan (Key Features)
-
-1. **Spotify Design Aesthetics (`#121212` / `#1ed760`)**:
-   - Tema gelap imersif (*content-first darkness*) dengan tombol pill (`border-radius: 9999px`), kontrol sirkular 50%, font CircularSp/SpotifyMixUI, dan shadow terangkat (`rgba(0,0,0,0.5) 0px 8px 24px`).
-2. **Sub-Millisecond Sample-Accurate Audio Engine**:
-   - Menggunakan `AudioContext` & `AudioBufferSourceNode` yang dijadwalkan langsung ke hardware clock (`AudioContext.currentTime`), mengeliminasi delay 50-200ms bawaan tag `<audio>` HTML5.
-3. **Precision Latency Tuner ($\pm 1\text{ms}$ Fine-Tune & Nudge Buttons)**:
-   - Tombol step `+` dan `−` untuk penyesuaian delay mikrodetik per perangkat.
-   - Preset hardware: *Wired Speaker (0ms)*, *Internal Phone (+15ms)*, *Bluetooth Speaker (+120ms)*, *AirPlay (+250ms)*.
-4. **Dual-Tone Keep-Alive Metronome (Ketukan 2 Nada: 880Hz / 440Hz)**:
-   - Mencegah browser mobile (iOS Safari/Android Chrome) mematikan (*sleep mode*) DAC audio hardware saat hening, dan menjadi sarana kalibrasi telinga di ruangan.
-5. **Skema Login Google (Google OAuth 2.0)**:
-   - Tombol Google Sign-in resmi dengan modal profil user, avatar, dan persistensi preferensi akun di localStorage.
-6. **Slot Google AdSense (Responsive Banner Ads)**:
-   - Kontainer iklan responsif bertema gelap yang siap disematkan Google Publisher ID (`ca-pub-XXXXXXXXXXXXX`).
-7. **Mesh Topology Monitor**:
-   - Menampilkan daftar seluruh speaker/device yang terhubung di ruangan lengkap dengan ping RTT dan latency offset masing-masing.
-
----
-
-## 🚀 Menjalankan Secara Lokal (Local Development)
+Butuh Node.js dan npm.
 
 ```bash
-# 1. Install dependencies
 npm install
-
-# 2. Jalankan test unit (Vitest)
 npm test
-
-# 3. Jalankan server lokal
+npm run build
 npm start
 ```
 
-- Buka `http://localhost:3000` di laptop/PC Host (Master).
-- Buka `http://<IP-Lokal-WiFi>:3000` dari smartphone lain di jaringan Wi-Fi yang sama untuk langsung sinkron!
+Buka `http://localhost:3000`. Metadata room dan antreannya disimpan di `data/rooms.json` selama maksimum tiga jam. Audio yang diunggah ke room berada di memori server dan hilang saat proses server restart. Untuk server yang memakai disk persisten, set `RYNC_ROOM_STORE_PATH` ke lokasi file yang persisten dan sertakan file itu dalam backup. Room dibatasi lima perangkat aktif dan 500 item antrean.
 
----
-
-## 🌐 Deploy ke Vercel (Vercel Setup)
-
-Proyek ini telah dikonfigurasi dengan [`vercel.json`](file:///home/aizatfir/Project/Rync432/vercel.json) untuk deployment instan:
+Pencarian YouTube memerlukan YouTube Data API v3 key pada environment server:
 
 ```bash
-# Deploy via Vercel CLI
-npx vercel
-```
-Atau hubungkan repository Git ini langsung ke dashboard [Vercel](https://vercel.com) dengan nama project `Rync432`.
-
----
-
-## 📂 Struktur Project
-
-```
-Rync432/
-├── api/
-│   └── health.js              # Serverless health endpoint untuk Vercel
-├── docs/
-│   └── superpowers/plans/     # Implementation plans
-├── public/
-│   ├── css/
-│   │   └── style.css          # Spotify Design System tokens & layout
-│   ├── js/
-│   │   ├── audio/
-│   │   │   ├── AudioEngine.js # Web Audio API & Synthwave generator
-│   │   │   ├── ClockSync.js   # NTP Cristian's algorithm
-│   │   │   ├── LatencyTuner.js# Precision offset calculator (±1ms, presets)
-│   │   │   └── Metronome.js   # 2-tone keep-alive audio warmer
-│   │   ├── network/
-│   │   │   └── SocketClient.js# WebSocket sync & binary audio relay
-│   │   ├── ui/
-│   │   │   ├── UIManager.js   # Spotify DOM controller & Google Auth
-│   │   │   └── Visualizer.js  # 60fps Spotify Green canvas spectrum
-│   │   └── app.js             # Main application bootstrapper
-│   └── index.html             # Spotify-styled HTML5 application
-├── server/
-│   ├── roomManager.js         # Room lifecycle & peer state
-│   └── server.js              # HTTP & WebSocket sync server
-├── tests/
-│   ├── clockSync.test.js      # Clock offset unit tests
-│   ├── latencyTuner.test.js   # Latency calculation unit tests
-│   └── roomManager.test.js    # Room peer join/leave tests
-├── package.json
-├── vercel.json                # Vercel routing configuration
-└── README.md
+YOUTUBE_DATA_API_KEY=isi_key_di_environment_server
 ```
 
----
+Jangan masukkan API key ke kode frontend atau commit ke Git. Pemutaran YouTube menggunakan player embed resmi. Video yang menolak embed, kebijakan autoplay browser, kuota API dan ketersediaan jaringan dapat membatasi pencarian atau pemutaran.
 
-## 📜 Lisensi
-MIT License • Dibuat untuk performa audio mesh berkecepatan tinggi.
+## Sumber audio dan room
+
+- YouTube diputar melalui player embed resmi; audio YouTube tidak diunduh menjadi file.
+- URL audio langsung dan file lokal didukung sesuai validasi dan batas ukuran aplikasi.
+- File lokal untuk room harus dibagikan oleh host melalui WebRTC atau relay yang tersedia. Host perlu tetap terhubung untuk menyiapkan dan mengirim sumber audio.
+- Room memakai WebRTC bila tersedia dan beralih ke relay untuk sumber yang mendukungnya. Jaringan, NAT, browser, autoplay dan perangkat keluaran memengaruhi keberhasilan serta waktu mulai.
+- Batas server saat ini: lima perangkat aktif, 500 item antrean, payload signaling 64 KiB, 256 sinyal tertunda per room, TTL room tiga jam.
+
+Jumlah perangkat tersebut adalah batas konfigurasi, bukan hasil uji kapasitas. Ukuran sinkronisasi dan keberhasilan P2P perlu diukur pada perangkat serta jaringan yang akan digunakan; Bluetooth dan tab browser di latar belakang dapat menambah latensi.
+
+Pengukuran lokal waktu masuk room (`room_join_ms`), pengakuan antrean server (`queue_ack_ms`), kesiapan sumber audio (`audio_ready_ms`), pencarian YouTube (`youtube_search_ms`), dan koneksi WebRTC (`webrtc_connect_ms`) tersimpan pada browser di `localStorage` dengan key `rync_metrics_v1`. Isinya hanya durasi dan status berhasil/gagal, dibatasi 100 sampel per metrik dan tidak memuat judul lagu, kode room, atau ID peer. Operasi pencarian yang dibatalkan tidak dihitung. Hapus dengan `localStorage.removeItem('rync_metrics_v1')` dari console browser.
+
+## Pemeriksaan lokal
+
+```bash
+npm test
+npm run build
+```
+
+Untuk instalasi homeserver, pastikan folder penyimpanan room persisten. Deploy ke Vercel tidak menyediakan penyimpanan file room persisten secara otomatis; gunakan layanan penyimpanan yang sesuai sebelum mengandalkannya untuk room yang harus bertahan antar-instance.
+
+Panduan update, pemeriksaan setelah restart, dan rollback homeserver ada di [docs/homeserver-runbook.md](docs/homeserver-runbook.md).

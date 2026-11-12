@@ -2,6 +2,37 @@ import { AudioEngine } from './audio/AudioEngine.js';
 import { SocketClient } from './network/SocketClient.js';
 import { UIManager } from './ui/UIManager.js';
 import { Visualizer } from './ui/Visualizer.js';
+import { YouTubeEmbedPlayer } from './music/YouTubeEmbedPlayer.js';
+import { getYouTubePlaybackError } from './privacy/youtubePlaybackErrors.js';
+
+function youtubeVideoId(track) {
+  if (!track || track.sourceType !== 'youtube') return null;
+  const sourceId = track.sourceId || track.youtubeVideoId || (track.id?.startsWith('yt_') ? track.id.slice(3) : track.id);
+  return /^[A-Za-z0-9_-]{11}$/.test(sourceId || '') ? sourceId : null;
+}
+
+export async function joinRoomFromInvite(socketClient, roomId, deviceName, uiManager) {
+  try {
+    if (uiManager?.joinRoom) return await uiManager.joinRoom(roomId);
+    return await socketClient.joinRoom(roomId, deviceName);
+  } catch {
+    return undefined;
+  }
+}
+
+export function updateRoomUrl(roomId) {
+  if (!globalThis.window?.location?.href || !globalThis.window.history?.replaceState) return false;
+  const url = new URL(window.location.href);
+  if (roomId) {
+    const normalizedRoomId = String(roomId).trim().toUpperCase();
+    if (!/^[A-Z0-9]{4}$/.test(normalizedRoomId)) return false;
+    url.searchParams.set('room', normalizedRoomId);
+  } else {
+    url.searchParams.delete('room');
+  }
+  window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+  return true;
+}
 
 class App {
   constructor() {
@@ -9,6 +40,7 @@ class App {
     this.audioEngine = null;
     this.uiManager = null;
     this.visualizer = null;
+    this.youtubePlayer = null;
     this.wakeLock = null;
   }
 
@@ -17,6 +49,16 @@ class App {
     this.audioEngine = new AudioEngine(this.socketClient.clockSync);
     this.uiManager = new UIManager(this);
     this.uiManager.init();
+    this.youtubePlayer = new YouTubeEmbedPlayer('youtubePlayerContainer', {
+      clockSync: this.socketClient.clockSync,
+      onStateChange: (state, player) => this.handleYouTubePlayerState(state, player),
+      onError: code => this.handleYouTubePlayerError(code),
+      onAutoplayBlocked: () => {
+        this.uiManager.setYouTubePlayerStatus('Autoplay diblokir browser. Ketuk Aktifkan audio untuk melanjutkan.');
+        this.uiManager.setYouTubeAutoplayBlocked(true);
+        this.socketClient.cloudMesh.broadcastReadiness('AUTOPLAY_BLOCKED', this.uiManager.currentTrack?.id || '', 'youtube');
+      }
+    });
 
     const canvas = document.getElementById('visualizerCanvas');
     if (canvas) {
@@ -37,7 +79,7 @@ class App {
     // Global User Gesture Unlock for iOS Safari and Android Chrome
     const unlockAudio = () => {
       if (this.audioEngine) {
-        this.audioEngine.ensureContext();
+        this.audioEngine.ensureContext().catch(() => {});
       }
     };
     ['touchstart', 'touchend', 'click', 'keydown'].forEach(evt => {
@@ -48,8 +90,7 @@ class App {
     const roomParam = urlParams.get('room')?.trim().toUpperCase();
     if (/^[A-Z0-9]{4}$/.test(roomParam || '')) {
       setTimeout(() => {
-        this.audioEngine.ensureContext();
-        this.socketClient.joinRoom(roomParam.toUpperCase(), this.uiManager.getDeviceName());
+        joinRoomFromInvite(this.socketClient, roomParam, this.uiManager.getDeviceName(), this.uiManager);
       }, 0);
     }
   }
@@ -62,6 +103,61 @@ class App {
     } catch (e) {}
   }
 
+  handleYouTubePlayerState(state, player) {
+    const YT = globalThis.YT;
+    if (state === YT?.PlayerState?.PLAYING || state === 1) {
+      const duration = player?.getDuration?.() || 0;
+      if (duration) {
+        this.audioEngine.currentTrackDuration = duration;
+        if (this.uiManager.elements.totalTimeText) {
+          this.uiManager.elements.totalTimeText.textContent = this.uiManager.formatTime(duration);
+        }
+        if (this.uiManager.currentTrack) this.uiManager.currentTrack.duration = duration;
+      }
+      if (this.uiManager.currentTrack?.sourceType === 'youtube') {
+        this.uiManager.currentTrack.duration = duration || this.uiManager.currentTrack.duration || 0;
+        this.audioEngine.currentTrackDuration = this.uiManager.currentTrack.duration;
+      }
+      this.audioEngine.pauseOffsetSec = player?.getCurrentTime?.() || 0;
+      this.uiManager.setYouTubePlayerStatus('');
+      this.uiManager.setYouTubeAutoplayBlocked(false);
+      this.socketClient.cloudMesh.broadcastReadiness('READY', this.uiManager.currentTrack?.id || '', 'youtube');
+      this.uiManager.setPlayState(true);
+    } else if (state === YT?.PlayerState?.CUED || state === 5) {
+      this.socketClient.cloudMesh.broadcastReadiness('READY', this.uiManager.currentTrack?.id || '', 'youtube');
+    } else if (state === YT?.PlayerState?.PAUSED || state === 2) {
+      this.audioEngine.pauseOffsetSec = player?.getCurrentTime?.() || this.audioEngine.pauseOffsetSec;
+      if (this.uiManager.isPlayingState) this.uiManager.setPlayState(false);
+    } else if (state === YT?.PlayerState?.BUFFERING || state === 3) {
+      this.uiManager.setYouTubePlayerStatus('Memuat video YouTube…');
+    } else if (state === YT?.PlayerState?.ENDED || state === 0) {
+      this.uiManager.setPlayState(false);
+      if (this.socketClient?.roomId && this.socketClient.isHost) this.uiManager.goToNextTrack({ automatic: true });
+      else if (!this.socketClient?.roomId && this.uiManager.repeatMode === 'one' && this.uiManager.currentTrack?.sourceId) {
+        this.audioEngine.pauseOffsetSec = 0;
+        this.youtubePlayer.playAt(this.uiManager.currentTrack.sourceId, this.socketClient.clockSync.getServerTime() + 50, 0)
+          .catch(() => this.uiManager.setYouTubePlayerStatus('Tekan Play di player YouTube untuk mulai.'));
+      } else if (!this.socketClient?.roomId) this.uiManager.goToNextTrack();
+    }
+  }
+
+  handleYouTubePlayerError(code) {
+    const messages = {
+      100: 'Video YouTube tidak tersedia. Pilih video lain.',
+      101: 'Pemilik video tidak mengizinkan pemutaran sematan. Pilih video lain.',
+      150: 'Pemilik video tidak mengizinkan pemutaran sematan. Pilih video lain.',
+      153: 'Player YouTube tidak menerima identitas situs. Muat ulang halaman.'
+    };
+    this.uiManager.setPlayState(false);
+    this.uiManager.setYouTubeAutoplayBlocked(false);
+    this.socketClient?.cloudMesh?.broadcastReadiness('FAILED', this.uiManager.currentTrack?.id || '', 'youtube');
+    this.uiManager.setYouTubePlayerStatus(messages[code] || 'Video YouTube gagal diputar. Coba video lain.', {
+      retryable: ![2, 100, 101, 150, 153].includes(code),
+      sourceUrl: [100, 101, 150].includes(code) && youtubeVideoId(this.uiManager.currentTrack)
+        ? `https://www.youtube.com/watch?v=${youtubeVideoId(this.uiManager.currentTrack)}` : ''
+    });
+  }
+
   async handleNetworkEvent(type, payload) {
     const { uiManager, audioEngine, socketClient } = this;
 
@@ -70,17 +166,31 @@ class App {
         uiManager.setConnected(true);
         break;
 
+      case 'RECONNECTING':
+        uiManager.setConnectionState('RECONNECTING');
+        break;
+
       case 'DISCONNECTED':
-        uiManager.setConnected(false);
+        uiManager.setConnectionState('DISCONNECTED');
+        break;
+
+      case 'HOST_DISCONNECTED':
+        uiManager.setHostDisconnected(true);
+        break;
+
+      case 'HOST_RECONNECTED':
+        uiManager.setHostDisconnected(false);
         break;
 
       case 'ROOM_CREATED':
+        updateRoomUrl(payload.roomId);
         uiManager.setRoomState(payload.roomId, true);
         uiManager.renderPeerList(payload.peers || [{ id: payload.peerId, isHost: true, deviceName: 'Master Speaker' }]);
         this.requestWakeLock();
         break;
 
       case 'ROOM_JOINED':
+        updateRoomUrl(payload.roomId);
         uiManager.setRoomState(payload.roomId, payload.isHost);
         uiManager.renderPeerList(payload.peers || []);
         this.requestWakeLock();
@@ -90,7 +200,10 @@ class App {
             this.socketClient.cloudMesh.lastKnownTrack = payload.currentTrack;
           }
           uiManager.updateTrackUI(payload.currentTrack.name || 'Shared Track', payload.currentTrack.duration || 0, payload.currentTrack.thumbnail || '');
-          if (payload.currentTrack.isSynthetic) {
+          if (youtubeVideoId(payload.currentTrack)) {
+            uiManager.setView('room');
+            this.socketClient.cloudMesh.loadTrackBuffer(payload.currentTrack);
+          } else if (payload.currentTrack.isSynthetic) {
             audioEngine.generateSyntheticTrack();
           } else if (this.socketClient?.cloudMesh) {
             this.socketClient.cloudMesh.loadTrackBuffer(payload.currentTrack);
@@ -98,21 +211,66 @@ class App {
         }
 
         if (payload.playbackState && payload.playbackState.isPlaying) {
-          audioEngine.schedulePlayAtServerTime(
-            payload.playbackState.startServerTime,
-            payload.playbackState.startOffsetSec || 0
-          );
-          uiManager.setPlayState(true);
+          if (youtubeVideoId(payload.currentTrack)) {
+            this.youtubePlayer.playAt(
+              youtubeVideoId(payload.currentTrack),
+              payload.playbackState.startServerTime,
+              payload.playbackState.startOffsetSec || 0
+            ).catch(error => {
+              const status = getYouTubePlaybackError(error, youtubeVideoId(payload.currentTrack));
+              uiManager.setYouTubePlayerStatus(status.message, { retryable: status.retryable, sourceUrl: status.sourceUrl });
+              socketClient.cloudMesh.broadcastReadiness('FAILED', payload.currentTrack?.id || '', 'youtube');
+            });
+          } else {
+            audioEngine.schedulePlayAtServerTime(
+              payload.playbackState.startServerTime,
+              payload.playbackState.startOffsetSec || 0
+            );
+            uiManager.setPlayState(true);
+          }
         }
         break;
 
       case 'ROOM_ERROR':
-        alert(payload.message || 'Room error');
+        uiManager.setView('room');
+        uiManager.showUrlFeedback(payload.message || 'Room gagal diakses. Periksa kode atau koneksi.', 'error');
         break;
 
       case 'ROOM_LEFT':
+        updateRoomUrl(null);
         uiManager.setSoloState();
         break;
+
+      case 'YOUTUBE_TRACK_REQUESTED': {
+        const videoId = youtubeVideoId(payload);
+        if (!videoId) {
+          uiManager.setYouTubePlayerStatus('ID video YouTube tidak valid.');
+          break;
+        }
+        uiManager.setView(socketClient.roomId ? 'room' : 'player');
+        uiManager.setYouTubePlayerVisible(true);
+        uiManager.setYouTubeAutoplayBlocked(false);
+        uiManager.setYouTubePlayerStatus('Memuat player YouTube…');
+        const schedule = socketClient.cloudMesh?.lastKnownState;
+        if (typeof schedule === 'number' && schedule > Date.now()) {
+          this.youtubePlayer.playAt(videoId, schedule, payload.startOffsetSec || 0)
+            .then(() => uiManager.setYouTubePlayerStatus(''))
+            .catch(error => {
+              const status = getYouTubePlaybackError(error, videoId);
+              uiManager.setYouTubePlayerStatus(status.message, { retryable: status.retryable, sourceUrl: status.sourceUrl });
+              socketClient.cloudMesh.broadcastReadiness('FAILED', payload.id || '', 'youtube');
+            });
+          break;
+        }
+        this.youtubePlayer.cueVideo(videoId, payload.startOffsetSec || 0)
+          .then(() => uiManager.setYouTubePlayerStatus(''))
+          .catch(error => {
+            const status = getYouTubePlaybackError(error, videoId);
+            uiManager.setYouTubePlayerStatus(status.message, { retryable: status.retryable, sourceUrl: status.sourceUrl });
+            socketClient.cloudMesh.broadcastReadiness('FAILED', payload.id || '', 'youtube');
+          });
+        break;
+      }
 
       case 'PEER_JOINED':
       case 'PEER_LEFT':
@@ -129,8 +287,16 @@ class App {
         }
         break;
 
+      case 'PLAYBACK_OPTIONS_UPDATED':
+        uiManager.setPlaybackOptions(payload);
+        break;
+
       case 'QUEUE_SYNC_ERROR':
         uiManager.showUrlFeedback(payload.message || 'Antrean belum tersinkron ke room.', 'error');
+        break;
+
+      case 'PLAYBACK_SYNC_ERROR':
+        uiManager.showUrlFeedback(payload.message || 'Playback belum tersinkron ke room.', 'error');
         break;
 
       case 'CONTROL_REQUEST': {
@@ -143,39 +309,64 @@ class App {
           play_queue_item: `play “${payload.details?.name || 'queued track'}”`,
           play_next: 'move a track to next',
           remove_queue: 'remove a track from queue',
-          seek: 'seek playback'
+          seek: 'seek playback',
+          playback_options: 'change repeat or shuffle'
         };
         const actionLabel = labels[payload.action];
         if (!actionLabel || !window.confirm(`${payload.requestedBy || 'A member'} requests to ${actionLabel}. Approve?`)) break;
 
         switch (payload.action) {
           case 'play':
-            socketClient.schedulePlay(800, audioEngine.pauseOffsetSec || 0);
+            socketClient.schedulePlay(800, audioEngine.pauseOffsetSec || 0).then(applied => {
+              if (!applied) uiManager.showUrlFeedback('Putar gagal disinkronkan ke room. Coba lagi.', 'error');
+            });
             break;
           case 'pause': {
-            const offset = audioEngine.getCurrentPlaybackPosition();
-            audioEngine.stopLocalPlayback();
+            const isYouTube = !!youtubeVideoId(socketClient.cloudMesh?.lastKnownTrack);
+            const offset = isYouTube ? this.youtubePlayer?.getCurrentTime() || 0 : audioEngine.getCurrentPlaybackPosition();
+            if (isYouTube) this.youtubePlayer?.pause();
+            else audioEngine.stopLocalPlayback();
             audioEngine.pauseOffsetSec = offset;
             uiManager.setPlayState(false);
-            socketClient.pausePlayback(offset);
+            socketClient.pausePlayback(offset).then(applied => {
+              if (!applied) uiManager.setPlayState(true);
+            });
             break;
           }
-          case 'next': socketClient.nextTrack(); break;
+          case 'next': uiManager.goToNextTrack(); break;
           case 'previous': socketClient.prevTrack(); break;
           case 'play_queue_item': socketClient.playQueueItem(payload.details?.queueId, true); break;
           case 'play_next': socketClient.playNext(payload.details?.queueId); break;
           case 'remove_queue': socketClient.removeFromQueue(payload.details?.queueId); break;
-          case 'seek': socketClient.schedulePlay(800, payload.details?.position || 0); break;
+          case 'seek':
+            if (youtubeVideoId(socketClient.cloudMesh?.lastKnownTrack)) socketClient.seekPlayback(payload.details?.position || 0);
+            else socketClient.schedulePlay(800, payload.details?.position || 0);
+            break;
+          case 'playback_options':
+            socketClient.updatePlaybackOptions(payload.details || {}).catch(() => {
+              uiManager.showUrlFeedback('Mode pemutaran gagal disinkronkan. Coba lagi.', 'error');
+            });
+            break;
         }
         break;
       }
 
+      case 'CONTROL_REQUEST_FAILED':
+        uiManager.showUrlFeedback('Permintaan putar gagal terkirim. Coba lagi.', 'error');
+        break;
+
       case 'TRACK_METADATA':
       case 'TRACK_LOADED':
+        if (payload?.sourceType === 'youtube' && !payload.sourceId) {
+          const embeddedId = payload.id?.startsWith('yt_') ? payload.id.slice(3) : '';
+          if (/^[A-Za-z0-9_-]{11}$/.test(embeddedId)) payload.sourceId = embeddedId;
+        }
+        uiManager.setYouTubePlayerVisible(!!youtubeVideoId(payload));
         if (payload.isSynthetic) {
           audioEngine.generateSyntheticTrack();
           uiManager.updateTrackUI(payload.name || 'Neon Groove Synthwave', 20, payload.thumbnail || '');
         } else {
+          if (youtubeVideoId(payload)) this.socketClient?.cloudMesh?.loadTrackBuffer(payload);
           uiManager.updateTrackUI(payload.name || 'Pilih trek lagu', payload.duration || 0, payload.thumbnail || '');
           if (payload.name && audioEngine.currentTrackName && audioEngine.currentTrackName !== payload.name) {
             audioEngine.stopLocalPlayback();
@@ -187,6 +378,7 @@ class App {
         break;
 
       case 'SYNTHETIC_TRACK_REQUESTED':
+        uiManager.setYouTubePlayerVisible(false);
         audioEngine.generateSyntheticTrack();
         uiManager.updateTrackUI(payload.name || 'Neon Groove Synthwave', 20, payload.thumbnail || '');
         uiManager.renderQueue(uiManager.cachedQueue);
@@ -240,6 +432,26 @@ class App {
 
       case 'SCHEDULED_PLAY':
       case 'PLAYBACK_SCHEDULED':
+        {
+          const track = payload.track || socketClient?.cloudMesh?.lastKnownTrack;
+          if (track && youtubeVideoId(track)) {
+            socketClient.cloudMesh.lastKnownTrack = track;
+            uiManager.setView(socketClient.roomId ? 'room' : 'player');
+            uiManager.setYouTubePlayerVisible(true);
+            uiManager.updateTrackUI(track.name || 'YouTube video', track.duration || 0, track.thumbnail || '');
+            uiManager.renderQueue(uiManager.cachedQueue);
+            this.youtubePlayer.playAt(
+              youtubeVideoId(track),
+              payload.targetServerTime || payload.scheduledServerTime,
+              payload.startOffsetSec || 0
+            ).catch(error => {
+              const status = getYouTubePlaybackError(error, youtubeVideoId(track));
+              uiManager.setYouTubePlayerStatus(status.message, { retryable: status.retryable, sourceUrl: status.sourceUrl });
+              socketClient.cloudMesh.broadcastReadiness('FAILED', track.id || '', 'youtube');
+            });
+            break;
+          }
+        }
         if (payload.track) {
           if (this.socketClient?.cloudMesh) {
             this.socketClient.cloudMesh.lastKnownTrack = payload.track;
@@ -285,6 +497,14 @@ class App {
 
       case 'PAUSED':
       case 'PLAYBACK_PAUSED':
+        if (youtubeVideoId(socketClient?.cloudMesh?.lastKnownTrack)) {
+          const offset = payload.currentOffsetSec ?? this.youtubePlayer.getCurrentTime();
+          this.youtubePlayer.pause();
+          audioEngine.pauseOffsetSec = offset;
+          this.youtubePlayer.seekTo(offset);
+          uiManager.setPlayState(false);
+          break;
+        }
         audioEngine.stopLocalPlayback();
         audioEngine.pauseOffsetSec = payload.currentOffsetSec || 0;
         uiManager.setPlayState(false);
@@ -308,7 +528,7 @@ class App {
   }
 }
 
-window.addEventListener('DOMContentLoaded', () => {
+export function startApp() {
   const app = new App();
   app.init();
   window.__ryncApp = app;
@@ -321,4 +541,5 @@ window.addEventListener('DOMContentLoaded', () => {
       });
     });
   }
-});
+  return app;
+}

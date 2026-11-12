@@ -1,59 +1,58 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, chmod, readFile, rm, writeFile } from 'node:fs/promises';
-import { once } from 'node:events';
-import { Writable } from 'node:stream';
-import os from 'node:os';
-import path from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
 import handler from '../api/yt-stream.js';
 
-describe('YouTube stream API', () => {
-  let tempDir;
+async function callStream(query) {
+  let statusCode = 0;
+  let body;
+  let redirectUrl;
+  const res = {
+    setHeader() {},
+    status(code) { statusCode = code; return this; },
+    json(value) { body = value; return this; },
+    redirect(url) { redirectUrl = url; statusCode = 302; return this; },
+    end() { return this; }
+  };
+  await handler({ method: 'GET', query }, res);
+  return { statusCode, body, redirectUrl };
+}
 
-  afterEach(async () => {
+describe('YouTube stream API', () => {
+  it('routes supported direct audio URLs through the SSRF-protected range proxy', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await callStream({ url: 'https://audio.example.test/song.mp3' });
+
+    expect(result.redirectUrl).toBe('/api/stream?url=https%3A%2F%2Faudio.example.test%2Fsong.mp3');
+    expect(fetchMock).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
-    vi.unstubAllEnvs();
-    if (tempDir) await rm(tempDir, { recursive: true, force: true });
-    tempDir = null;
   });
 
-  it('uses yt-dlp Android audio instead of replacing it with Android VR', async () => {
-    tempDir = await mkdtemp(path.join(os.tmpdir(), 'rync-yt-stream-'));
-    const executable = path.join(tempDir, 'yt-dlp');
-    const argsFile = path.join(tempDir, 'args.txt');
-    await writeFile(executable, `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(process.env.ARGS_FILE, process.argv.slice(2).join('\\n'));\nconsole.log("Test title")\nconsole.log("https://cdn.test/android-audio")\n`);
-    await chmod(executable, 0o755);
-    vi.stubEnv('PATH', `${tempDir}:${process.env.PATH}`);
-    vi.stubEnv('ARGS_FILE', argsFile);
+  it('requires the official YouTube embedded player for YouTube video ids', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await callStream({ id: 'dQw4w9WgXcQ' });
 
-    const requestedUrls = [];
-    const audio = Buffer.from([1, 2, 3, 4]);
-    vi.stubGlobal('fetch', vi.fn(async url => {
-      requestedUrls.push(String(url));
-      if (String(url).includes('/youtubei/')) {
-        return new Response(JSON.stringify({
-          videoDetails: { title: 'Android VR title' },
-          streamingData: { adaptiveFormats: [{ mimeType: 'audio/mp4', url: 'https://cdn.test/android-vr-audio' }] }
-        }), { status: 200, headers: { 'content-type': 'application/json' } });
-      }
-      return new Response(audio, { status: 200, headers: { 'content-type': 'audio/mp4' } });
-    }));
+    expect(result.statusCode).toBe(410);
+    expect(result.body).toMatchObject({ error: 'EMBED_PLAYER_REQUIRED', videoId: 'dQw4w9WgXcQ' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
 
-    const chunks = [];
-    const res = new Writable({ write(chunk, _encoding, callback) { chunks.push(Buffer.from(chunk)); callback(); } });
-    res.statusCode = 200;
-    res.setHeader = () => {};
-    res.status = code => { res.statusCode = code; return res; };
-    res.json = body => { res.end(JSON.stringify(body)); return res; };
-    res.redirect = url => { res.statusCode = 302; res.end(url); return res; };
+  it.each([
+    ['YouTube Live', 'https://www.youtube.com/live/dQw4w9WgXcQ'],
+    ['YouTube Music', 'https://music.youtube.com/watch?v=dQw4w9WgXcQ'],
+    ['short links', 'https://youtu.be/dQw4w9WgXcQ']
+  ])('routes %s URLs to the official embed player', async (_label, url) => {
+    const result = await callStream({ url });
 
-    const finished = once(res, 'finish');
-    await handler({ method: 'GET', query: { id: 'dQw4w9WgXcQ' } }, res);
-    await finished;
+    expect(result.statusCode).toBe(410);
+    expect(result.body).toMatchObject({ error: 'EMBED_PLAYER_REQUIRED', videoId: 'dQw4w9WgXcQ' });
+  });
 
-    const args = await readFile(argsFile, 'utf8');
-    expect(args).toContain('--extractor-args');
-    expect(args).toContain('youtube:player_client=android');
-    expect(requestedUrls).toEqual(['https://cdn.test/android-audio']);
-    expect(Buffer.concat(chunks)).toEqual(audio);
+  it('does not treat a YouTube lookalike domain as a YouTube video URL', async () => {
+    const result = await callStream({ url: 'https://youtube.com.attacker.test/live/dQw4w9WgXcQ' });
+
+    expect(result.statusCode).toBe(302);
+    expect(result.redirectUrl).toContain('/api/stream?url=');
   });
 });
