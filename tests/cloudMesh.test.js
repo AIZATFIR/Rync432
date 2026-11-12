@@ -2116,10 +2116,11 @@ describe('CloudMesh audio transfer', () => {
   it('applies a room snapshot once for a late joiner', () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));
-    mesh.loadTrackBuffer = vi.fn();
+    mesh.broadcastReadiness = vi.fn();
+    mesh.updateLoadingState = vi.fn();
     const snapshot = {
-      track: { id: 'track-new', name: 'New track' },
-      queue: [{ id: 'track-new', name: 'New track' }],
+      track: { id: 'track-new', name: 'New track', sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ' },
+      queue: [{ id: 'track-new', name: 'New track', sourceType: 'youtube', sourceId: 'dQw4w9WgXcQ' }],
       queueRevision: 0,
       state: 'PLAYING',
       targetServerTime: Date.now() - 5000,
@@ -2131,8 +2132,10 @@ describe('CloudMesh audio transfer', () => {
 
     expect(events.filter(event => event.type === 'TRACK_METADATA')).toHaveLength(1);
     expect(events.filter(event => event.type === 'QUEUE_UPDATED')).toHaveLength(1);
+    expect(events.filter(event => event.type === 'YOUTUBE_TRACK_REQUESTED')).toHaveLength(1);
     expect(events.filter(event => event.type === 'SCHEDULED_PLAY')).toHaveLength(1);
     expect(events.find(event => event.type === 'SCHEDULED_PLAY').payload.startOffsetSec).toBe(12);
+    expect(events.find(event => event.type === 'SCHEDULED_PLAY').payload.targetServerTime).toBe(snapshot.targetServerTime);
   });
 
   it('retries an uncached room track when the server adds its relay source', () => {
