@@ -1251,6 +1251,8 @@ export class UIManager {
       return [...cached.results];
     }
 
+    Promise.resolve(this.app?.youtubePlayer?.preload?.()).catch(() => {});
+
     const controller = new AbortController();
     let timedOut = false;
     const abortFromCaller = () => controller.abort();

@@ -103,6 +103,18 @@ describe('Rync page structure', () => {
   });
 });
 
+describe('YouTube search startup', () => {
+  it('preloads the official iframe API in parallel with a cache-miss search', async () => {
+    const youtubePlayer = { preload: vi.fn().mockResolvedValue(true) };
+    const ui = new UIManager({ youtubePlayer });
+    ui.musicSourceManager = { search: vi.fn().mockResolvedValue([]) };
+
+    await expect(ui.fetchYoutubeSearch('test query')).resolves.toEqual([]);
+
+    expect(youtubePlayer.preload).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('YouTube search queue UI', () => {
   it('restores the saved theme and persists changes from the settings toggle', () => {
     const attributes = {};
