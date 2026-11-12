@@ -624,8 +624,12 @@ describe('CloudMesh audio transfer', () => {
     await expect(mesh.addQueueItems([{ id: 'mine', name: 'Mine' }])).resolves.toBe(true);
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body).expectedQueueRevision).toBe(2);
-    expect(JSON.parse(fetchMock.mock.calls[1][1].body).expectedQueueRevision).toBe(3);
+    const firstAttempt = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const retry = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(firstAttempt.expectedQueueRevision).toBe(2);
+    expect(retry.expectedQueueRevision).toBe(3);
+    expect(firstAttempt.clientMutationId).toMatch(/^qm_[A-Za-z0-9]+_[A-Za-z0-9]+$/);
+    expect(retry.clientMutationId).toBe(firstAttempt.clientMutationId);
     expect(mesh.lastKnownQueue.map(item => item.id)).toEqual(['other', 'mine']);
   });
 
@@ -1041,8 +1045,11 @@ describe('CloudMesh audio transfer', () => {
     mesh.addToQueue({ id: 'new-track', name: 'New track' });
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
 
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body).expectedQueueRevision).toBe(7);
-    expect(JSON.parse(fetchMock.mock.calls[1][1].body).expectedQueueRevision).toBe(8);
+    const firstAttempt = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const retry = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(firstAttempt.expectedQueueRevision).toBe(7);
+    expect(retry.expectedQueueRevision).toBe(8);
+    expect(retry.clientMutationId).toBe(firstAttempt.clientMutationId);
     expect(mesh.queueRevision).toBe(9);
     expect(mesh.lastKnownQueue.map(item => item.id)).toEqual(['from-host', 'new-track']);
     expect(events.some(event => event.type === 'QUEUE_SYNC_ERROR')).toBe(false);
@@ -1126,7 +1133,9 @@ describe('CloudMesh audio transfer', () => {
     const result = await mesh.clearQueue(['current', 'next']);
 
     expect(result.removed).toEqual([{ item: { id: 'next' }, index: 1 }]);
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body).expectedQueueRevision).toBe(0);
+    const request = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(request.expectedQueueRevision).toBe(0);
+    expect(request.clientMutationId).toMatch(/^qm_[A-Za-z0-9]+_[A-Za-z0-9]+$/);
     expect(mesh.lastKnownQueue.map(item => item.id)).toEqual(['current']);
     expect(mesh.deletedQueueIds.has('next')).toBe(true);
     expect(events.some(event => event.type === 'QUEUE_UPDATED')).toBe(true);

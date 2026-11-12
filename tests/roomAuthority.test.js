@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import roomHandler from '../api/room.js';
 
+let roomSequence = 0;
+const createTestRoomId = () => `T${(++roomSequence).toString(36).toUpperCase().padStart(3, '0')}`;
+
 async function callRoom(action, body) {
   let statusCode = 0;
   let result;
@@ -17,7 +20,7 @@ async function callRoom(action, body) {
 
 describe('room authority', () => {
   it('keeps duplicate tracks as distinct queue items and targets mutations by queue item id', async () => {
-    const roomId = `D${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     const first = { id: 'same-track', queueItemId: 'queue-first', name: 'Same song' };
     const second = { id: 'same-track', queueItemId: 'queue-second', name: 'Same song' };
@@ -47,8 +50,52 @@ describe('room authority', () => {
     expect(removed.body.queue.map(item => item.queueItemId)).toEqual(['queue-second']);
   });
 
+  it('acknowledges a retried queue mutation without applying it twice', async () => {
+    const roomId = createTestRoomId();
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    const mutation = {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken,
+      clientMutationId: 'mutation-reorder-001',
+      queue: [{ id: 'track-b' }, { id: 'track-a' }]
+    };
+    await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
+      { id: 'track-a', name: 'A' }, { id: 'track-b', name: 'B' }
+    ] });
+    const applied = await callRoom('reorder_queue', { ...mutation, expectedQueueRevision: 1 });
+    const retried = await callRoom('reorder_queue', { ...mutation, expectedQueueRevision: 1 });
+
+    expect(applied.statusCode).toBe(200);
+    expect(retried.statusCode).toBe(200);
+    expect(retried.body.duplicate).toBe(true);
+    expect(retried.body.queueRevision).toBe(applied.body.queueRevision);
+    expect(retried.body.queue.map(item => item.id)).toEqual(['track-b', 'track-a']);
+  });
+
+  it('rejects reusing a queue mutation id for a different payload', async () => {
+    const roomId = createTestRoomId();
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
+      { id: 'track-a', name: 'A' }, { id: 'track-b', name: 'B' }
+    ] });
+    const first = await callRoom('reorder_queue', {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken,
+      clientMutationId: 'mutation-reorder-002', expectedQueueRevision: 1,
+      queue: [{ id: 'track-b' }, { id: 'track-a' }]
+    });
+    const collision = await callRoom('reorder_queue', {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken,
+      clientMutationId: 'mutation-reorder-002', expectedQueueRevision: 2,
+      queue: [{ id: 'track-a' }, { id: 'track-b' }]
+    });
+
+    expect(first.statusCode).toBe(200);
+    expect(collision.statusCode).toBe(409);
+    expect(collision.body.error).toBe('MUTATION_ID_REUSED');
+    expect(collision.body.queue.map(item => item.id)).toEqual(['track-b', 'track-a']);
+  });
+
   it('advances from a legacy current track to the next matching queue item', async () => {
-    const roomId = `L${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
       { id: 'same-track', queueItemId: 'legacy-first', name: 'Same song' },
@@ -63,8 +110,29 @@ describe('room authority', () => {
     expect(next.body.track.queueItemId).toBe('legacy-second');
   });
 
+  it('does not skip a second queue item when the same next-track mutation is retried', async () => {
+    const roomId = createTestRoomId();
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
+      { id: 'first', name: 'First' }, { id: 'second', name: 'Second' }, { id: 'third', name: 'Third' }
+    ] });
+    await callRoom('track', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, track: { id: 'first', name: 'First' } });
+    const mutation = {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken,
+      clientMutationId: 'mutation-next-track-001', automatic: false
+    };
+
+    const advanced = await callRoom('next_track', mutation);
+    const retried = await callRoom('next_track', mutation);
+
+    expect(advanced.body.track.id).toBe('second');
+    expect(retried.statusCode).toBe(200);
+    expect(retried.body.duplicate).toBe(true);
+    expect(retried.body.track.id).toBe('second');
+  });
+
   it('stores only validated audio routes for room peers', async () => {
-    const roomId = `A${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
 
@@ -78,7 +146,7 @@ describe('room authority', () => {
   });
 
   it('ignores participant poll data as authoritative room state', async () => {
-    const roomId = `A${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
 
@@ -96,7 +164,7 @@ describe('room authority', () => {
   });
 
   it('keeps the host queue order when a poll carries a reorder', async () => {
-    const roomId = `R${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
     await callRoom('add_queue', { roomId, peerId: 'guest-peer', items: [
@@ -122,7 +190,7 @@ describe('room authority', () => {
   });
 
   it('increments queue revisions and returns the canonical snapshot for a stale reorder', async () => {
-    const roomId = `J${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
       { id: 'track-a', name: 'A' }, { id: 'track-b', name: 'B' }
@@ -142,7 +210,7 @@ describe('room authority', () => {
   });
 
   it('rejects stale revisions for every queue mutation with the canonical queue', async () => {
-    const roomId = `Q${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
       { id: 'track-a', name: 'A' }, { id: 'track-b', name: 'B' }
@@ -173,7 +241,7 @@ describe('room authority', () => {
   });
 
   it('keeps tracks added by members while preserving the host reordered list', async () => {
-    const roomId = `S${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
     await callRoom('add_queue', { roomId, peerId: 'guest-peer', items: [
@@ -199,7 +267,7 @@ describe('room authority', () => {
   });
 
   it('accepts one idempotent batch of queue additions from a room member', async () => {
-    const roomId = `B${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
 
@@ -215,7 +283,7 @@ describe('room authority', () => {
   });
 
   it('ignores a stale host poll queue snapshot and returns the current room queue', async () => {
-    const roomId = `P${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
     await callRoom('add_queue', { roomId, peerId: 'guest-peer', items: [{ id: 'guest-track', name: 'Guest track' }] });
@@ -239,7 +307,7 @@ describe('room authority', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
     try {
-      const roomId = `H${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+      const roomId = createTestRoomId();
       const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
       await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
       await callRoom('play', {
@@ -274,7 +342,7 @@ describe('room authority', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
     try {
-      const roomId = `R${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+      const roomId = createTestRoomId();
       await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
       await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
       vi.setSystemTime(Date.now() + 7_999);
@@ -296,7 +364,7 @@ describe('room authority', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
     try {
-      const roomId = `I${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+      const roomId = createTestRoomId();
       const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
       vi.setSystemTime(Date.now() + 11_000);
 
@@ -312,7 +380,7 @@ describe('room authority', () => {
   });
 
   it('preserves a member addition that races with a host reorder', async () => {
-    const roomId = `N${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
     await callRoom('add_queue', { roomId, peerId: 'guest-peer', items: [
@@ -329,7 +397,7 @@ describe('room authority', () => {
   });
 
   it('does not resurrect a removed item from a stale host reorder snapshot', async () => {
-    const roomId = `P${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
       { id: 'track-a', name: 'A' }, { id: 'track-b', name: 'B' }
@@ -345,7 +413,7 @@ describe('room authority', () => {
   });
 
   it('clears only requested upcoming tracks and returns their original positions for undo', async () => {
-    const roomId = `T${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
       { id: 'current', name: 'Current' },
@@ -364,7 +432,7 @@ describe('room authority', () => {
   });
 
   it('clears and restores every item in a queue at its configured maximum', async () => {
-    const roomId = `F${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     const fullQueue = Array.from({ length: 500 }, (_, index) => ({ id: `track-${index}`, name: `Track ${index}` }));
     await callRoom('add_queue', { roomId, peerId: 'host-peer', items: fullQueue });
@@ -385,7 +453,7 @@ describe('room authority', () => {
   });
 
   it('rejects a guest clear request', async () => {
-    const roomId = `U${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
 
     const result = await callRoom('clear_queue', { roomId, peerId: 'guest-peer', queueIds: ['track-a'] });
@@ -394,7 +462,7 @@ describe('room authority', () => {
   });
 
   it('restores cleared tracks into the current queue without dropping new additions', async () => {
-    const roomId = `V${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
       { id: 'current', name: 'Current' },
@@ -413,7 +481,7 @@ describe('room authority', () => {
   });
 
   it('does not let a spoofed host peer poll overwrite the host membership or register unknown peers', async () => {
-    const roomId = `Z${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
 
     const spoof = await callRoom('poll', {
@@ -429,7 +497,7 @@ describe('room authority', () => {
   });
 
   it('caps rooms at five active devices and rejects extra joins', async () => {
-    const roomId = `M${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     for (let index = 1; index <= 4; index++) {
       await callRoom('join', { roomId, peerId: `guest-${index}`, deviceName: `Guest ${index}` });
@@ -442,7 +510,7 @@ describe('room authority', () => {
   });
 
   it('lets a returning member refresh its stale presence without rejoining', async () => {
-    const roomId = `D${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
     globalThis.__rync_rooms.get(roomId).peers['guest-peer'].lastSeen = Date.now() - 15000;
@@ -454,7 +522,7 @@ describe('room authority', () => {
   });
 
   it('accepts only bounded signaling from one room member to another', async () => {
-    const roomId = `G${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
 
@@ -468,7 +536,7 @@ describe('room authority', () => {
   });
 
   it('delivers guest control requests to the host through the room poll queue', async () => {
-    const roomId = `C${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
     const request = {
@@ -492,7 +560,7 @@ describe('room authority', () => {
   });
 
   it('requires the host token to leave and freezes playback for remaining guests', async () => {
-    const roomId = `H${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
     await callRoom('play', {
@@ -516,7 +584,7 @@ describe('room authority', () => {
   });
 
   it('rejects queue additions atomically when they exceed the room limit', async () => {
-    const roomId = `K${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     const fullQueue = Array.from({ length: 500 }, (_, index) => ({ id: `track-${index}`, name: `Track ${index}` }));
     await callRoom('add_queue', { roomId, peerId: 'host-peer', items: fullQueue });
@@ -533,7 +601,7 @@ describe('room authority', () => {
   });
 
   it('rejects oversized host snapshots before changing room state', async () => {
-    const roomId = `B${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     const oversizedQueue = Array.from({ length: 501 }, (_, index) => ({ id: `track-${index}`, name: `Track ${index}` }));
 
@@ -547,7 +615,7 @@ describe('room authority', () => {
   });
 
   it('does not let queue undo exceed the room limit', async () => {
-    const roomId = `E${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     const fullQueue = Array.from({ length: 500 }, (_, index) => ({ id: `track-${index}`, name: `Track ${index}` }));
     await callRoom('add_queue', { roomId, peerId: 'host-peer', items: fullQueue });
@@ -562,7 +630,7 @@ describe('room authority', () => {
   });
 
   it('does not let uploaded audio bypass the queue limit', async () => {
-    const roomId = `C${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     const fullQueue = Array.from({ length: 500 }, (_, index) => ({ id: `track-${index}`, name: `Track ${index}` }));
     await callRoom('add_queue', { roomId, peerId: 'host-peer', items: fullQueue });
@@ -577,7 +645,7 @@ describe('room authority', () => {
   });
 
   it('stores a host uploaded local file as a shareable room queue item', async () => {
-    const roomId = `L${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     const uploaded = await callRoom('upload_audio', {
       roomId,
@@ -610,7 +678,7 @@ describe('room authority', () => {
   });
 
   it('removes relay audio bytes when their inactive room expires', async () => {
-    const roomId = `T${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     const uploaded = await callRoom('upload_audio', {
       roomId,
@@ -631,7 +699,7 @@ describe('room authority', () => {
   });
 
   it('deletes the previous relay blob when a room track is uploaded again', async () => {
-    const roomId = `U${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     const first = await callRoom('upload_audio', {
       roomId,
@@ -660,7 +728,7 @@ describe('room authority', () => {
   });
 
   it('rejects room audio uploads above the relay size limit', async () => {
-    const roomId = `B${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     const oversized = await callRoom('upload_audio', {
       roomId,
@@ -674,7 +742,7 @@ describe('room authority', () => {
   });
 
   it('does not return another uploaded file when an audio id is missing or unknown', async () => {
-    const roomId = `F${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('upload_audio', {
       roomId, peerId: 'host-peer', hostToken: created.body.hostToken,
@@ -688,7 +756,7 @@ describe('room authority', () => {
   });
 
   it('does not create an empty room from an unauthenticated poll', async () => {
-    const roomId = `0${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
 
     const result = await callRoom('poll', { roomId, peerId: 'guest-peer', isHost: true });
 
@@ -697,7 +765,7 @@ describe('room authority', () => {
   });
 
   it('returns the host token only at creation and restores host role on authenticated rejoin', async () => {
-    const roomId = `Y${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'old-host', deviceName: 'Host' });
     await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
 
@@ -715,7 +783,7 @@ describe('room authority', () => {
   });
 
   it('rejects host controls when a guest spoofs the host peer id', async () => {
-    const roomId = `W${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
 
@@ -728,7 +796,7 @@ describe('room authority', () => {
   });
 
   it('authorizes host controls with the private token returned at room creation', async () => {
-    const roomId = `X${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
 
@@ -742,7 +810,7 @@ describe('room authority', () => {
   });
 
   it('rejects participant requests to advance the room track', async () => {
-    const roomId = `A${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
 
@@ -752,7 +820,7 @@ describe('room authority', () => {
   });
 
   it('adding a queue item does not select it as the current track', async () => {
-    const roomId = `A${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
 
     await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
@@ -769,7 +837,7 @@ describe('room authority', () => {
   });
 
   it('preserves validated YouTube provider ids in shared queue items', async () => {
-    const roomId = `Y${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     const added = await callRoom('add_queue', {
       roomId,
@@ -788,7 +856,7 @@ describe('room authority', () => {
   });
 
   it('accepts supported direct and public audio sources in a room queue', async () => {
-    const roomId = `U${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
 
     const added = await callRoom('add_queue', {
@@ -825,7 +893,7 @@ describe('room authority', () => {
   });
 
   it('rejects unsafe audio URLs for shared direct sources', async () => {
-    const roomId = `V${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
 
     for (const [id, audioUrl] of [
@@ -858,7 +926,7 @@ describe('room authority', () => {
   });
 
   it('prevents a room member from changing another peer device state', async () => {
-    const roomId = `M${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
 
@@ -872,14 +940,14 @@ describe('room authority', () => {
   });
 
   it('starts a room without a track in READY state', async () => {
-    const roomId = `R${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
 
     expect(created.body.room.peers['host-peer']).toMatchObject({ readiness: 'READY', isAudioLoading: false });
   });
 
   it('stores and returns a validated peer readiness state', async () => {
-    const roomId = `R${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
 
@@ -895,7 +963,7 @@ describe('room authority', () => {
   });
 
   it('supports shared repeat-one for automatic track advance', async () => {
-    const roomId = `Q${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
       { id: 'current', name: 'Current' }, { id: 'next', name: 'Next' }
@@ -910,7 +978,7 @@ describe('room authority', () => {
   });
 
   it('stops at queue end when repeat is off', async () => {
-    const roomId = `R${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
       { id: 'first', name: 'First' }, { id: 'last', name: 'Last' }
@@ -924,7 +992,7 @@ describe('room authority', () => {
   });
 
   it('wraps or shuffles at queue end according to shared playback options', async () => {
-    const roomId = `S${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
       { id: 'current', name: 'Current' }, { id: 'next-a', name: 'Next A' }, { id: 'next-b', name: 'Next B' }
@@ -942,7 +1010,7 @@ describe('room authority', () => {
   });
 
   it('previews the server-selected shuffled item and commits that same prepared item', async () => {
-    const roomId = `P${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
       { id: 'current', name: 'Current' }, { id: 'local-next', name: 'Local', sourceType: 'local-file' }, { id: 'online-next', name: 'Online' }
@@ -967,7 +1035,7 @@ describe('room authority', () => {
   });
 
   it('rejects a prepared track when the ordered queue changes before commit', async () => {
-    const roomId = `Q${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
       { id: 'current', name: 'Current' }, { id: 'first-next', name: 'First next' }, { id: 'other', name: 'Other' }
@@ -989,7 +1057,7 @@ describe('room authority', () => {
   });
 
   it('plays each queued track once before stopping when shuffle is on and repeat is off', async () => {
-    const roomId = `H${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [
       { id: 'first', name: 'First' }, { id: 'second', name: 'Second' }, { id: 'third', name: 'Third' }
@@ -1011,7 +1079,7 @@ describe('room authority', () => {
   });
 
   it('repeats a single item in shuffle mode when repeat-all is enabled', async () => {
-    const roomId = `U${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('add_queue', { roomId, peerId: 'host-peer', items: [{ id: 'only', name: 'Only' }] });
     await callRoom('track', { roomId, peerId: 'host-peer', hostToken: created.body.hostToken, track: { id: 'only', name: 'Only' } });
@@ -1024,7 +1092,7 @@ describe('room authority', () => {
   });
 
   it('restricts shared playback options to the authenticated host', async () => {
-    const roomId = `T${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const roomId = createTestRoomId();
     await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
     await callRoom('join', { roomId, peerId: 'guest-peer', deviceName: 'Guest' });
 

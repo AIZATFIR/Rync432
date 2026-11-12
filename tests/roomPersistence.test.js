@@ -64,21 +64,41 @@ describe('room persistence', () => {
         return payload;
       }
       const created = await call('create', { roomId: 'AB12', peerId: 'host', deviceName: 'Host' });
-      await call('add_queue', { roomId: 'AB12', peerId: 'host', id: 'song-1', name: 'Song One' });
+      await call('add_queue', {
+        roomId: 'AB12', peerId: 'host', deviceName: 'Host', id: 'song-1', queueItemId: 'queue-song-1', name: 'Song One',
+        clientMutationId: 'mutation-restart-001', expectedQueueRevision: 0
+      });
       await call('track', { roomId: 'AB12', peerId: 'host', hostToken: created.hostToken, track: { id: 'song-1', name: 'Song One' } });
-      console.log('saved');
+      console.log(JSON.stringify({ hostToken: created.hostToken }));
     `;
     const readScript = `
       import handler from ${JSON.stringify(moduleUrl)};
-      let payload;
-      const res = { setHeader() {}, status() { return this; }, json(value) { payload = value; return this; } };
-      await handler({ method: 'POST', query: { action: 'join' }, body: { roomId: 'AB12', peerId: 'guest', deviceName: 'Guest' } }, res);
-      console.log(JSON.stringify({ queue: payload.room.queue, track: payload.room.track }));
+      async function call(action, body) {
+        let statusCode = 0; let payload;
+        const res = { setHeader() {}, status(code) { statusCode = code; return this; }, json(value) { payload = value; return this; } };
+        await handler({ method: 'POST', query: { action }, body }, res);
+        return { statusCode, payload };
+      }
+      const joined = await call('join', {
+        roomId: 'AB12', peerId: 'new-host', deviceName: 'Host', hostToken: process.env.RYNC_TEST_HOST_TOKEN
+      });
+      const retried = await call('add_queue', {
+        roomId: 'AB12', peerId: 'new-host', deviceName: 'Host', queueItemId: 'queue-song-1',
+        id: 'song-1', name: 'Song One', clientMutationId: 'mutation-restart-001', expectedQueueRevision: 0
+      });
+      console.log(JSON.stringify({
+        queue: joined.payload.room.queue,
+        track: joined.payload.room.track,
+        retry: { statusCode: retried.statusCode, error: retried.payload.error, duplicate: retried.payload.duplicate, queueRevision: retried.payload.queueRevision }
+      }));
     `;
 
-    expect(execFileSync(process.execPath, ['--input-type=module', '-e', setupScript], { env: environment, encoding: 'utf8' }).trim()).toBe('saved');
-    const restored = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', readScript], { env: environment, encoding: 'utf8' }));
+    const setup = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', setupScript], { env: environment, encoding: 'utf8' }));
+    const restored = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', readScript], {
+      env: { ...environment, RYNC_TEST_HOST_TOKEN: setup.hostToken }, encoding: 'utf8'
+    }));
     expect(restored.queue).toEqual([expect.objectContaining({ id: 'song-1', name: 'Song One' })]);
     expect(restored.track).toEqual({ id: 'song-1', name: 'Song One' });
+    expect(restored.retry).toEqual({ statusCode: 200, duplicate: true, queueRevision: 1 });
   });
 });

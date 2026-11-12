@@ -10,10 +10,15 @@ const MAX_ROOM_PEERS = 5;
 const AUDIO_ROUTES = new Set(['unknown', 'p2p', 'relay', 'direct', 'youtube', 'local', 'cache']);
 const HOST_STALE_MS = 8_000;
 const MAX_QUEUE_ITEMS = 500;
+const MAX_QUEUE_MUTATION_RECEIPTS = 32;
+const QUEUE_MUTATION_RECEIPT_TTL_MS = 10 * 60 * 1000;
 const MAX_SIGNAL_BYTES = 64 * 1024;
 const MAX_PENDING_SIGNALS = 256;
 const SIGNAL_TTL_MS = 30 * 1000;
 const ROOM_SOURCE_TYPES = new Set(['youtube', 'local-file', 'direct-url', 'public-audio']);
+const QUEUE_MUTATION_ACTIONS = new Set([
+  'add_queue', 'reorder_queue', 'play_next', 'play_queue_item', 'remove_queue', 'clear_queue', 'restore_queue', 'next_track'
+]);
 
 function isSafeSharedAudioUrl(value) {
   if (typeof value !== 'string' || !value || value.length > 4096) return false;
@@ -41,6 +46,11 @@ function isValidRoomQueueSource(item) {
 
 const queueRevisionOf = room => Number.isSafeInteger(room?.queueRevision) ? room.queueRevision : 0;
 const queueItemKey = item => item?.queueItemId || item?.id;
+const canonicalizeJson = value => Array.isArray(value)
+  ? value.map(canonicalizeJson)
+  : value && typeof value === 'object'
+    ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonicalizeJson(value[key])]))
+    : value;
 const sameQueueItem = (item, track) => item && track && (item.queueItemId && track.queueItemId
   ? item.queueItemId === track.queueItemId
   : item.id === track.id);
@@ -152,14 +162,20 @@ export const config = {
 
 export default async function handler(req, res) {
   const sendJson = typeof res.json === 'function' ? res.json.bind(res) : null;
-  if (roomPersistence && sendJson) {
+  let queueMutationReceiptWriter = null;
+  if (sendJson) {
     res.json = payload => {
-      try {
-        roomPersistence.save(rooms);
-      } catch (error) {
-        console.error('Room state could not be saved to disk');
-        res.status(507);
-        return sendJson({ success: false, error: 'ROOM_STORAGE_UNAVAILABLE' });
+      if (queueMutationReceiptWriter && payload?.success === true && payload.duplicate !== true) {
+        queueMutationReceiptWriter(payload);
+      }
+      if (roomPersistence) {
+        try {
+          roomPersistence.save(rooms);
+        } catch (error) {
+          console.error('Room state could not be saved to disk');
+          res.status(507);
+          return sendJson({ success: false, error: 'ROOM_STORAGE_UNAVAILABLE' });
+        }
       }
       return sendJson(payload);
     };
@@ -202,6 +218,67 @@ export default async function handler(req, res) {
   const requireHost = (room, token = body.hostToken) => {
     if (room && peerId && room.hostId === peerId && hostTokenMatches(room, token)) return true;
     res.status(403).json({ success: false, error: 'HOST_ONLY' });
+    return false;
+  };
+  const prepareQueueMutation = room => {
+    if (!QUEUE_MUTATION_ACTIONS.has(action) || body.clientMutationId === undefined) return false;
+    const clientMutationId = body.clientMutationId;
+    if (typeof clientMutationId !== 'string' || !/^[A-Za-z0-9_-]{8,128}$/.test(clientMutationId)) {
+      res.status(400).json({ success: false, error: 'INVALID_CLIENT_MUTATION_ID' });
+      return true;
+    }
+
+    const mutationBody = { ...body };
+    ['clientMutationId', 'expectedQueueRevision', 'hostToken', 'roomId', 'peerId'].forEach(key => delete mutationBody[key]);
+    const fingerprint = createHash('sha256').update(JSON.stringify(canonicalizeJson({ action, body: mutationBody }))).digest('hex');
+    const receipts = (room.queueMutationReceipts || [])
+      .filter(receipt => now - receipt.appliedAt <= QUEUE_MUTATION_RECEIPT_TTL_MS);
+    room.queueMutationReceipts = receipts;
+    const existing = receipts.find(receipt => receipt.clientMutationId === clientMutationId);
+    if (existing) {
+      if (existing.fingerprint !== fingerprint || existing.action !== action) {
+        res.status(409).json({
+          success: false, error: 'MUTATION_ID_REUSED',
+          queue: room.queue || [], queueRevision: queueRevisionOf(room)
+        });
+        return true;
+      }
+
+      const response = {
+        success: true,
+        duplicate: true,
+        clientMutationId,
+        queue: room.queue || [],
+        queueRevision: queueRevisionOf(room)
+      };
+      if (action === 'clear_queue') response.removed = existing.removed || [];
+      if (action === 'play_queue_item') {
+        response.track = room.track;
+        response.state = room.state;
+        response.targetServerTime = room.targetServerTime;
+        response.startOffsetSec = room.startOffsetSec;
+      }
+      if (action === 'next_track') {
+        response.track = room.track;
+        response.state = room.state;
+        response.targetServerTime = room.targetServerTime;
+        response.startOffsetSec = room.startOffsetSec;
+      }
+      if (action === 'add_queue') {
+        response.track = room.track;
+        response.state = room.state;
+        response.targetServerTime = room.targetServerTime;
+      }
+      res.status(200).json(response);
+      return true;
+    }
+
+    queueMutationReceiptWriter = response => {
+      response.clientMutationId = clientMutationId;
+      const receipt = { peerId, clientMutationId, action, fingerprint, appliedAt: now };
+      if (action === 'clear_queue') receipt.removed = response.removed || [];
+      room.queueMutationReceipts = [...receipts, receipt].slice(-MAX_QUEUE_MUTATION_RECEIPTS);
+    };
     return false;
   };
 
@@ -618,6 +695,7 @@ export default async function handler(req, res) {
     const room = rooms.get(roomId);
     if (!room) return res.status(404).json({ success: false, error: 'ROOM_NOT_FOUND' });
     if (!peerId || !room.peers?.[peerId]) return res.status(403).json({ success: false, error: 'ROOM_MEMBER_REQUIRED' });
+    if (prepareQueueMutation(room)) return;
     if (!room.queue) room.queue = [];
     if (!checkQueueRevision(room, body, res)) return;
     const previousQueueSnapshot = JSON.stringify(room.queue);
@@ -711,6 +789,7 @@ export default async function handler(req, res) {
   if (action === 'reorder_queue') {
     const room = rooms.get(roomId);
     if (!requireHost(room, body.hostToken)) return;
+    if (prepareQueueMutation(room)) return;
     if (!checkQueueRevision(room, body, res)) return;
     if (room && Array.isArray(body.queue)) {
       const previousQueueSnapshot = JSON.stringify(room.queue || []);
@@ -741,6 +820,7 @@ export default async function handler(req, res) {
   if (action === 'play_next') {
     const room = rooms.get(roomId);
     if (!requireHost(room, body.hostToken)) return;
+    if (prepareQueueMutation(room)) return;
     if (!checkQueueRevision(room, body, res)) return;
     if (room && room.queue) {
       const qId = body.queueId;
@@ -762,6 +842,7 @@ export default async function handler(req, res) {
   if (action === 'play_queue_item') {
     const room = rooms.get(roomId);
     if (!requireHost(room, body.hostToken)) return;
+    if (prepareQueueMutation(room)) return;
     if (!checkQueueRevision(room, body, res)) return;
     if (room && room.queue) {
       const qId = body.queueId;
@@ -790,6 +871,7 @@ export default async function handler(req, res) {
   if (action === 'remove_queue') {
     const room = rooms.get(roomId);
     if (!requireHost(room, body.hostToken)) return;
+    if (prepareQueueMutation(room)) return;
     if (!checkQueueRevision(room, body, res)) return;
     if (room && room.queue) {
       const previousQueueSnapshot = JSON.stringify(room.queue);
@@ -805,6 +887,7 @@ export default async function handler(req, res) {
   if (action === 'clear_queue') {
     const room = rooms.get(roomId);
     if (!requireHost(room, body.hostToken)) return;
+    if (prepareQueueMutation(room)) return;
     if (!checkQueueRevision(room, body, res)) return;
     if (!Array.isArray(body.queueIds) || body.queueIds.length > MAX_QUEUE_ITEMS
       || body.queueIds.some(id => typeof id !== 'string' || id.length > 160)) {
@@ -829,6 +912,7 @@ export default async function handler(req, res) {
   if (action === 'restore_queue') {
     const room = rooms.get(roomId);
     if (!requireHost(room, body.hostToken)) return;
+    if (prepareQueueMutation(room)) return;
     if (!checkQueueRevision(room, body, res)) return;
     if (!Array.isArray(body.removed) || body.removed.length > MAX_QUEUE_ITEMS
       || body.removed.some(entry => !entry?.item?.id || !Number.isInteger(entry.index) || entry.index < 0)) {
@@ -874,6 +958,7 @@ export default async function handler(req, res) {
           state: room.state
         });
       }
+      if (prepareQueueMutation(room)) return;
       if (selection.preparedTrackChanged) {
         return res.status(409).json({
           success: false,

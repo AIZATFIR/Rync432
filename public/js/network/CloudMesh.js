@@ -30,6 +30,7 @@ const resolveQueueItemKey = (queue, id) => {
   return matches.length === 1 ? queueItemKey(matches[0]) : id;
 };
 const createQueueItemId = () => `qi_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+const createQueueMutationId = () => `qm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 const createSignalId = () => `sig_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 
 async function fetchRoomJoin(url, options) {
@@ -1120,6 +1121,7 @@ export class CloudMesh {
   async addQueueItems(tracks) {
     if (!Array.isArray(tracks) || tracks.length === 0) return true;
     const requestRoomId = this.roomId;
+    const clientMutationId = createQueueMutationId();
     const currentQueue = this.lastKnownQueue || [];
     const knownIds = new Set(currentQueue.map(queueItemKey).filter(Boolean));
     const additions = [];
@@ -1161,6 +1163,7 @@ export class CloudMesh {
           roomId: requestRoomId,
           peerId: this.peerId,
           deviceName: this.deviceName,
+          clientMutationId,
           expectedQueueRevision,
           items: additions
         })
@@ -1207,6 +1210,7 @@ export class CloudMesh {
 
   async addToQueue(track) {
     const requestRoomId = this.roomId;
+    const clientMutationId = createQueueMutationId();
     // Optimistic immediate queue update
     const currentQ = this.lastKnownQueue || [];
     const item = {
@@ -1251,6 +1255,7 @@ export class CloudMesh {
           roomId: requestRoomId,
           peerId: this.peerId,
           deviceName: this.deviceName,
+          clientMutationId,
           expectedQueueRevision,
           ...item
         })
@@ -1366,11 +1371,12 @@ export class CloudMesh {
   async playQueueItem(queueId, autoplay = false) {
     if (!this.isHost) return false;
     const requestRoomId = this.roomId;
+    const clientMutationId = createQueueMutationId();
     try {
       const res = await fetchQueueMutation('/api/room?action=play_queue_item', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: requestRoomId, peerId: this.peerId, hostToken: this.hostToken, queueId, expectedQueueRevision: this.queueRevision })
+        body: JSON.stringify({ roomId: requestRoomId, peerId: this.peerId, hostToken: this.hostToken, queueId, clientMutationId, expectedQueueRevision: this.queueRevision })
       });
       const data = await res.json();
       if (this.roomId !== requestRoomId) return false;
@@ -1449,11 +1455,12 @@ export class CloudMesh {
 
   async playNext(queueId) {
     if (!this.isHost) return;
+    const clientMutationId = createQueueMutationId();
     try {
       const res = await fetchQueueMutation('/api/room?action=play_next', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, queueId, expectedQueueRevision: this.queueRevision })
+        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, queueId, clientMutationId, expectedQueueRevision: this.queueRevision })
       });
       const data = await res.json();
       const queueSnapshotCurrent = this.rememberQueueRevision(data);
@@ -1487,6 +1494,7 @@ export class CloudMesh {
   async reorderQueue(newQueue) {
     if (!this.isHost) return;
     const requestRoomId = this.roomId;
+    const clientMutationId = createQueueMutationId();
     const expectedQueueRevision = this.queueRevision;
     const previousQueue = [...(this.lastKnownQueue || [])];
     this.lastQueueReorderTime = Date.now();
@@ -1504,6 +1512,7 @@ export class CloudMesh {
           roomId: requestRoomId,
           peerId: this.peerId,
           hostToken: this.hostToken,
+          clientMutationId,
           queue: newQueue,
           expectedQueueRevision
         })
@@ -1551,6 +1560,7 @@ export class CloudMesh {
   async removeFromQueue(queueId) {
     if (!this.isHost) return;
     const requestRoomId = this.roomId;
+    const clientMutationId = createQueueMutationId();
     const expectedQueueRevision = this.queueRevision;
     let queueSnapshotCurrent = true;
     queueId = resolveQueueItemKey(this.lastKnownQueue || [], queueId);
@@ -1573,6 +1583,7 @@ export class CloudMesh {
           peerId: this.peerId,
           hostToken: this.hostToken,
           queueId,
+          clientMutationId,
           expectedQueueRevision
         })
       });
@@ -1606,6 +1617,7 @@ export class CloudMesh {
   async clearQueue(queueIds) {
     if (!this.isHost || !Array.isArray(queueIds) || queueIds.length === 0) return { removed: [], queue: this.lastKnownQueue || [] };
     const requestRoomId = this.roomId;
+    const clientMutationId = createQueueMutationId();
     const expectedQueueRevision = this.queueRevision;
     let queueSnapshotCurrent = true;
     queueIds = queueIds.map(id => resolveQueueItemKey(this.lastKnownQueue || [], id));
@@ -1623,7 +1635,7 @@ export class CloudMesh {
       const res = await fetchQueueMutation('/api/room?action=clear_queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: requestRoomId, peerId: this.peerId, hostToken: this.hostToken, queueIds: [...ids], expectedQueueRevision })
+        body: JSON.stringify({ roomId: requestRoomId, peerId: this.peerId, hostToken: this.hostToken, queueIds: [...ids], clientMutationId, expectedQueueRevision })
       });
       const data = await res.json();
       if (this.roomId !== requestRoomId) return { removed: [], queue: this.lastKnownQueue || [] };
@@ -1660,12 +1672,13 @@ export class CloudMesh {
   async restoreQueue(removed) {
     if (!this.isHost || !Array.isArray(removed) || removed.length === 0) return false;
     const requestRoomId = this.roomId;
+    const clientMutationId = createQueueMutationId();
     removed.forEach(entry => this.deletedQueueIds.delete(queueItemKey(entry.item)));
     try {
       const res = await fetchQueueMutation('/api/room?action=restore_queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: requestRoomId, peerId: this.peerId, hostToken: this.hostToken, removed, expectedQueueRevision: this.queueRevision })
+        body: JSON.stringify({ roomId: requestRoomId, peerId: this.peerId, hostToken: this.hostToken, removed, clientMutationId, expectedQueueRevision: this.queueRevision })
       });
       const data = await res.json();
       if (this.roomId !== requestRoomId) return false;
@@ -1713,11 +1726,12 @@ export class CloudMesh {
 
   async nextTrack(automatic = false, preparedTrackId = null) {
     if (!this.isHost) return;
+    const clientMutationId = createQueueMutationId();
     try {
       const res = await fetchQueueMutation('/api/room?action=next_track', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, automatic, preparedTrackId: preparedTrackId || undefined })
+        body: JSON.stringify({ roomId: this.roomId, peerId: this.peerId, hostToken: this.hostToken, clientMutationId, automatic, preparedTrackId: preparedTrackId || undefined })
       });
       const data = await res.json();
       const queueSnapshotCurrent = this.rememberQueueRevision(data, this.roomId);
