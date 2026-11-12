@@ -92,6 +92,18 @@ describe('YouTube embedded player adapter', () => {
     expect(instances[0].calls).toContainEqual(['playVideo']);
   });
 
+  it('catches a late room join up to the position implied by the shared start time', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    const instances = installFakePlayer();
+    const player = new YouTubeEmbedPlayer('youtubePlayerContainer');
+
+    await player.playAt('dQw4w9WgXcQ', 5_000, 12);
+
+    expect(instances[0].calls).toContainEqual(['seekTo', 17, true]);
+    expect(instances[0].calls).toContainEqual(['playVideo']);
+  });
+
   it('rejects invalid video ids before constructing a player', async () => {
     const instances = installFakePlayer();
     const player = new YouTubeEmbedPlayer('youtubePlayerContainer');

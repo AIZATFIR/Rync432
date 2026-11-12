@@ -141,16 +141,21 @@ export class YouTubeEmbedPlayer {
     const targetLocalTime = Number.isFinite(targetServerTime)
       ? this.clockSync?.toClientLocalTime?.(targetServerTime) ?? targetServerTime
       : targetServerTime;
+    const playAtTarget = () => {
+      if (requestId !== this.playRequestId) return;
+      const elapsedSeconds = Number.isFinite(targetLocalTime)
+        ? Math.max(0, (Date.now() - targetLocalTime) / 1000)
+        : 0;
+      player.seekTo(Math.max(0, Number(startSeconds) || 0) + elapsedSeconds, true);
+      player.playVideo();
+    };
     if (Number.isFinite(targetLocalTime) && targetLocalTime > Date.now()) {
       this.scheduledPlay = setTimeout(() => {
-        if (requestId !== this.playRequestId) return;
         this.scheduledPlay = null;
-        player.seekTo(Math.max(0, Number(startSeconds) || 0), true);
-        player.playVideo();
+        playAtTarget();
       }, targetLocalTime - Date.now());
     } else {
-      player.seekTo(Math.max(0, Number(startSeconds) || 0), true);
-      player.playVideo();
+      playAtTarget();
     }
   }
 
