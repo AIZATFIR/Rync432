@@ -68,7 +68,15 @@ describe('room persistence', () => {
         roomId: 'AB12', peerId: 'host', deviceName: 'Host', id: 'song-1', queueItemId: 'queue-song-1', name: 'Song One',
         clientMutationId: 'mutation-restart-001', expectedQueueRevision: 0
       });
+      await call('add_queue', {
+        roomId: 'AB12', peerId: 'host', deviceName: 'Host', id: 'song-2', queueItemId: 'queue-song-2', name: 'Song Two',
+        expectedQueueRevision: 1
+      });
       await call('track', { roomId: 'AB12', peerId: 'host', hostToken: created.hostToken, track: { id: 'song-1', name: 'Song One' } });
+      await call('next_track', {
+        roomId: 'AB12', peerId: 'host', hostToken: created.hostToken, automatic: false,
+        clientMutationId: 'mutation-next-restart-001', expectedQueueRevision: 2
+      });
       console.log(JSON.stringify({ hostToken: created.hostToken }));
     `;
     const readScript = `
@@ -86,10 +94,15 @@ describe('room persistence', () => {
         roomId: 'AB12', peerId: 'new-host', deviceName: 'Host', queueItemId: 'queue-song-1',
         id: 'song-1', name: 'Song One', clientMutationId: 'mutation-restart-001', expectedQueueRevision: 0
       });
+      const retriedNext = await call('next_track', {
+        roomId: 'AB12', peerId: 'new-host', hostToken: process.env.RYNC_TEST_HOST_TOKEN, automatic: false,
+        clientMutationId: 'mutation-next-restart-001', expectedQueueRevision: 2
+      });
       console.log(JSON.stringify({
         queue: joined.payload.room.queue,
         track: joined.payload.room.track,
-        retry: { statusCode: retried.statusCode, error: retried.payload.error, duplicate: retried.payload.duplicate, queueRevision: retried.payload.queueRevision }
+        retry: { statusCode: retried.statusCode, error: retried.payload.error, duplicate: retried.payload.duplicate, queueRevision: retried.payload.queueRevision },
+        nextRetry: { statusCode: retriedNext.statusCode, error: retriedNext.payload.error, duplicate: retriedNext.payload.duplicate, track: retriedNext.payload.track?.id }
       }));
     `;
 
@@ -97,8 +110,12 @@ describe('room persistence', () => {
     const restored = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', readScript], {
       env: { ...environment, RYNC_TEST_HOST_TOKEN: setup.hostToken }, encoding: 'utf8'
     }));
-    expect(restored.queue).toEqual([expect.objectContaining({ id: 'song-1', name: 'Song One' })]);
-    expect(restored.track).toEqual({ id: 'song-1', name: 'Song One' });
-    expect(restored.retry).toEqual({ statusCode: 200, duplicate: true, queueRevision: 1 });
+    expect(restored.queue).toEqual([
+      expect.objectContaining({ id: 'song-1', name: 'Song One' }),
+      expect.objectContaining({ id: 'song-2', name: 'Song Two' })
+    ]);
+    expect(restored.track).toEqual(expect.objectContaining({ id: 'song-2', name: 'Song Two' }));
+    expect(restored.retry).toEqual({ statusCode: 200, duplicate: true, queueRevision: 2 });
+    expect(restored.nextRetry).toEqual({ statusCode: 200, duplicate: true, track: 'song-2' });
   });
 });
