@@ -24,6 +24,7 @@ describe('Rync page structure', () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(activeRoom).not.toContain('audioTuningSection');
     expect(settingsModal).toContain('audioTuningSection');
+    expect(html).toContain('<meta name="referrer" content="strict-origin-when-cross-origin">');
   });
 
   it('provides a real Home dashboard with recent playback and music actions', () => {
