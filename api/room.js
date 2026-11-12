@@ -806,7 +806,7 @@ export default async function handler(req, res) {
     const room = rooms.get(roomId);
     if (!requireHost(room, body.hostToken)) return;
     if (!checkQueueRevision(room, body, res)) return;
-    if (!Array.isArray(body.queueIds) || body.queueIds.length > 200
+    if (!Array.isArray(body.queueIds) || body.queueIds.length > MAX_QUEUE_ITEMS
       || body.queueIds.some(id => typeof id !== 'string' || id.length > 160)) {
       return res.status(400).json({ success: false, error: 'INVALID_QUEUE_IDS' });
     }
@@ -830,7 +830,7 @@ export default async function handler(req, res) {
     const room = rooms.get(roomId);
     if (!requireHost(room, body.hostToken)) return;
     if (!checkQueueRevision(room, body, res)) return;
-    if (!Array.isArray(body.removed) || body.removed.length > 200
+    if (!Array.isArray(body.removed) || body.removed.length > MAX_QUEUE_ITEMS
       || body.removed.some(entry => !entry?.item?.id || !Number.isInteger(entry.index) || entry.index < 0)) {
       return res.status(400).json({ success: false, error: 'INVALID_QUEUE_RESTORE' });
     }

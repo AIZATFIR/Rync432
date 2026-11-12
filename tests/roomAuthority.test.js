@@ -363,6 +363,27 @@ describe('room authority', () => {
     expect(result.body.removed.map(entry => [entry.item.id, entry.index])).toEqual([['next-a', 1], ['next-b', 2]]);
   });
 
+  it('clears and restores every item in a queue at its configured maximum', async () => {
+    const roomId = `F${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const created = await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
+    const fullQueue = Array.from({ length: 500 }, (_, index) => ({ id: `track-${index}`, name: `Track ${index}` }));
+    await callRoom('add_queue', { roomId, peerId: 'host-peer', items: fullQueue });
+
+    const cleared = await callRoom('clear_queue', {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken,
+      queueIds: fullQueue.map(item => item.id)
+    });
+    const restored = await callRoom('restore_queue', {
+      roomId, peerId: 'host-peer', hostToken: created.body.hostToken, removed: cleared.body.removed
+    });
+
+    expect(cleared.statusCode).toBe(200);
+    expect(cleared.body.queue).toEqual([]);
+    expect(cleared.body.removed).toHaveLength(500);
+    expect(restored.statusCode).toBe(200);
+    expect(restored.body.queue.map(item => item.id)).toEqual(fullQueue.map(item => item.id));
+  });
+
   it('rejects a guest clear request', async () => {
     const roomId = `U${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
     await callRoom('create', { roomId, peerId: 'host-peer', deviceName: 'Host' });
