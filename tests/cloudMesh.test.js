@@ -1568,6 +1568,20 @@ describe('CloudMesh audio transfer', () => {
     expect(host.getOptimalPollInterval()).toBe(5000);
   });
 
+  it('speeds up HTTP polling while WebRTC negotiation has no MQTT signaling path', () => {
+    vi.stubGlobal('document', { hidden: false });
+    const mesh = new CloudMesh(() => {});
+    mesh.isHost = true;
+    mesh.isMqttConnected = false;
+    mesh.peerConnections.set('guest', { connectionState: 'connecting', signalingState: 'have-local-offer' });
+
+    expect(mesh.getOptimalPollInterval()).toBe(250);
+
+    mesh.peerConnections.get('guest').connectionState = 'connected';
+    mesh.dataChannels.set('guest', { readyState: 'open' });
+    expect(mesh.getOptimalPollInterval()).toBe(5000);
+  });
+
   it('rejects oversized P2P audio headers before allocating transfer state', () => {
     const events = [];
     const mesh = new CloudMesh((type, payload) => events.push({ type, payload }));

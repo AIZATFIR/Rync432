@@ -10,6 +10,8 @@ const MAX_REMOTE_AUDIO_BYTES = MAX_P2P_AUDIO_BYTES;
 const P2P_AUDIO_TRANSFER_TIMEOUT_MS = 10_000;
 const P2P_AUDIO_ACK_TIMEOUT_MS = 5_000;
 const P2P_AUDIO_BACKPRESSURE_TIMEOUT_MS = 10_000;
+const P2P_SIGNAL_POLL_INTERVAL_MS = 250;
+const P2P_FAST_SIGNAL_WINDOW_MS = 10_000;
 const P2P_BACKPRESSURE_POLL_INTERVAL_MS = 100;
 const P2P_BUFFER_REQUEST_MAX_ATTEMPTS = 10;
 const REMOTE_AUDIO_FETCH_TIMEOUT_MS = 5_000;
@@ -794,6 +796,16 @@ export class CloudMesh {
     // 1. If tab is in background / minimized, throttle aggressively to save Vercel quota
     if (typeof document !== 'undefined' && document.hidden) {
       return 6000;
+    }
+
+    if (!this.isMqttConnected) {
+      const now = globalThis.performance?.now?.() ?? Date.now();
+      const negotiating = Array.from(this.peerConnections.entries()).some(([peerId, pc]) => {
+        if (!['new', 'connecting'].includes(pc?.connectionState)) return false;
+        const startedAt = this.peerConnectionStartedAt.get(peerId);
+        return startedAt === undefined || now - startedAt < P2P_FAST_SIGNAL_WINDOW_MS;
+      });
+      if (negotiating) return P2P_SIGNAL_POLL_INTERVAL_MS;
     }
 
     // 2. Keep host heartbeats modest, but check for an absent host promptly on guests.
