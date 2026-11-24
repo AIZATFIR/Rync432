@@ -22,6 +22,29 @@ Panduan ini untuk meng-update checkout Rync yang sudah berjalan di homeserver. N
 
    Audio file yang diunggah untuk room disimpan di memori dan hilang saat proses restart. Host perlu tetap online untuk membagikan file lokal. Metadata room kedaluwarsa setelah tiga jam.
 
+   Untuk service systemd `rync432.service`, simpan key YouTube di file khusus milik root, bukan di checkout Git:
+
+   ```bash
+   sudoedit /etc/rync432.env
+   ```
+
+   Tambahkan satu baris `YOUTUBE_DATA_API_KEY=...` di editor, simpan, lalu pastikan file hanya bisa dibaca root:
+
+   ```bash
+   sudo chown root:root /etc/rync432.env
+   sudo chmod 600 /etc/rync432.env
+   sudo systemctl edit rync432.service
+   ```
+
+   Isi drop-in systemd dengan:
+
+   ```ini
+   [Service]
+   EnvironmentFile=/etc/rync432.env
+   ```
+
+   Setelah menyimpan drop-in, jalankan `sudo systemctl daemon-reload` dan restart service. Jangan tampilkan isi file environment di terminal/log. Pastikan `api/health` menunjukkan `providers.youtubeSearch: true`; endpoint ini hanya mengungkap status konfigurasi, bukan nilai key.
+
 3. Pastikan reverse proxy meneruskan HTTP ke port aplikasi dan mendukung WebSocket upgrade untuk koneksi room. WebSocket dan API room harus diarahkan ke instance aplikasi yang sama; penyimpanan lokal tidak menyinkronkan beberapa instance.
 
 ## Update
