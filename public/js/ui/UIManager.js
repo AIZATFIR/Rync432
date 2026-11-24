@@ -2674,13 +2674,20 @@ export class UIManager {
       };
       status.textContent = messages[error.code] || 'Pilihan lagu gagal dimuat. Periksa koneksi lalu coba lagi.';
       status.classList.add('error');
-      const retry = document.createElement('button');
-      retry.type = 'button';
-      retry.textContent = error.retryable === false ? 'Buka Search' : 'Coba lagi';
-      retry.addEventListener('click', () => error.retryable === false
-        ? this.setView('search')
-        : this.loadHomeDiscovery(query, { refresh: true }));
-      status.appendChild(retry);
+      if (error.code === 'PROVIDER_NOT_CONFIGURED') {
+        const settingsLink = document.createElement('a');
+        settingsLink.href = 'https://vercel.com/dashboard';
+        settingsLink.target = '_blank';
+        settingsLink.rel = 'noopener noreferrer';
+        settingsLink.textContent = 'Atur key di Vercel';
+        status.appendChild(settingsLink);
+      } else {
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.textContent = 'Coba lagi';
+        retry.addEventListener('click', () => this.loadHomeDiscovery(query, { refresh: true }));
+        status.appendChild(retry);
+      }
       return [];
     } finally {
       if (requestId === this.homeDiscoverySequence) {

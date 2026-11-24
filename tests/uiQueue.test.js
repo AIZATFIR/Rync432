@@ -48,6 +48,36 @@ describe('Rync page structure', () => {
     expect(dashboard.match(/data-home-query=/g)).toHaveLength(4);
   });
 
+  it('links admins to Vercel settings when Home discovery is not configured', async () => {
+    const element = () => ({
+      children: [], className: '', textContent: '', disabled: false,
+      classList: { add() {} },
+      setAttribute(name, value) { this[name] = value; },
+      addEventListener(name, handler) { this[`on${name}`] = handler; },
+      replaceChildren() { this.children = []; },
+      appendChild(child) { this.children.push(child); }
+    });
+    vi.stubGlobal('document', { createElement: tagName => ({ ...element(), tagName: tagName.toUpperCase() }) });
+    const ui = new UIManager({});
+    ui.elements = {
+      homeDiscoveryGrid: element(),
+      homeDiscoveryStatus: element(),
+      homeDiscoveryRefreshBtn: element()
+    };
+    ui.fetchYoutubeSearch = vi.fn().mockRejectedValue(Object.assign(new Error('missing key'), {
+      code: 'PROVIDER_NOT_CONFIGURED', retryable: false
+    }));
+
+    await ui.loadHomeDiscovery();
+
+    expect(ui.elements.homeDiscoveryStatus.textContent).toContain('YOUTUBE_DATA_API_KEY');
+    expect(ui.elements.homeDiscoveryStatus.children).toHaveLength(1);
+    expect(ui.elements.homeDiscoveryStatus.children[0]).toMatchObject({
+      tagName: 'A', href: 'https://vercel.com/dashboard', target: '_blank',
+      rel: 'noopener noreferrer', textContent: 'Atur key di Vercel'
+    });
+  });
+
   it('keeps file upload in Room tools and out of Search source tabs', () => {
     const htmlPath = fileURLToPath(new URL('../public/index.html', import.meta.url));
     const html = readFileSync(htmlPath, 'utf8');
