@@ -48,7 +48,7 @@ describe('Rync page structure', () => {
     expect(dashboard.match(/data-home-query=/g)).toHaveLength(4);
   });
 
-  it('links admins to Vercel settings when Home discovery is not configured', async () => {
+  it('explains the server key requirement without sending users to Search', async () => {
     const element = () => ({
       children: [], className: '', textContent: '', disabled: false,
       classList: { add() {} },
@@ -71,11 +71,8 @@ describe('Rync page structure', () => {
     await ui.loadHomeDiscovery();
 
     expect(ui.elements.homeDiscoveryStatus.textContent).toContain('YOUTUBE_DATA_API_KEY');
-    expect(ui.elements.homeDiscoveryStatus.children).toHaveLength(1);
-    expect(ui.elements.homeDiscoveryStatus.children[0]).toMatchObject({
-      tagName: 'A', href: 'https://vercel.com/dashboard', target: '_blank',
-      rel: 'noopener noreferrer', textContent: 'Atur key di Vercel'
-    });
+    expect(ui.elements.homeDiscoveryStatus.textContent).toContain('environment server');
+    expect(ui.elements.homeDiscoveryStatus.children).toHaveLength(0);
   });
 
   it('keeps file upload in Room tools and out of Search source tabs', () => {

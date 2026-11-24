@@ -2667,21 +2667,14 @@ export class UIManager {
     } catch (error) {
       if (error.name === 'AbortError' || requestId !== this.homeDiscoverySequence) return [];
       const messages = {
-        PROVIDER_NOT_CONFIGURED: 'Katalog musik belum tersambung. Admin: tambahkan YOUTUBE_DATA_API_KEY di pengaturan Environment Variables, lalu redeploy. Key tidak perlu dimasukkan di browser.',
+        PROVIDER_NOT_CONFIGURED: 'Katalog musik belum tersambung. Admin: tambahkan YOUTUBE_DATA_API_KEY ke environment server, lalu restart Rync. Key tidak perlu dimasukkan di browser.',
         RATE_LIMITED: 'Kuota YouTube habis sementara. Coba lagi nanti.',
         PROVIDER_TIMEOUT: 'Pencarian terlalu lama. Coba lagi.',
         PROVIDER_UNAVAILABLE: 'YouTube sedang tidak tersedia. Coba lagi nanti.'
       };
       status.textContent = messages[error.code] || 'Pilihan lagu gagal dimuat. Periksa koneksi lalu coba lagi.';
       status.classList.add('error');
-      if (error.code === 'PROVIDER_NOT_CONFIGURED') {
-        const settingsLink = document.createElement('a');
-        settingsLink.href = 'https://vercel.com/dashboard';
-        settingsLink.target = '_blank';
-        settingsLink.rel = 'noopener noreferrer';
-        settingsLink.textContent = 'Atur key di Vercel';
-        status.appendChild(settingsLink);
-      } else {
+      if (error.code !== 'PROVIDER_NOT_CONFIGURED') {
         const retry = document.createElement('button');
         retry.type = 'button';
         retry.textContent = 'Coba lagi';
