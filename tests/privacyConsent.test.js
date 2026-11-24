@@ -52,4 +52,17 @@ describe('Rync privacy consent gate', () => {
     expect(gateJs).toContain("script.src = 'https://cdnjs.cloudflare.com");
     expect(gateJs).toContain('loadRealtimeClient();');
   });
+
+  it('shows a public landing before app consent and offers guest entry without login', () => {
+    const htmlPath = fileURLToPath(new URL('../public/index.html', import.meta.url));
+    const html = readFileSync(htmlPath, 'utf8');
+    const landing = html.slice(html.indexOf('id="publicHome"'), html.indexOf('id="appShell"'));
+
+    expect(landing).toContain('id="publicGuestBtn"');
+    expect(landing).toContain('id="publicLoginBtn"');
+    expect(landing).toContain('id="publicSyncShowcase"');
+    expect(html.indexOf('id="publicHome"')).toBeLessThan(html.indexOf('id="appShell"'));
+    expect(html).toMatch(/id="privacyGate"[^>]*hidden/);
+    expect(html).toContain('id="privacyGateCancelBtn"');
+  });
 });

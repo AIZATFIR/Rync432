@@ -48,6 +48,18 @@ describe('Rync page structure', () => {
     expect(dashboard.match(/data-home-query=/g)).toHaveLength(4);
   });
 
+  it('keeps file upload in Room tools and out of Search source tabs', () => {
+    const htmlPath = fileURLToPath(new URL('../public/index.html', import.meta.url));
+    const html = readFileSync(htmlPath, 'utf8');
+    const searchSources = html.slice(html.indexOf('id="sourceSearchSection"'), html.indexOf('id="activeRoomSection"'));
+    const roomTools = html.slice(html.indexOf('id="roomHeroSection"'), html.indexOf('id="activeRoomSection"'));
+
+    expect(searchSources).not.toContain('id="tabBtnFile"');
+    expect(searchSources).not.toContain('id="audioDropzone"');
+    expect(roomTools).toContain('id="audioDropzone"');
+    expect(html).toContain('id="navRoomBtn"');
+  });
+
   it('keeps header labels compact at the narrowest supported viewport', () => {
     const cssPath = fileURLToPath(new URL('../public/css/style.css', import.meta.url));
     const css = readFileSync(cssPath, 'utf8');

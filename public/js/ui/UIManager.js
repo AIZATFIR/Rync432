@@ -233,12 +233,8 @@ export class UIManager {
       // Multi-Source Hub Tabs
       tabBtnDirectUrl: document.getElementById('tabBtnDirectUrl'),
       tabBtnYoutube: document.getElementById('tabBtnYoutube'),
-      tabBtnFile: document.getElementById('tabBtnFile'),
-      tabBtnDemo: document.getElementById('tabBtnDemo'),
       tabContentDirectUrl: document.getElementById('tabContentDirectUrl'),
       tabContentYoutube: document.getElementById('tabContentYoutube'),
-      tabContentFile: document.getElementById('tabContentFile'),
-      tabContentDemo: document.getElementById('tabContentDemo'),
 
       // Direct URL Elements
       directUrlInput: document.getElementById('directUrlInput'),
@@ -261,8 +257,6 @@ export class UIManager {
       // Upload & Demo Elements
       dropzone: document.getElementById('audioDropzone'),
       audioFileInput: document.getElementById('audioFileInput'),
-      sampleWavBtn: document.getElementById('sampleWavBtn'),
-      demoSynthBtn: document.getElementById('demoSynthBtn'),
 
       // YouTube Search & Stream Inputs
       ytUrlInput: document.getElementById('ytUrlInput'),
@@ -719,7 +713,7 @@ export class UIManager {
 
     // 4. Multi-Source Tabs Switching
     const switchTab = (activeTab) => {
-      ['DirectUrl', 'Youtube', 'File', 'Demo'].forEach(tab => {
+      ['DirectUrl', 'Youtube'].forEach(tab => {
         const btn = elements[`tabBtn${tab}`];
         const content = elements[`tabContent${tab}`];
         if (btn && content) {
@@ -736,8 +730,6 @@ export class UIManager {
 
     if (elements.tabBtnDirectUrl) elements.tabBtnDirectUrl.addEventListener('click', () => switchTab('directurl'));
     if (elements.tabBtnYoutube) elements.tabBtnYoutube.addEventListener('click', () => switchTab('youtube'));
-    if (elements.tabBtnFile) elements.tabBtnFile.addEventListener('click', () => switchTab('file'));
-    if (elements.tabBtnDemo) elements.tabBtnDemo.addEventListener('click', () => switchTab('demo'));
 
     // Direct Audio URL Ingestion & Stream Resolution
     const handleDirectUrlIngest = async (url) => {
@@ -1052,69 +1044,6 @@ export class UIManager {
         if (files && files.length > 0) {
           this.handleAudioFiles(files);
         }
-      });
-    }
-
-    // Preset WAV Track
-    if (elements.sampleWavBtn) {
-      elements.sampleWavBtn.addEventListener('click', async () => {
-        app.audioEngine.ensureContext();
-        if (!app.socketClient.roomId) {
-          app.socketClient.createRoom(this.getDeviceName());
-        }
-        const sampleUrl = `${window.location.origin}/test_music_sample.wav`;
-        const item = {
-          id: 'demo_acoustic_wav',
-          name: 'Acoustic WAV',
-          artist: 'Acoustic Sample',
-          duration: 30,
-          audioUrl: sampleUrl
-        };
-
-        if (!app.audioEngine.audioBuffer) {
-          this.setTrackLoading('Memuat Acoustic WAV...');
-          try {
-            const buffer = await app.audioEngine.loadAudioFromUrl(sampleUrl, 'Acoustic WAV');
-            this.updateTrackUI('Acoustic WAV', buffer.duration, '');
-            if (app.socketClient.cloudMesh) {
-              app.socketClient.cloudMesh.localAudioBufferCache.set(item.id, buffer);
-              app.socketClient.cloudMesh.localAudioBufferCache.set(item.name, buffer);
-              app.socketClient.cloudMesh.localAudioBufferCache.set(sampleUrl, buffer);
-            }
-          } catch (err) {
-            console.warn('Sample load notice:', err);
-          }
-        }
-
-        app.socketClient.addToQueue(item);
-      });
-    }
-
-    // Preset Synth Demo
-    if (elements.demoSynthBtn) {
-      elements.demoSynthBtn.addEventListener('click', async () => {
-        app.audioEngine.ensureContext();
-        if (!app.socketClient.roomId) {
-          app.socketClient.createRoom(this.getDeviceName());
-        }
-        const item = {
-          id: 'demo_synthwave',
-          name: 'Neon Groove Synthwave',
-          artist: 'Rync432 Synth',
-          duration: 20,
-          isSynthetic: true
-        };
-
-        if (!app.audioEngine.audioBuffer) {
-          const buffer = app.audioEngine.generateSyntheticTrack('synthwave');
-          this.updateTrackUI(app.audioEngine.currentTrackName, buffer.duration, '');
-          if (app.socketClient.cloudMesh) {
-            app.socketClient.cloudMesh.localAudioBufferCache.set(item.id, buffer);
-            app.socketClient.cloudMesh.localAudioBufferCache.set(item.name, buffer);
-          }
-        }
-
-        app.socketClient.addToQueue(item);
       });
     }
 
@@ -2738,7 +2667,7 @@ export class UIManager {
     } catch (error) {
       if (error.name === 'AbortError' || requestId !== this.homeDiscoverySequence) return [];
       const messages = {
-        PROVIDER_NOT_CONFIGURED: 'Pencarian YouTube belum diatur di server.',
+        PROVIDER_NOT_CONFIGURED: 'Katalog musik belum tersambung. Admin: tambahkan YOUTUBE_DATA_API_KEY di pengaturan Environment Variables, lalu redeploy. Key tidak perlu dimasukkan di browser.',
         RATE_LIMITED: 'Kuota YouTube habis sementara. Coba lagi nanti.',
         PROVIDER_TIMEOUT: 'Pencarian terlalu lama. Coba lagi.',
         PROVIDER_UNAVAILABLE: 'YouTube sedang tidak tersedia. Coba lagi nanti.'

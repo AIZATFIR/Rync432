@@ -18,6 +18,45 @@
   
 </head>
 <body>
+  <main class="public-home" id="publicHome" aria-labelledby="publicHomeHeading">
+    <header class="public-header">
+      <a class="public-brand" href="#publicHome" aria-label="Rync, halaman utama">
+        <span class="public-brand-mark" aria-hidden="true">r</span>
+        <span>rync<span class="public-brand-dot">.</span></span>
+      </a>
+      <nav class="public-nav" aria-label="Navigasi halaman utama">
+        <a href="#publicSyncShowcase">Listen together</a>
+        <button type="button" id="publicLoginBtn">Login</button>
+      </nav>
+    </header>
+    <section class="public-hero">
+      <div class="public-hero-copy">
+        <p class="public-kicker">MUSIC, TOGETHER</p>
+        <h1 id="publicHomeHeading">Satu lagu.<br><span>Satu waktu.</span></h1>
+        <p class="public-lede">Putar musik dari perangkatmu. Ajak teman masuk ke room, berbagi antrean, dan mulai bareng.</p>
+        <div class="public-actions">
+          <button type="button" class="public-primary" id="publicGuestBtn">Masuk sebagai guest</button>
+          <span>Tanpa akun. Login bisa nanti.</span>
+        </div>
+      </div>
+      <figure class="public-sync-showcase" id="publicSyncShowcase" aria-labelledby="publicSyncHeading">
+        <figcaption id="publicSyncHeading">Alur sinkronisasi Rync</figcaption>
+        <div class="sync-flow-row">
+          <div class="sync-flow-device"><span class="sync-flow-icon" aria-hidden="true">01</span><strong>Host</strong><small>Pilih lagu</small></div>
+          <span class="sync-flow-line" aria-hidden="true"></span>
+          <div class="sync-flow-device sync-flow-room"><span class="sync-flow-icon" aria-hidden="true">02</span><strong>Room</strong><small>Jadwalkan play</small></div>
+          <span class="sync-flow-line" aria-hidden="true"></span>
+          <div class="sync-flow-device"><span class="sync-flow-icon" aria-hidden="true">03</span><strong>Teman</strong><small>Ikut mendengar</small></div>
+        </div>
+        <p>Perintah putar dan antrean dibagikan ke perangkat dalam room.</p>
+      </figure>
+    </section>
+    <footer class="public-footer">
+      <span>Rync · dengar bareng dari perangkatmu</span>
+      <span><a href="/privacy.html">Privasi</a><a href="/terms.html">Ketentuan</a></span>
+    </footer>
+  </main>
+
   <div class="app-container" id="appShell" inert aria-hidden="true">
     
     <!-- Top Navigation Header -->
@@ -69,7 +108,7 @@
       <button type="button" class="primary-nav-item active" id="navHomeBtn" data-view="home" aria-current="page">Home</button>
       <button type="button" class="primary-nav-item" id="navSearchBtn" data-view="search">Search</button>
       <button type="button" class="primary-nav-item" id="navLibraryBtn" data-view="library">Library</button>
-      <button type="button" class="primary-nav-item" id="navRoomBtn" data-view="room">Room</button>
+      <button type="button" class="primary-nav-item" id="navRoomBtn" data-view="room">Dengar bareng</button>
     </nav>
 
     <section class="mini-player" id="miniPlayerBar" aria-label="Pemutar mini" hidden>
@@ -159,6 +198,18 @@
           </button>
         </div>
       </div>
+      <section class="room-upload" aria-labelledby="roomUploadHeading">
+        <div>
+          <p class="eyebrow">SUMBER DARI PERANGKATMU</p>
+          <h3 id="roomUploadHeading">Upload audio ke room</h3>
+          <p>Tambahkan file lokal ke antrean bersama.</p>
+        </div>
+        <button type="button" class="dropzone-box" id="audioDropzone" aria-label="Pilih file audio untuk ditambahkan">
+          <span class="room-upload-mark" aria-hidden="true">＋</span>
+          <span>Pilih file audio</span>
+          <small>MP3, WAV, OGG, M4A, AAC, FLAC</small>
+        </button>
+      </section>
     </section>
 
     <!-- Active Room Interface -->
@@ -344,8 +395,6 @@
             <div class="source-tabs-header">
               <button class="source-tab-btn active" id="tabBtnYoutube">YouTube</button>
               <button class="source-tab-btn" id="tabBtnDirectUrl">Direct URL</button>
-              <button class="source-tab-btn" id="tabBtnFile">File</button>
-              <button class="source-tab-btn" id="tabBtnDemo">Demo</button>
             </div>
 
             <!-- Tab: YouTube Search & Stream (Default prominent) -->
@@ -386,28 +435,6 @@
               </div>
             </div>
 
-            <!-- Tab: File Upload -->
-            <div class="source-tab-content" id="tabContentFile" style="display: none;">
-              <button type="button" class="dropzone-box" id="audioDropzone" aria-label="Pilih file audio untuk ditambahkan">
-                <div class="dropzone-icon">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                    <polyline points="17 8 12 3 7 8"></polyline>
-                    <line x1="12" y1="3" x2="12" y2="15"></line>
-                  </svg>
-                </div>
-                <div style="font-weight: 700; font-size: 0.9rem; color: var(--text-base);">Upload Musik (MP3 / WAV / FLAC)</div>
-                <div style="font-size: 0.76rem; color: var(--text-silver);">Klik atau drag & drop file musik ke sini</div>
-              </button>
-            </div>
-
-            <!-- Tab: Demo -->
-            <div class="source-tab-content" id="tabContentDemo" style="display: none;">
-              <div class="preset-track-grid">
-                <button class="btn-spotify btn-spotify-dark" id="sampleWavBtn">Acoustic WAV</button>
-                <button class="btn-spotify btn-spotify-dark" id="demoSynthBtn">Neon Synth</button>
-              </div>
-            </div>
           </div>
 
         </div>
@@ -653,8 +680,9 @@
     </div>
   </div>
 
-  <section class="privacy-gate" id="privacyGate" role="dialog" aria-modal="true" aria-labelledby="privacyGateTitle">
+  <section class="privacy-gate" id="privacyGate" role="dialog" aria-modal="true" aria-labelledby="privacyGateTitle" hidden>
     <div class="privacy-gate-panel">
+      <button type="button" class="privacy-gate-back" id="privacyGateCancelBtn">Kembali</button>
       <p class="eyebrow">RYNC · SEBELUM MULAI</p>
       <h2 id="privacyGateTitle">Dengar bareng, dengan jelas.</h2>
       <p>Rync memakai YouTube Data API dan pemutar YouTube untuk pencarian dan playback. Room mengirim kode room, nama perangkat, antrean, lagu aktif, dan status koneksi ke server Rync agar sesi bisa disinkronkan.</p>
